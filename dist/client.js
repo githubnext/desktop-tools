@@ -51,7 +51,7 @@ const caller = (config) => async (args, signal, options = {}) => {
     if (!existsSync(client))
         throw new Error(`The native desktop client is missing at ${client}.`);
     if (!existsSync(socket)) {
-        throw new Error(`Start ${config.name ?? "the desktop host app"} to enable native desktop tools.`);
+        throw new Error(`Open ${config.name ?? "the desktop host app"} on this host to enable native desktop tools.`);
     }
     signal.throwIfAborted();
     options.onDispatch?.();
