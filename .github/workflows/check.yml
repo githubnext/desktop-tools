@@ -3,14 +3,33 @@ on:
   push:
     branches: [main]
   pull_request:
+permissions:
+  contents: read
 jobs:
-  dist:
-    runs-on: ubuntu-latest
+  javascript:
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
       - run: npm ci
       # dist/ is checked in for Git installs; it must match a fresh compile exactly.
       - run: npm run check
+      # Hosted consumers import the protocol and client modules off macOS.
+      - run: >-
+          node --input-type=module -e "const p = await import('@githubnext/desktop-tools/protocol');
+          const c = await import('@githubnext/desktop-tools');
+          if (!p.isDesktopAction({ op: 'click' }) || typeof c.createDesktop !== 'function') process.exit(1);"
+  native:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # Unsigned: signing belongs to each embedding app.
+      - run: node dist/build.js --out build --scratch .build/native

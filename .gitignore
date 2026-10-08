@@ -3,3 +3,4 @@ native/.build/
 native/.swiftpm/
 .check/
 build/
+.build/

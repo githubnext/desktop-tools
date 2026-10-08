@@ -24,12 +24,29 @@ The native runtime and client require macOS 15 or later. The `protocol` export a
 | `src/build.ts` | `desktop-tools-build`: reproducible patched native build |
 | `dist/` | Compiled JavaScript, checked in so Git installs need no build step |
 
-## Build
+## Install and build
 
-Requirements: macOS with Xcode's SDK and Swift 6.2 or later, Git, and Node 22 or later. Ace, Electrobun, and Bun are not required.
+The package isn't published to a registry. Install it from Git at a pinned commit:
 
 ```sh
-npx desktop-tools-build --out <directory> --scratch <directory>
+npm install github:githubnext/desktop-tools#<commit>
+```
+
+`dist/` is checked in, so installing runs no build step. Native builds need macOS with Xcode's SDK and Swift 6.2 or later, Git, and Node 22 or later. Ace, Electrobun, and Bun are not required.
+
+Build the native artifacts with the installed binary, never through a registry lookup:
+
+```sh
+npm exec --no -- desktop-tools-build --out <directory> --scratch <directory>
+```
+
+From a clone:
+
+```sh
+git clone https://github.com/githubnext/desktop-tools && cd desktop-tools
+npm ci
+npm run build:native          # writes build/, scratch in native/.build
+npm run build:js && npm run check   # after editing src/
 ```
 
 The build:
@@ -44,6 +61,8 @@ The build:
 Give each concurrent build its own `--scratch` directory, or run builds one at a time. Patches are applied to the scratch's Peekaboo checkout outside SwiftPM's lock. The default scratch is `native/.build` inside the package, which is not suitable for an installed dependency.
 
 The build does not sign or stage the Swift runtime. Embedding apps own both. If an app's deployment target needs bundled Swift libraries, stage them with `xcrun swift-stdlib-tool --copy` into `Contents/Frameworks`; binaries carry an `@loader_path/../Frameworks` rpath for that.
+
+CI checks that `dist/` matches a fresh compile and that the modules import on Linux. It also builds the native artifacts, unsigned, on macOS with Xcode 26.2.
 
 ## Embed
 
@@ -81,7 +100,7 @@ Each result has:
 - `image`: a base64 JPEG or PNG, when the result has one.
 - `outcome`, for actions: `completed`, `refused`, or `unknown`.
 
-Before using an observation or receipt, check its `target_receipt` and the inventory completeness fields. Image bytes appear only in `image`. Install from Git, for example `npm install github:githubnext/desktop-tools#<commit>`. Pin a commit.
+Before using an observation or receipt, check its `target_receipt` and the inventory completeness fields. Image bytes appear only in `image`.
 
 ## Protocol and semantics
 
