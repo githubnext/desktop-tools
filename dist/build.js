@@ -134,8 +134,11 @@ const notices = (source, identity) => {
     if (!files.length)
         throw new Error(`The native dependency ${identity} has no license file`);
     mkdirSync(join(licenses, identity), { recursive: true });
-    for (const name of files)
+    for (const name of files) {
+        // Checked-out notices are read-only and copies keep that mode, so replace each one.
+        rmSync(join(licenses, identity, name), { force: true });
         copyFileSync(join(source, name), join(licenses, identity, name));
+    }
 };
 notices(root, "desktop-tools");
 for (const { identity } of resolved.pins) {

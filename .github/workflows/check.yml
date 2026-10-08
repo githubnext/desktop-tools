@@ -33,3 +33,8 @@ jobs:
           node-version: 24
       # Unsigned: signing belongs to each embedding app.
       - run: node dist/build.js --out build --scratch .build/native
+      # Embedders rebuild into the same output; notices from other sources must survive.
+      - run: |
+          mkdir -p build/Licenses/embedder && echo kept > build/Licenses/embedder/NOTICE
+          node dist/build.js --out build --scratch .build/native
+          test "$(cat build/Licenses/embedder/NOTICE)" = kept
