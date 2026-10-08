@@ -1,0 +1,454 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/MenuCommand.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/MenuCommand.swift
+new file mode 100644
+index 000000000..094ee51ee
+--- /dev/null
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/MenuCommand.swift
+@@ -0,0 +1,285 @@
++import ApplicationServices
++import Foundation
++import os
++import PeekabooFoundation
++
++public struct MenuCommandRequest: Codable, Sendable {
++    public let expectedIdentity: ApplicationProcessIdentity
++    public let path: [String]
++
++    public init(expectedIdentity: ApplicationProcessIdentity, path: [String]) throws {
++        guard !path.isEmpty, path.count <= 8,
++              path.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf16.count <= 512 })
++        else {
++            throw DesktopActionFailure.preDispatchRefusal(
++                reason: .invalidRequest,
++                message: "Menu commands require 1 to 8 nonblank literal titles of at most 512 UTF-16 units each.")
++        }
++        self.expectedIdentity = expectedIdentity
++        self.path = path
++    }
++
++    private enum CodingKeys: String, CodingKey { case expectedIdentity, path }
++
++    public init(from decoder: any Decoder) throws {
++        let container = try decoder.container(keyedBy: CodingKeys.self)
++        try self.init(expectedIdentity: container.decode(ApplicationProcessIdentity.self, forKey: .expectedIdentity),
++                      path: container.decode([String].self, forKey: .path))
++    }
++}
++
++@MainActor
++public protocol MenuCommandProviding: Sendable {
++    func menuCommand(_ request: MenuCommandRequest) async throws -> UIAutomationActionResult<Void>
++}
++
++extension MenuService: MenuCommandProviding {
++    public func menuCommand(_ request: MenuCommandRequest) async throws -> UIAutomationActionResult<Void> {
++        try await self.withPinnedMenuFailureAttribution(processIdentity: request.expectedIdentity) {
++            try await self.operationLaneCoordinator.run(scope: .process(request.expectedIdentity), access: .write) {
++                // This command never reads the inventory cache; a later inventory should re-read changed menus.
++                defer { self.menuCache.removeValue(forKey: "PID:\(request.expectedIdentity.processIdentifier)") }
++                guard request.expectedIdentity.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
++                    throw DesktopActionFailure.preDispatchRefusal(
++                        reason: .operationUnsupported,
++                        message: "Menu commands targeting this Ace process are not supported. No menu command was dispatched.")
++                }
++                let outcome = try await MenuCommandAX.run(request)
++                return try UIAutomationActionResult(
++                    payload: (), outcome: outcome,
++                    targetIdentity: DesktopTargetIdentity(processIdentity: request.expectedIdentity))
++            }
++        }
++    }
++}
++
++private enum MenuCommandAX {
++    static let delivery = DesktopActionOutcome.Delivery(mechanism: .accessibilityAction, mode: .background)
++
++    static func run(_ request: MenuCommandRequest) async throws -> DesktopActionOutcome {
++        let cancelled = OSAllocatedUnfairLock(initialState: false)
++        return try await withTaskCancellationHandler {
++            let result: Result<DesktopActionOutcome, DesktopActionFailure> = await withCheckedContinuation { continuation in
++                Thread.detachNewThread {
++                    do {
++                        continuation.resume(returning: .success(try self.perform(request, cancelled: cancelled)))
++                    } catch let failure as DesktopActionFailure {
++                        continuation.resume(returning: .failure(failure))
++                    } catch {
++                        continuation.resume(returning: .failure(.preDispatchRefusal(
++                            reason: .targetUnavailable, message: "The menu path could not be verified before input.",
++                            causeDescription: error.localizedDescription)))
++                    }
++                }
++            }
++            // Cancellation never abandons a native AX call or releases its process lane early.
++            return try result.get()
++        } onCancel: {
++            cancelled.withLock { $0 = true }
++        }
++    }
++
++    private static func perform(
++        _ request: MenuCommandRequest,
++        cancelled: OSAllocatedUnfairLock<Bool>) throws -> DesktopActionOutcome
++    {
++        let read = MenuCommandRead(request: request, cancelled: cancelled)
++        let original = try read.resolve()
++        let current = try read.resolve()
++        guard original.count == current.count,
++              zip(original, current).allSatisfy({ CFEqual($0.0, $0.1) }),
++              let leaf = original.last
++        else { throw read.refusal("The observed menu ancestry changed before input.") }
++        guard try read.role(leaf) == kAXMenuItemRole as String else {
++            throw read.refusal("Choose a menu command item, not a menu-bar entry.")
++        }
++        let children = try read.children(leaf, requireAvailable: true)
++        for child in children {
++            guard try read.role(child) != kAXMenuRole as String else {
++                throw read.refusal("Choose a menu command leaf, not a menu with a submenu.")
++            }
++        }
++        guard let enabled = try read.attribute(leaf, kAXEnabledAttribute as String),
++              CFGetTypeID(enabled) == CFBooleanGetTypeID(), CFEqual(enabled, kCFBooleanTrue)
++        else { throw read.refusal("The exact menu command is disabled or its enabled state is unavailable.") }
++        let actions: [String] = try read.withElement(leaf) {
++            var value: CFArray?
++            guard AXUIElementCopyActionNames(leaf, &value) == .success,
++                  let names = value as? [String], names.count <= 32
++            else { throw read.refusal("The menu command's supported actions are unavailable.") }
++            return names
++        }
++        guard actions.contains(kAXPressAction as String) else {
++            throw DesktopActionFailure.preDispatchRefusal(
++                reason: .operationUnsupported, message: "The exact menu command does not support AXPress.")
++        }
++        try read.check()
++        guard AXUIElementSetMessagingTimeout(leaf, 2) == .success else {
++            throw read.refusal("The native menu command timeout could not be set before input.")
++        }
++        defer { AXUIElementSetMessagingTimeout(leaf, 0) }
++        try read.checkOwner(leaf)
++        try read.check()
++        let result = AXUIElementPerformAction(leaf, kAXPressAction as CFString)
++        if result == .success {
++            guard !cancelled.withLock({ $0 }) else {
++                throw DesktopActionFailure.indeterminate(
++                    delivery: delivery, evidence: .completionUnknown, unitCount: .one,
++                    message: "The menu command was cancelled after AXPress was accepted.",
++                    hint: "Observe the application; do not repeat the menu command automatically.")
++            }
++            return .dispatchedUnverified(delivery: delivery, evidence: .deliveryAccepted, unitCount: .one)
++        }
++        let error = ActionInputDriver.classify(result)
++        if ActionInputDriver.nativeMutationFailureMayHaveDispatched(error) {
++            throw DesktopActionFailure.indeterminate(
++                delivery: delivery, evidence: .completionUnknown, unitCount: .one,
++                message: "The menu command may have been delivered; native completion is unknown.",
++                hint: "A modal command may still be running. Observe the application before deciding what to do; do not blindly repeat it.",
++                causeDescription: String(describing: error))
++        }
++        throw DesktopActionFailure.preDispatchRefusal(
++            reason: result == .actionUnsupported ? .operationUnsupported : .targetUnavailable,
++            message: "The exact menu command was refused by Accessibility.",
++            causeDescription: String(describing: error))
++    }
++}
++
++/// Worker-local raw AX state; no AXorcist or GUI-actor state crosses this boundary.
++private final class MenuCommandRead {
++    let request: MenuCommandRequest
++    let cancelled: OSAllocatedUnfairLock<Bool>
++    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
++    let application: AXUIElement
++    var remaining = 500
++
++    init(request: MenuCommandRequest, cancelled: OSAllocatedUnfairLock<Bool>) {
++        self.request = request
++        self.cancelled = cancelled
++        self.application = AXUIElementCreateApplication(request.expectedIdentity.processIdentifier)
++    }
++
++    func refusal(_ message: String) -> DesktopActionFailure {
++        .preDispatchRefusal(reason: .targetUnavailable, message: message,
++                            hint: "Read the current literal menu path; no menu command was dispatched.")
++    }
++
++    func check() throws {
++        guard !self.cancelled.withLock({ $0 }) else {
++            throw DesktopActionFailure.preDispatchRefusal(
++                reason: .requestCancelled, message: "The menu command was cancelled before AXPress.")
++        }
++        guard ContinuousClock.now < self.deadline else {
++            throw self.refusal("The menu path could not be verified within its native read budget.")
++        }
++        guard SystemIdentityResolver.processStartIdentity(self.request.expectedIdentity.processIdentifier) ==
++                self.request.expectedIdentity.processStartIdentity else {
++            throw self.refusal("The application process generation changed before the menu command.")
++        }
++    }
++
++    func checkOwner(_ element: AXUIElement) throws {
++        var pid: pid_t = 0
++        guard AXUIElementGetPid(element, &pid) == .success,
++              pid == self.request.expectedIdentity.processIdentifier else {
++            throw self.refusal("The menu element does not belong to the exact application.")
++        }
++    }
++
++    func withElement<T>(_ element: AXUIElement, _ operation: () throws -> T) throws -> T {
++        try self.check()
++        try self.checkOwner(element)
++        guard AXUIElementSetMessagingTimeout(element, 1) == .success else {
++            throw self.refusal("The menu element's native read timeout could not be set.")
++        }
++        defer { AXUIElementSetMessagingTimeout(element, 0) }
++        let result = try operation()
++        try self.check()
++        return result
++    }
++
++    func attribute(_ element: AXUIElement, _ name: String, optional: Bool = false) throws -> CFTypeRef? {
++        try self.withElement(element) {
++            var value: CFTypeRef?
++            let result = AXUIElementCopyAttributeValue(element, name as CFString, &value)
++            if optional && (result == .noValue || result == .attributeUnsupported) { return nil }
++            guard result == .success, let value else {
++                throw self.refusal("A required menu attribute could not be read completely.")
++            }
++            return value
++        }
++    }
++
++    func role(_ element: AXUIElement) throws -> String {
++        guard let role = try self.attribute(element, kAXRoleAttribute as String) as? String else {
++            throw self.refusal("A menu element's role could not be verified.")
++        }
++        return role
++    }
++
++    func children(_ element: AXUIElement, requireAvailable: Bool = false) throws -> [AXUIElement] {
++        try self.withElement(element) {
++            var count: CFIndex = 0
++            let status = AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &count)
++            if !requireAvailable && (status == .noValue || status == .attributeUnsupported) { return [] }
++            guard status == .success, count >= 0, count <= self.remaining else {
++                throw self.refusal("The complete menu sibling set is unavailable or exceeds its budget " +
++                    "(AX \(status.rawValue), count \(count), remaining \(self.remaining), leaf check \(requireAvailable)).")
++            }
++            if count == 0 { return [] }
++            var values: CFArray?
++            guard AXUIElementCopyAttributeValues(element, kAXChildrenAttribute as CFString, 0, count, &values) == .success,
++                  let values, CFArrayGetCount(values) == count,
++                  let children = values as? [AXUIElement] else {
++                throw self.refusal("The complete menu sibling set could not be read.")
++            }
++            var currentCount: CFIndex = 0
++            guard AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &currentCount) == .success,
++                  currentCount == count else {
++                throw self.refusal("The menu sibling set changed while it was being read.")
++            }
++            self.remaining -= count
++            return children
++        }
++    }
++
++    func resolve() throws -> [AXUIElement] {
++        guard let value = try self.attribute(self.application, kAXMenuBarAttribute as String),
++              CFGetTypeID(value) == AXUIElementGetTypeID() else {
++            throw self.refusal("The exact application's menu bar is unavailable.")
++        }
++        var menu = unsafeDowncast(value, to: AXUIElement.self)
++        var chain: [AXUIElement] = [menu]
++        for (index, title) in self.request.path.enumerated() {
++            var matches: [AXUIElement] = []
++            for child in try self.children(menu) {
++                let role = try self.role(child)
++                // Separators and known non-item roles cannot compete for this literal title.
++                guard role == (index == 0 ? kAXMenuBarItemRole as String : kAXMenuItemRole as String) else { continue }
++                let rawTitle = try self.attribute(child, kAXTitleAttribute as String, optional: true)
++                let rawValue = try rawTitle ?? self.attribute(child, kAXValueAttribute as String, optional: true)
++                guard let candidate = rawValue as? String else {
++                    throw self.refusal("A candidate menu title is unavailable, so its uniqueness cannot be established.")
++                }
++                if candidate.utf16.elementsEqual(title.utf16) { matches.append(child) }
++            }
++            guard matches.count == 1, let item = matches.first else {
++                throw DesktopActionFailure.preDispatchRefusal(
++                    reason: .invalidRequest,
++                    message: matches.isEmpty ? "The literal menu path is unavailable without opening ancestor menus." : "The literal menu path is ambiguous.")
++            }
++            chain.append(item)
++            if index == self.request.path.count - 1 { return chain }
++            var submenus: [AXUIElement] = []
++            for child in try self.children(item) where try self.role(child) == kAXMenuRole as String {
++                submenus.append(child)
++            }
++            guard submenus.count == 1, let submenu = submenus.first else {
++                throw self.refusal("The literal submenu is missing, ambiguous, or unavailable without opening it.")
++            }
++            chain.append(submenu)
++            menu = submenu
++        }
++        throw self.refusal("The literal menu path contains no command.")
++    }
++}
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeMenuCommand.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeMenuCommand.swift
+new file mode 100644
+index 000000000..e1b60e98a
+--- /dev/null
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeMenuCommand.swift
+@@ -0,0 +1,12 @@
++import Foundation
++import PeekabooAutomationKit
++
++extension PeekabooBridgeClient {
++    public func menuCommand(_ request: MenuCommandRequest) async throws -> UIAutomationActionResult<Void> {
++        try await self.actionResult(for: .menuCommand(request), expectedResponse: "literal menu command",
++                                    requiresTargetIdentity: true) { response in
++            guard case .ok = response else { return nil }
++            return ()
++        }
++    }
++}
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
+index fae31e82f..d584091b6 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
+@@ -122,6 +122,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
+     // Menus
+     case listMenus
+     case listFrontmostMenus
++    case menuCommand
+     case clickMenuItem
+     case clickMenuItemByName
+     // Menu bar extras
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
+index 0e8c83c45..5ef927366 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
+@@ -103,6 +103,7 @@ extension PeekabooBridgeOperation {
+         .showAllApplications,
+         .listMenus,
+         .listFrontmostMenus,
++        .menuCommand,
+         .clickMenuItem,
+         .clickMenuItemByName,
+         .listMenuExtras,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
+index 706717cc4..5aaf74809 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
+@@ -511,7 +511,7 @@ extension PeekabooBridgeOperationResultSemantics {
+                 completion: .readOnly,
+                 targetPolicy: .notApplicable,
+                 responseFamilies: [.menuStructure])
+-        case .clickMenuItem, .clickMenuItemByName:
++        case .menuCommand, .clickMenuItem, .clickMenuItemByName:
+             descriptor(
+                 ownership: .service,
+                 requiredPermissions: [.accessibility],
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationReceipts.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationReceipts.swift
+index ba6bfecd0..cde5d92da 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationReceipts.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationReceipts.swift
+@@ -1344,6 +1344,9 @@ extension PeekabooBridgeRequest {
+             } else {
+                 []
+             }
++        case let .menuCommand(payload):
++            [.init(processIdentifier: payload.expectedIdentity.processIdentifier,
++                   processIdentity: payload.expectedIdentity)]
+         case let .clickMenuItem(payload):
+             payload.expectedIdentity.map {
+                 [.init(processIdentifier: $0.processIdentifier, processIdentity: $0)]
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
+index 664dc3ba0..967470f30 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
+@@ -320,6 +320,8 @@ extension PeekabooBridgeOperationResultSemantics {
+             } else {
+                 .global
+             }
++        case let .menuCommand(payload):
++            .process(payload.expectedIdentity)
+         case let .clickMenuItem(payload):
+             payload.expectedIdentity.map(DesktopOperationScope.process) ?? .global
+         case let .clickMenuItemByName(payload):
+@@ -516,6 +518,7 @@ extension PeekabooBridgeOperationResultSemantics {
+              .showAllApplications,
+              .listMenus,
+              .listFrontmostMenus,
++             .menuCommand,
+              .clickMenuItem,
+              .clickMenuItemByName,
+              .listMenuExtras,
+@@ -600,7 +603,7 @@ extension PeekabooBridgeOperationResultSemantics {
+         case .clipboardTextWrite, .clipboardImageWrite, .literalInsert, .agentExecutionTrace:
+             return [.dispatchedUnverified]
+         case .requestPostEventPermission, .browserExecute, .swipe, .drag, .moveMouse,
+-             .clickMenuItem, .clickMenuItemByName, .clickMenuExtra,
++             .menuCommand, .clickMenuItem, .clickMenuItemByName, .clickMenuExtra,
+              .clickMenuBarItemNamed, .clickMenuBarItemIndex,
+              .launchDockItem, .rightClickDockItem,
+              .detectElements, .inspectAccessibilityTree,
+@@ -927,6 +930,8 @@ extension PeekabooBridgeOperationResultSemantics {
+             return [rule(nativeBackground, .exact(1)), rule(axBackground, .exact(1))]
+         case .hideOtherApplications, .showAllApplications:
+             return [rule(axBackground, .variable), rule(nativeBackground, .variable)]
++        case .menuCommand:
++            return [rule(axBackground, .exact(1))]
+         case let .clickMenuItem(payload):
+             return [rule(
+                 payload.deliveryMode == .background ? axBackground : axForeground,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
+index d7aaedc83..69ceb0de8 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
+@@ -88,6 +88,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
+     case showAllApplications
+     case listMenus(PeekabooBridgeMenuListRequest)
+     case listFrontmostMenus
++    case menuCommand(MenuCommandRequest)
+     case clickMenuItem(PeekabooBridgeMenuClickRequest)
+     case clickMenuItemByName(PeekabooBridgeMenuClickByNameRequest)
+     case listMenuExtras
+@@ -221,6 +222,7 @@ extension PeekabooBridgeRequest {
+         case .showAllApplications: .showAllApplications
+         case .listMenus: .listMenus
+         case .listFrontmostMenus: .listFrontmostMenus
++        case .menuCommand: .menuCommand
+         case .clickMenuItem: .clickMenuItem
+         case .clickMenuItemByName: .clickMenuItemByName
+         case .listMenuExtras: .listMenuExtras
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
+index 08c92e719..105c9f43b 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
+@@ -115,7 +115,7 @@ extension PeekabooBridgeServer {
+              .activateApplication, .quitApplication,
+              .hideApplication, .unhideApplication, .hideOtherApplications, .showAllApplications:
+             return try await self.handleApplicationRequest(request)
+-        case .listMenus, .listFrontmostMenus, .clickMenuItem, .clickMenuItemByName, .listMenuExtras,
++        case .listMenus, .listFrontmostMenus, .menuCommand, .clickMenuItem, .clickMenuItemByName, .listMenuExtras,
+              .clickMenuExtra, .menuExtraOpenMenuFrame, .listMenuBarItems, .clickMenuBarItemNamed,
+              .clickMenuBarItemIndex:
+             return try await self.handleMenuRequest(request)
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+ServiceHandlers.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+ServiceHandlers.swift
+index f894bfa7f..c56f4d521 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+ServiceHandlers.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+ServiceHandlers.swift
+@@ -380,6 +380,17 @@ extension PeekabooBridgeServer {
+         case .listFrontmostMenus:
+             let menus = try await self.services.menu.listFrontmostMenus()
+             return .init(response: .menuStructure(menus))
++        case let .menuCommand(payload):
++            guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
++                  let service = self.services.menu as? any MenuCommandProviding else {
++                throw DesktopActionFailure.preDispatchRefusal(
++                    reason: .runtimeIncompatible,
++                    message: "The native runtime cannot attest exact literal menu commands.")
++            }
++            let result = try await service.menuCommand(payload)
++            return try Self.pinnedMenuMutationResponse(
++                .ok, result: result, expectedIdentity: payload.expectedIdentity,
++                expectedDeliveryMode: .background, operation: "literal menu command")
+         case let .clickMenuItem(payload):
+             guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics else {
+                 try await self.services.menu.clickMenuItem(

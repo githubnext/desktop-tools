@@ -1,0 +1,5 @@
+node_modules/
+native/.build/
+native/.swiftpm/
+.check/
+build/

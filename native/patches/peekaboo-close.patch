@@ -1,0 +1,156 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/WindowManagementService+StateOperations.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/WindowManagementService+StateOperations.swift
+index cc8ea70e4..d0c57fa06 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/WindowManagementService+StateOperations.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/WindowManagementService+StateOperations.swift
+@@ -3,6 +3,7 @@ import AppKit
+ import AXorcist
+ import CoreGraphics
+ import Foundation
++import os
+ import PeekabooFoundation
+ 
+ @MainActor
+@@ -70,21 +71,25 @@ extension WindowManagementService {
+                         hint: "Restore the same exact window first, or retry with explicit foreground consent.")
+                 }
+ 
+-                let attempt = try await self.attemptPinnedBackgroundClose(expectedIdentity)
+-                guard attempt.dispatched else {
+-                    throw OperationError.interactionFailed(
+-                        action: "close window",
+-                        reason: "Window close operation failed")
+-                }
+-                guard attempt.disappeared else {
+-                    throw WindowManagementActionOutcome.suspectedNoop(
++                try await BoundedBackgroundWindowAX.dispatchOneClose(expectedIdentity: expectedIdentity)
++                do {
++                    guard try await self.verifyPinnedWindowClose(expectedIdentity) == .succeeded else {
++                        // An accepted close may be waiting on unsaved work; it is not safe to repeat.
++                        return .dispatchedUnverified(
++                            delivery: WindowManagementActionOutcome.backgroundActionDelivery,
++                            evidence: .operationStillRunning,
++                            unitCount: .one)
++                    }
++                } catch {
++                    throw WindowManagementActionOutcome.dispatchedUnverified(
+                         action: "close window",
+                         delivery: WindowManagementActionOutcome.backgroundActionDelivery,
+-                        dispatchCount: attempt.dispatchCount)
++                        dispatchCount: 1,
++                        cause: error)
+                 }
+-                return WindowManagementActionOutcome.confirmedChange(
++                return .confirmedChange(
+                     delivery: WindowManagementActionOutcome.backgroundActionDelivery,
+-                    dispatchCount: attempt.dispatchCount)
++                    unitCount: .one)
+             }
+         }
+         return DesktopActionResult(outcome: outcome)
+@@ -1087,6 +1092,106 @@ private enum BoundedBackgroundWindowAX {
+         }
+     }
+ 
++    static func dispatchOneClose(expectedIdentity: WindowMutationIdentity) async throws {
++        let cancelled = OSAllocatedUnfairLock(initialState: false)
++        try await withTaskCancellationHandler {
++            let result: Result<Void, DesktopActionFailure> = await self.perform(expectedIdentity: expectedIdentity) {
++                guard SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity),
++                      let capturedBounds = expectedIdentity.capturedBounds,
++                      let windowID = CGWindowID(exactly: expectedIdentity.windowID),
++                      let rawWindow = self.exactWindow(
++                          windowID: windowID,
++                          ownerPID: expectedIdentity.ownerProcessIdentifier)
++                else {
++                    return .failure(.preDispatchRefusal(
++                        reason: .targetUnavailable,
++                        message: "The exact window could not be verified before close."))
++                }
++                return AXChildWindowMessagingTimeout.perform(on: rawWindow, timeout: self.messagingTimeout) { window in
++                    var actionsValue: CFArray?
++                    guard AXUIElementCopyActionNames(window, &actionsValue) == .success,
++                          let actions = actionsValue as? [String]
++                    else {
++                        return .failure(.preDispatchRefusal(
++                            reason: .operationUnsupported,
++                            message: "The exact window's supported close actions could not be read."))
++                    }
++                    // Choose one route from read-only evidence. No native failure selects another route.
++                    let receiver: AXUIElement
++                    let action: CFString
++                    if actions.contains("AXClose") {
++                        receiver = window
++                        action = "AXClose" as CFString
++                    } else {
++                        var buttonValue: CFTypeRef?
++                        guard AXUIElementCopyAttributeValue(
++                            window, kAXCloseButtonAttribute as CFString, &buttonValue) == .success,
++                            let buttonValue, CFGetTypeID(buttonValue) == AXUIElementGetTypeID()
++                        else {
++                            return .failure(.preDispatchRefusal(
++                                reason: .operationUnsupported,
++                                message: "The exact window exposes no supported background close route."))
++                        }
++                        receiver = unsafeDowncast(buttonValue, to: AXUIElement.self)
++                        action = kAXPressAction as CFString
++                    }
++                    return AXChildWindowMessagingTimeout.perform(on: receiver, timeout: self.messagingTimeout) { target in
++                        if !CFEqual(target, window) {
++                            var buttonActionsValue: CFArray?
++                            var currentButton: CFTypeRef?
++                            guard AXUIElementCopyActionNames(target, &buttonActionsValue) == .success,
++                                  (buttonActionsValue as? [String])?.contains(kAXPressAction as String) == true,
++                                  AXUIElementCopyAttributeValue(
++                                      window, kAXCloseButtonAttribute as CFString, &currentButton) == .success,
++                                  let currentButton, CFEqual(currentButton, target)
++                            else {
++                                return .failure(.preDispatchRefusal(
++                                    reason: .operationUnsupported,
++                                    message: "The exact window's close button could not be verified."))
++                            }
++                        }
++                        var ownerPID: pid_t = 0
++                        var currentWindowID: CGWindowID = 0
++                        guard AXUIElementGetPid(target, &ownerPID) == .success,
++                              ownerPID == expectedIdentity.ownerProcessIdentifier,
++                              AXWindowIDResolver.copyWindowID(window, into: &currentWindowID) == .success,
++                              currentWindowID == windowID,
++                              self.bounds(of: window) == capturedBounds,
++                              self.boolAttribute(kAXMinimizedAttribute as String, of: window) == false,
++                              SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity)
++                        else {
++                            return .failure(.preDispatchRefusal(
++                                reason: .targetUnavailable,
++                                message: "The exact window changed before close."))
++                        }
++                        guard !cancelled.withLock({ $0 }) else {
++                            return .failure(.preDispatchRefusal(
++                                reason: .requestCancelled,
++                                message: "Close was cancelled before native dispatch."))
++                        }
++                        let nativeResult = AXUIElementPerformAction(target, action)
++                        if nativeResult == .success { return .success(()) }
++                        let error = ActionInputDriver.classify(nativeResult)
++                        if ActionInputDriver.nativeMutationFailureMayHaveDispatched(error) {
++                            return .failure(.indeterminate(
++                                delivery: WindowManagementActionOutcome.backgroundActionDelivery,
++                                evidence: .completionUnknown,
++                                unitCount: .one,
++                                message: "The close request may have been delivered; native completion is unknown.",
++                                hint: "Refresh the window inventory; do not blindly retry close.",
++                                causeDescription: String(describing: error)))
++                        }
++                        return .failure(WindowManagementActionOutcome.refused(action: "close window", error: error))
++                    }
++                }
++            }
++            // Keep the coordinator lane until the actual AX call settles, including after cancellation.
++            try result.get()
++        } onCancel: {
++            cancelled.withLock { $0 = true }
++        }
++    }
++
+     static func dispatchClose(
+         expectedIdentity: WindowMutationIdentity,
+         action: BoundedBackgroundWindowCloseAction) async -> Bool

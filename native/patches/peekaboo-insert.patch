@@ -1,0 +1,899 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardPasteTransactionGate.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardPasteTransactionGate.swift
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardPasteTransactionGate.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardPasteTransactionGate.swift
+@@ -79,6 +79,8 @@
+         case unsafeDirectory(path: String)
+         case unsafeLockFile(path: String)
+         case lockTimeout(path: String)
++        case invalidReservation(path: String)
++        case transactionUnavailable
+ 
+         var errorDescription: String? {
+             switch self {
+@@ -93,6 +95,10 @@
+                 return "Clipboard paste transaction lock is not a regular file owned by the current user: \(path)"
+             case let .lockTimeout(path):
+                 return "Timed out waiting for the exclusive clipboard paste transaction lock at \(path)."
++            case let .invalidReservation(path):
++                return "Clipboard paste reservation at \(path) is unreadable or unsupported. No new clipboard mutation was admitted; recover it only after the original receiver has terminated."
++            case .transactionUnavailable:
++                return "Clipboard paste reservation requires the active transaction gate."
+             }
+         }
+     }
+@@ -102,6 +108,134 @@
+ 
+     /// Serializes callers in a shared host before they enter the file-lock wait loop.
+     @MainActor private static var isActive = false
++    @TaskLocal private static var transaction: Transaction?
++    @MainActor private static var pendingProof: PendingProof?
++
++    private struct Reservation: Codable, Sendable {
++        let version: Int
++        let id: UUID
++        let pid: Int32
++        let processStartIdentity: UInt64
++        let windowID: Int
++    }
++
++    private struct PendingProof: Sendable {
++        let id: UUID
++        let path: String
++        let canRelease: @MainActor @Sendable () async -> Bool
++    }
++
++    @MainActor
++    private final class Transaction {
++        let descriptor: Int32
++        let path: String
++        var active = true
++        var reservation: Reservation?
++
++        init(descriptor: Int32, path: String) {
++            self.descriptor = descriptor; self.path = path
++        }
++
++        func read() throws -> Reservation? {
++            var info = stat()
++            guard fstat(self.descriptor, &info) == 0 else { throw self.failure("inspect reservation") }
++            if info.st_size == 0 { return nil }
++            guard info.st_size > 0, info.st_size <= 2048 else { throw GateError.invalidReservation(path: self.path) }
++            var data = Data(count: Int(info.st_size))
++            let count = data.withUnsafeMutableBytes { pread(self.descriptor, $0.baseAddress!, $0.count, 0) }
++            guard count == data.count,
++                  let value = try? JSONDecoder().decode(Reservation.self, from: data),
++                  value.version == 1, value.pid > 0, value.processStartIdentity > 0, value.windowID > 0
++            else { throw GateError.invalidReservation(path: self.path) }
++            return value
++        }
++
++        func write(_ value: Reservation?) throws {
++            let data = try value.map { try JSONEncoder().encode($0) } ?? Data()
++            guard ftruncate(self.descriptor, 0) == 0 else { throw self.failure("truncate reservation") }
++            var offset = 0
++            while offset < data.count {
++                let written = data.withUnsafeBytes {
++                    pwrite(self.descriptor, $0.baseAddress!.advanced(by: offset), $0.count - offset, off_t(offset))
++                }
++                if written < 0, errno == EINTR { continue }
++                guard written > 0 else { throw self.failure("write reservation") }
++                offset += written
++            }
++            guard fsync(self.descriptor) == 0 else { throw self.failure("sync reservation") }
++            self.reservation = value
++        }
++
++        private func failure(_ operation: String) -> GateError {
++            .systemCall(operation: operation, path: self.path, code: errno)
++        }
++    }
++
++    /// Called synchronously immediately before primary paste-key delivery, never after it.
++    /// The deferred proof is bounded and read-only; it must not retain the prior clipboard backup.
++    @MainActor
++    public static func reservePaste(
++        process: ApplicationProcessIdentity, windowID: Int,
++        canRelease: @escaping @MainActor @Sendable () async -> Bool) throws -> UUID
++    {
++        guard let transaction, transaction.active, transaction.reservation == nil else {
++            throw GateError.transactionUnavailable
++        }
++        let value = Reservation(version: 1, id: UUID(), pid: process.processIdentifier,
++                                processStartIdentity: process.processStartIdentity, windowID: windowID)
++        // A failed metadata write cannot be followed by V delivery. Preserve uncertain disk state on cleanup failure.
++        transaction.reservation = value
++        do { try transaction.write(value) }
++        catch {
++            try? transaction.write(nil)
++            throw error
++        }
++        self.pendingProof = PendingProof(id: value.id, path: transaction.path, canRelease: canRelease)
++        return value.id
++    }
++
++    @MainActor
++    public static func releasePaste(_ id: UUID) throws {
++        guard let transaction, transaction.active, transaction.reservation?.id == id else {
++            throw GateError.transactionUnavailable
++        }
++        try transaction.write(nil)
++        if self.pendingProof?.id == id { self.pendingProof = nil }
++    }
++
++    @MainActor
++    public static var hasUnresolvedPaste: Bool { self.transaction?.reservation != nil }
++
++    @MainActor
++    private static func admit(_ transaction: Transaction) async throws {
++        transaction.reservation = try transaction.read()
++        guard let reservation = transaction.reservation else {
++            if self.pendingProof?.path == transaction.path { self.pendingProof = nil }
++            return
++        }
++        var resolved = self.processGenerationTerminated(reservation)
++        if !resolved, let proof = self.pendingProof,
++           proof.path == transaction.path, proof.id == reservation.id
++        {
++            resolved = await proof.canRelease()
++        }
++        if resolved {
++            try self.releasePaste(reservation.id)
++            return
++        }
++        throw DesktopActionFailure.preDispatchRefusal(
++            reason: .targetUnavailable,
++            message: "A previous clipboard paste to process \(reservation.pid), window \(reservation.windowID) remains unresolved.",
++            hint: "No new clipboard mutation was sent. Inspect the original receiver; its observed consumption or original process termination must resolve ownership first.")
++    }
++
++    private static func processGenerationTerminated(_ reservation: Reservation) -> Bool {
++        switch SystemIdentityResolver.processStartIdentityObservation(reservation.pid) {
++        case let .identity(current): current != reservation.processStartIdentity
++        case .absent: true
++        case .permissionDenied, .unavailable: false
++        }
++    }
+ 
+     @MainActor
+     public static func withExclusiveTransaction<T: Sendable>(
+@@ -164,7 +298,21 @@
+         defer { flock(fd, LOCK_UN) }
+ 
+         try self.checkLockDeadline(deadline, now: now(), path: standardizedLockPath)
+-        return try await operation()
++        let transaction = Transaction(descriptor: fd, path: standardizedLockPath)
++        defer { transaction.active = false }
++        return try await Self.$transaction.withValue(transaction) {
++            do { try await self.admit(transaction) }
++            catch is CancellationError { throw CancellationError() }
++            catch let failure as DesktopActionFailure { throw failure }
++            catch {
++                throw DesktopActionFailure.preDispatchRefusal(
++                    reason: .targetUnavailable,
++                    message: "Shared clipboard ownership could not be verified before this operation.",
++                    hint: error.localizedDescription)
++            }
++            try Task.checkCancellation()
++            return try await operation()
++        }
+     }
+ 
+     @MainActor
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardService.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardService.swift
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardService.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardService.swift
+@@ -288,10 +288,19 @@
+         return .init(policy: policy)
+     }
+ 
++    var literalInsertChangeCount: Int { self.pasteboard.changeCount }
++
+     public func prepareTemporaryWrite() throws -> any ClipboardTemporaryWriteTransaction {
++        try self.prepareTemporaryWrite(maximumBytes: Int.max, maximumItems: Int.max, maximumRepresentations: Int.max)
++    }
++
++    public func prepareTemporaryWrite(
++        maximumBytes: Int, maximumItems: Int, maximumRepresentations: Int) throws -> any ClipboardTemporaryWriteTransaction
++    {
+         try Self.requireSilentReadAccess(self.readAccessStatus())
+         let originalChangeCount = self.pasteboard.changeCount
+-        let items = try self.temporarySnapshotItems()
++        let items = try self.temporarySnapshotItems(
++            maximumBytes: maximumBytes, maximumItems: maximumItems, maximumRepresentations: maximumRepresentations)
+         guard self.pasteboard.changeCount == originalChangeCount else {
+             throw ClipboardTemporaryWriteError.snapshotChanged
+         }
+@@ -326,7 +335,9 @@
+         }
+     }
+ 
+-    private func temporarySnapshotItems() throws -> [[ClipboardRepresentation]] {
++    private func temporarySnapshotItems(
++        maximumBytes: Int, maximumItems: Int, maximumRepresentations: Int) throws -> [[ClipboardRepresentation]]
++    {
+         guard let items = self.pasteboard.pasteboardItems else {
+             throw ClipboardTemporaryWriteError.snapshotUnavailable
+         }
+@@ -336,14 +347,24 @@
+             }
+             return []
+         }
++        guard items.count <= maximumItems else { throw ClipboardTemporaryWriteError.snapshotUnavailable }
++        var bytes = 0
++        var representations = 0
+         return try items.map { item in
+             guard !item.types.isEmpty else {
+                 throw ClipboardTemporaryWriteError.snapshotUnavailable
+             }
++            representations += item.types.count
++            guard representations <= maximumRepresentations else { throw ClipboardTemporaryWriteError.snapshotUnavailable }
+             return try item.types.map { type in
++                guard !type.rawValue.localizedCaseInsensitiveContains("promise") else {
++                    throw ClipboardTemporaryWriteError.snapshotUnavailable
++                }
+                 guard let data = item.data(forType: type) else {
+                     throw ClipboardTemporaryWriteError.snapshotUnavailable
+                 }
++                guard data.count <= maximumBytes - bytes else { throw ClipboardTemporaryWriteError.snapshotUnavailable }
++                bytes += data.count
+                 return ClipboardRepresentation(utiIdentifier: type.rawValue, data: data)
+             }
+         }
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService.swift
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService.swift
+@@ -197,6 +197,8 @@
+         automationTarget: UIAutomationTarget,
+         clipboardClaim: GeneralPasteboardWriteClaim? = nil,
+         prepareBackgroundWindow: Bool = false,
++        laneIsOwned: Bool = false,
++        beforePrimaryKeyDown: (@MainActor @Sendable () throws -> Void)? = nil,
+         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil) async throws
+         -> UIAutomationActionResult<UIInputExecutionResult>
+     {
+@@ -209,8 +211,9 @@
+         try BackgroundHotkeyPolicy.validate(keys: keys)
+         let parsedKeys = try Self.parsedKeys(keys)
+         let plannedChord = try? self.makeHotkeyPlan(parsedKeys)
+-        if clipboardClaim != nil || prepareBackgroundWindow {
++        if clipboardClaim != nil || prepareBackgroundWindow || beforePrimaryKeyDown != nil {
+             guard automationTarget.exactWindow != nil, holdDuration > 0,
++                  beforePrimaryKeyDown == nil || clipboardClaim != nil,
+                   !prepareBackgroundWindow ||
+                   (clipboardClaim != nil && automationTarget.exactWindow?.focusedElement != nil),
+                   let plannedChord,
+@@ -329,7 +332,8 @@
+                     let outcome = try await self.performTargetedHotkey(
+                         parsedKeys: parsedKeys, plannedChord: plannedChord, holdDuration: holdDuration,
+                         holdNanoseconds: holdNanoseconds,
+-                        automationTarget: automationTarget, targetValidator: targetValidator)
++                        automationTarget: automationTarget, targetValidator: targetValidator,
++                        beforePrimaryKeyDown: beforePrimaryKeyDown)
+                     guard prepareBackgroundWindow else { return outcome }
+                     preparation.record(.outcome(outcome))
+                     guard let result = preparation.successResolution().outcome else {
+@@ -347,7 +351,12 @@
+             finalize: self.operationFinalizer)
+         let result: UIAutomationActionResult<UIInputExecutionResult>
+         do {
+-            result = try await self.desktopOperationExecutor.executeWithTargetIdentity(plan)
++            if laneIsOwned {
++                let owned = try await self.desktopOperationExecutor.executeOwned(plan)
++                result = UIAutomationActionResult(payload: owned, outcome: owned.outcome, targetIdentity: try plan.targetIdentity())
++            } else {
++                result = try await self.desktopOperationExecutor.executeWithTargetIdentity(plan)
++            }
+         } catch let error as ActionInputError where error == .unsupported(.actionUnsupported) &&
+             automationTarget.exactWindow != nil &&
+             strategy.strategy == .actionOnly
+@@ -368,7 +377,8 @@
+         holdDuration: Int,
+         holdNanoseconds: UInt64,
+         automationTarget: UIAutomationTarget,
+-        targetValidator: @escaping @MainActor @Sendable () async throws -> Void) async throws -> DesktopActionOutcome
++        targetValidator: @escaping @MainActor @Sendable () async throws -> Void,
++        beforePrimaryKeyDown: (@MainActor @Sendable () throws -> Void)?) async throws -> DesktopActionOutcome
+     {
+         guard let targetProcessIdentifier = automationTarget.processIdentifier else {
+             throw PeekabooError.invalidInput("Targeted hotkey requires a process target")
+@@ -383,7 +393,8 @@
+             holdNanoseconds: holdNanoseconds,
+             targetProcessIdentifier: targetProcessIdentifier,
+             deliveryValidator: targetValidator,
+-            cleanupProcessIdentity: automationTarget.exactWindow?.identity.processIdentity)
++            cleanupProcessIdentity: automationTarget.exactWindow?.identity.processIdentity,
++            beforePrimaryKeyDown: beforePrimaryKeyDown)
+ 
+         do {
+             if holdDuration <= 0 {
+@@ -458,7 +469,8 @@
+         holdNanoseconds: UInt64,
+         targetProcessIdentifier: pid_t,
+         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
+-        cleanupProcessIdentity: ApplicationProcessIdentity? = nil) async throws
++        cleanupProcessIdentity: ApplicationProcessIdentity? = nil,
++        beforePrimaryKeyDown: (@MainActor @Sendable () throws -> Void)? = nil) async throws
+         -> Int
+     {
+         guard self.postEventAccessEvaluator() else {
+@@ -476,7 +488,8 @@
+                 holdNanoseconds: holdNanoseconds,
+                 targetProcessIdentifier: targetProcessIdentifier,
+                 deliveryValidator: deliveryValidator,
+-                cleanupProcessIdentity: cleanupProcessIdentity)
++                cleanupProcessIdentity: cleanupProcessIdentity,
++                beforePrimaryKeyDown: beforePrimaryKeyDown)
+         }
+ 
+         var pressedModifierKeyCodes: Set<Int64> = []
+@@ -544,7 +557,8 @@
+         holdNanoseconds: UInt64,
+         targetProcessIdentifier: pid_t,
+         deliveryValidator: (@MainActor @Sendable () async throws -> Void)?,
+-        cleanupProcessIdentity: ApplicationProcessIdentity) async throws -> Int
++        cleanupProcessIdentity: ApplicationProcessIdentity,
++        beforePrimaryKeyDown: (@MainActor @Sendable () throws -> Void)?) async throws -> Int
+     {
+         var state = HeldHotkeyState()
+ 
+@@ -567,6 +581,7 @@
+             try await self.validateDelivery(
+                 deliveryValidator,
+                 emittedUnitCount: state.emittedUnitCount)
++            try beforePrimaryKeyDown?()
+             state.primaryKeyIsDown = true
+             self.eventPoster(eventPlan.primaryKeyDownEvent, targetProcessIdentifier)
+             state.emittedUnitCount += 1
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/LiteralInsert.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/LiteralInsert.swift
+new file mode 100644
+--- /dev/null
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/LiteralInsert.swift
+@@ -0,0 +1,315 @@
++import AppKit
++import ApplicationServices
++import Foundation
++import PeekabooFoundation
++
++public struct LiteralInsertError: Codable, Sendable {
++    public let code: String
++    public let message: String
++    public var hint: String?
++    public var cause: String?
++
++    public init(code: String, message: String, hint: String? = nil, cause: String? = nil) {
++        self.code = code; self.message = message; self.hint = hint; self.cause = cause
++    }
++}
++
++public struct LiteralInsertReceipt: Codable, Sendable {
++    public let pid: Int32
++    public let window_id: Int
++    public let process_start_identity_decimal: String
++}
++
++/// Clipboard contents and the private text comparison never enter the response.
++public struct LiteralInsertResult: Codable, Sendable {
++    public var outcome: String
++    public var native_outcome: DesktopActionOutcome?
++    public let target_receipt: LiteralInsertReceipt?
++    public var clipboard_changed = false
++    public var clipboard_cleanup = "not_needed"
++    public var clipboard_ownership = "released"
++    public var consumption = "unverified"
++    public var requires_fresh_observation = false
++    public var error: LiteralInsertError?
++}
++
++@MainActor
++public protocol LiteralInsertServiceProtocol: UIAutomationServiceProtocol {
++    func literalInsert(
++        text: String, target: UIAutomationTarget.ExactWindow, clipboard: ClipboardService,
++        checkActive: @escaping @MainActor @Sendable () throws -> Void) async throws -> LiteralInsertResult
++}
++
++@MainActor
++private final class LiteralInsertReservation {
++    var token: UUID?
++    var resolved = false
++}
++
++extension UIAutomationService: LiteralInsertServiceProtocol {
++    public func literalInsert(
++        text: String, target: UIAutomationTarget.ExactWindow, clipboard: ClipboardService,
++        checkActive: @escaping @MainActor @Sendable () throws -> Void) async throws -> LiteralInsertResult
++    {
++        guard !text.isEmpty, text.utf16.count <= 8192, target.focusedElement != nil else {
++            throw Self.literalInsertRefusal("Literal insertion requires 1–8192 UTF-16 units and an exact focused receiver.")
++        }
++        do {
++            return try await self.operationLaneCoordinator.run(scope: .process(target.identity.processIdentity), access: .write) {
++                try await self.insertLiteralText(text, target: target, clipboard: clipboard, checkActive: checkActive)
++            }
++        } catch is CancellationError { throw CancellationError() }
++        catch let failure as DesktopActionFailure { throw failure }
++        catch { throw Self.literalInsertRefusal("Literal insertion could not establish its read-only preflight: \(error.localizedDescription)") }
++    }
++
++    private func insertLiteralText(
++        _ text: String, target: UIAutomationTarget.ExactWindow, clipboard: ClipboardService,
++        checkActive: @escaping @MainActor @Sendable () throws -> Void) async throws -> LiteralInsertResult
++    {
++        try checkActive()
++        let focused = try await self.requireExactWindowKeyboardFocus(
++            expectedWindowIdentity: target.identity, expectedWindowBounds: target.bounds,
++            expectedFocusedElement: target.focusedElement)
++        guard let retained = focused.nativeElement,
++              let baseline = try await self.literalInsertState(target, retained: retained),
++              let range = Range(NSRange(location: baseline.location, length: baseline.length), in: baseline.text)
++        else { throw Self.literalInsertRefusal("The exact receiver's complete text and selection cannot be read safely.") }
++        let expectedText = baseline.text.replacingCharacters(in: range, with: text)
++        guard expectedText.utf16.count <= 65_536 else {
++            throw Self.literalInsertRefusal("The intended edit exceeds the complete text verification limit.")
++        }
++        let expectedLocation = baseline.location + text.utf16.count
++        let meaningful = !baseline.matches(text: expectedText, location: expectedLocation, length: 0)
++        guard let transaction = try clipboard.prepareTemporaryWrite(
++            maximumBytes: 32 * 1024 * 1024, maximumItems: 128, maximumRepresentations: 512
++        ) as? any ClipboardTemporaryWriteClaimProviding else {
++            throw Self.literalInsertRefusal("The native clipboard owner cannot retain a generation claim.")
++        }
++        var result = LiteralInsertResult(outcome: "refused", target_receipt: .init(
++            pid: target.identity.ownerProcessIdentifier, window_id: target.identity.windowID,
++            process_start_identity_decimal: String(target.identity.ownerProcessStartIdentity)))
++        var possibleInput = false
++        var claim: GeneralPasteboardWriteClaim?
++        let reservation = LiteralInsertReservation()
++        do {
++            try checkActive()
++            try await self.validateLiteralInsertBaseline(baseline, target: target, retained: retained)
++            let prepareBackgroundWindow = !Self.literalInsertTargetIsActive(target)
++            try checkActive()
++            let write = ClipboardWriteRequest(representations: ClipboardWriteRequest.textRepresentations(from: Data(text.utf8)))
++            let written = try transaction.writeWithClaim(write)
++            claim = written.claim
++            let writeClaim = written.claim
++            try checkActive()
++            possibleInput = true
++            let input = try await self.hotkeyService.hotkey(
++                keys: "cmd,v", holdDuration: 50, automationTarget: .exactWindow(target),
++                clipboardClaim: written.claim, prepareBackgroundWindow: prepareBackgroundWindow, laneIsOwned: true,
++                beforePrimaryKeyDown: {
++                    let token = try ClipboardPasteTransactionGate.reservePaste(
++                        process: target.identity.processIdentity, windowID: target.identity.windowID)
++                    {
++                        if reservation.resolved { return true }
++                        guard meaningful, clipboard.literalInsertChangeCount == writeClaim.changeCount else { return false }
++                        do {
++                            let observed = try await self.literalInsertState(target, retained: retained)
++                            return observed?.matches(text: expectedText, location: expectedLocation, length: 0) == true
++                                && clipboard.literalInsertChangeCount == writeClaim.changeCount
++                        } catch { return false }
++                    }
++                    reservation.token = token
++                    do {
++                        // Persistence can block; cancellation and ownership must still hold before V is posted.
++                        try checkActive()
++                        guard clipboard.literalInsertChangeCount == writeClaim.changeCount,
++                              SystemIdentityResolver.processStartIdentity(target.identity.ownerProcessIdentifier)
++                                == target.identity.ownerProcessStartIdentity else {
++                            throw Self.literalInsertRefusal("Clipboard ownership or the original receiving process changed before paste delivery.")
++                        }
++                        guard prepareBackgroundWindow || Self.literalInsertTargetIsActive(target) else {
++                            throw Self.literalInsertRefusal("The exact receiving app is no longer active; observe it before another insertion.")
++                        }
++                    } catch {
++                        reservation.resolved = true
++                        try? ClipboardPasteTransactionGate.releasePaste(token)
++                        reservation.token = nil
++                        throw error
++                    }
++                },
++                deliveryValidator: {
++                    try checkActive()
++                    try await self.validateLiteralInsertBaseline(baseline, target: target, retained: retained)
++                    guard prepareBackgroundWindow || Self.literalInsertTargetIsActive(target) else {
++                        throw Self.literalInsertRefusal("The exact receiving app is no longer active; observe it before another insertion.")
++                    }
++                })
++            result.native_outcome = input.outcome
++            guard let outcome = input.outcome, let actual = input.targetIdentity?.exactWindow,
++                  actual.identity.hasSameStableReceipt(as: target.identity), actual.bounds == target.bounds
++            else {
++                throw DesktopActionFailure.indeterminate(evidence: .completionUnknown,
++                    message: "Literal insertion returned without its expected exact-window delivery receipt.")
++            }
++            possibleInput = outcome.dispatchState.mutationDispatched
++            result.outcome = outcome.state == .refused ? "refused" : "unknown"
++        } catch let failure as DesktopActionFailure {
++            result.native_outcome = failure.outcome
++            possibleInput = failure.outcome.dispatchState.mutationDispatched
++            result.outcome = possibleInput ? "unknown" : "refused"
++            result.error = .init(code: failure.standardErrorCode?.rawValue ?? "LITERAL_INSERT_FAILED",
++                                message: failure.message, hint: failure.hint, cause: failure.causeDescription)
++        } catch let error as InputDeliveryIndeterminateError {
++            let failure = error.desktopActionFailure(delivery: .init(mechanism: .windowTargetedEvents, mode: .background))
++            result.native_outcome = failure.outcome
++            possibleInput = true
++            result.outcome = "unknown"
++            result.error = .init(code: "LITERAL_INSERT_FAILED", message: failure.message, hint: failure.hint, cause: failure.causeDescription)
++        } catch {
++            result.outcome = possibleInput ? "unknown" : "refused"
++            result.error = .init(code: "LITERAL_INSERT_FAILED", message: error.localizedDescription)
++        }
++        result.clipboard_changed = transaction.didMutate
++        result.requires_fresh_observation = possibleInput
++        if possibleInput, meaningful, let claim {
++            do {
++                let deadline = ContinuousClock.now.advanced(by: .seconds(2))
++                while ContinuousClock.now < deadline {
++                    try checkActive()
++                    guard clipboard.literalInsertChangeCount == claim.changeCount,
++                          SystemIdentityResolver.processStartIdentity(target.identity.ownerProcessIdentifier)
++                            == target.identity.ownerProcessStartIdentity else { break }
++                    let observed: LiteralInsertState?
++                    do {
++                        observed = try await self.literalInsertState(target, retained: retained)
++                    } catch is CancellationError { throw CancellationError() }
++                    catch { observed = nil }
++                    if observed?.matches(text: expectedText, location: expectedLocation, length: 0) == true {
++                        result.consumption = "observed"
++                        reservation.resolved = true
++                        if let token = reservation.token {
++                            do { try ClipboardPasteTransactionGate.releasePaste(token) }
++                            catch {
++                                result.error = .init(code: "CLIPBOARD_OWNERSHIP_RELEASE_FAILED",
++                                    message: "The edit was observed, but shared clipboard ownership could not be released.")
++                            }
++                        }
++                        if result.native_outcome?.state == .dispatchedUnverified || result.native_outcome?.state == .confirmedChange {
++                            result.outcome = "completed"
++                        }
++                        break
++                    }
++                    try await Task.sleep(for: .milliseconds(20))
++                }
++            } catch {
++                // Read-only verification cannot erase delivered input or authorize a retry.
++                if result.error == nil {
++                    result.error = .init(code: "INSERTION_UNVERIFIED", message: "The receiver's text change was not confirmed.")
++                }
++            }
++        }
++        if reservation.token == nil || result.consumption == "observed" {
++            do { result.clipboard_cleanup = try transaction.cleanup().status.rawValue }
++            catch {
++                result.clipboard_cleanup = "failed"
++                if result.error == nil {
++                    result.error = .init(code: "CLIPBOARD_CLEANUP_FAILED", message: "The prior clipboard could not be restored; input delivery is reported separately.")
++                }
++            }
++        } else {
++            // Cleanup is explicit, never a deinit action. Dropping the private backup cannot expose it to a delayed Cmd+V.
++            result.clipboard_cleanup = claim.map { clipboard.literalInsertChangeCount == $0.changeCount }
++                == true ? "retained_unverified" : "preserved_newer_contents"
++            if result.error == nil {
++                result.error = .init(code: "INSERTION_UNVERIFIED",
++                    message: "Cmd+V may still be pending. The previous clipboard was not restored.",
++                    hint: "Inspect the exact receiver before another input; do not repeat the insertion blindly.")
++            }
++        }
++        result.clipboard_ownership = ClipboardPasteTransactionGate.hasUnresolvedPaste ? "reserved" : "released"
++        guard result.clipboard_changed else {
++            throw Self.literalInsertRefusal(result.error?.message ?? "Literal insertion was refused before clipboard mutation.")
++        }
++        return result
++    }
++
++    private func validateLiteralInsertBaseline(
++        _ baseline: LiteralInsertState, target: UIAutomationTarget.ExactWindow, retained: RetainedFocusElement) async throws
++    {
++        do {
++            let focus = try await self.requireExactWindowKeyboardFocus(
++                expectedWindowIdentity: target.identity, expectedWindowBounds: target.bounds,
++                expectedFocusedElement: target.focusedElement)
++            guard focus.nativeElement == retained,
++                  let current = try await self.literalInsertState(target, retained: retained),
++                  current.matches(text: baseline.text, location: baseline.location, length: baseline.length)
++            else { throw Self.literalInsertRefusal("The exact text receiver or its selection changed before insertion.") }
++        } catch is CancellationError { throw CancellationError() }
++        catch let failure as DesktopActionFailure { throw failure }
++        catch { throw Self.literalInsertRefusal("The exact focused receiver could not be revalidated before insertion.") }
++    }
++
++    private func literalInsertState(
++        _ target: UIAutomationTarget.ExactWindow, retained: RetainedFocusElement) async throws -> LiteralInsertState?
++    {
++        guard let expected = target.focusedElement else { return nil }
++        let identity = target.identity
++        return try await ElementDetectionTimeoutRunner.runDetached(
++            targetProcessIdentifier: identity.ownerProcessIdentifier,
++            targetProcessStartIdentity: identity.ownerProcessStartIdentity, seconds: 0.2)
++        {
++            LiteralInsertState.read(expected: expected, retained: retained, target: target)
++        }
++    }
++
++    private static func literalInsertTargetIsActive(_ target: UIAutomationTarget.ExactWindow) -> Bool {
++        guard let application = NSWorkspace.shared.frontmostApplication,
++              application.processIdentifier == target.identity.ownerProcessIdentifier,
++              application.isActive,
++              SystemIdentityResolver.processStartIdentity(application.processIdentifier)
++                == target.identity.ownerProcessStartIdentity else { return false }
++        return true
++    }
++
++    private static func literalInsertRefusal(_ message: String) -> DesktopActionFailure {
++        .preDispatchRefusal(reason: .targetUnavailable, message: message)
++    }
++}
++
++private struct LiteralInsertState: Sendable {
++    let text: String
++    let location: Int
++    let length: Int
++
++    func matches(text: String, location: Int, length: Int) -> Bool {
++        self.text.utf16.elementsEqual(text.utf16) && self.location == location && self.length == length
++    }
++
++    static func read(
++        expected: FocusedElementIdentity, retained: RetainedFocusElement,
++        target: UIAutomationTarget.ExactWindow) -> Self?
++    {
++        guard SystemIdentityResolver.processStartIdentity(target.identity.ownerProcessIdentifier) == target.identity.ownerProcessStartIdentity,
++              case let .success(before) = DetachedExactWindowFocusReader.readValue(expected: expected, retainedElement: retained),
++              let text = before.value, text.utf16.count <= 65_536,
++              before.nativeElement == retained, target.bounds.contains(CGPoint(x: before.frame.midX, y: before.frame.midY))
++        else { return nil }
++        let element = retained.element
++        AXUIElementSetMessagingTimeout(element, 0.05)
++        defer { AXUIElementSetMessagingTimeout(element, 0) }
++        var value: CFTypeRef?
++        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value) == .success,
++              let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
++        let selection = unsafeDowncast(value, to: AXValue.self)
++        var range = CFRange()
++        guard AXValueGetType(selection) == .cfRange, AXValueGetValue(selection, .cfRange, &range),
++              range.location >= 0, range.length >= 0, range.location <= text.utf16.count,
++              range.length <= text.utf16.count - range.location,
++              case let .success(after) = DetachedExactWindowFocusReader.readValue(expected: expected, retainedElement: retained),
++              after.nativeElement == retained, let current = after.value, current.utf16.elementsEqual(text.utf16),
++              target.bounds.contains(CGPoint(x: after.frame.midX, y: after.frame.midY)),
++              SystemIdentityResolver.processStartIdentity(target.identity.ownerProcessIdentifier) == target.identity.ownerProcessStartIdentity
++        else { return nil }
++        return Self(text: text, location: range.location, length: range.length)
++    }
++}
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeLiteralInsert.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeLiteralInsert.swift
+new file mode 100644
+--- /dev/null
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeLiteralInsert.swift
+@@ -0,0 +1,71 @@
++import Foundation
++import PeekabooAutomationKit
++import PeekabooFoundation
++
++public typealias PeekabooBridgeLiteralInsertResult = LiteralInsertResult
++
++public struct PeekabooBridgeLiteralInsertRequest: Codable, Sendable {
++    public let snapshot: String
++    public let text: String
++
++    public init(snapshot: String, text: String) { self.snapshot = snapshot; self.text = text }
++}
++
++extension PeekabooBridgeClient {
++    public func literalInsert(snapshot: String, text: String) async throws -> PeekabooBridgeLiteralInsertResult {
++        guard case let .literalInsert(result) = try await self.send(.literalInsert(.init(snapshot: snapshot, text: text))) else {
++            throw PeekabooBridgeErrorEnvelope(code: .internalError, message: "Unexpected literal insertion response")
++        }
++        return result
++    }
++}
++
++@MainActor
++extension PeekabooBridgeServer {
++    func handleLiteralInsert(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeHandledResponse {
++        try await ClipboardPasteTransactionGate.withExclusiveTransaction {
++            try PeekabooBridgeRequestContext.checkRequestIsActive()
++            guard case let .literalInsert(payload) = request,
++                  !payload.snapshot.isEmpty, payload.snapshot.utf16.count <= 256,
++                  !payload.text.isEmpty, payload.text.utf16.count <= 8192,
++                  try await self.services.snapshots.ownsSnapshot(snapshotId: payload.snapshot),
++                  let detection = try await self.services.snapshots.getDetectionResult(snapshotId: payload.snapshot),
++                  let context = detection.metadata.windowContext,
++                  let identity = context.windowMutationIdentity,
++                  let bounds = context.windowBounds,
++                  context.windowID == identity.windowID,
++                  context.applicationProcessId == identity.ownerProcessIdentifier,
++                  let focused = context.focusedElement,
++                  let service = self.services.automation as? any LiteralInsertServiceProtocol
++            else {
++                throw DesktopActionFailure.preDispatchRefusal(reason: .targetUnavailable,
++                    message: "Inspect an exact window with a readable focused text control before inserting text.")
++            }
++            let lease = try await self.services.snapshots.beginSnapshotMutation(snapshotId: payload.snapshot)
++            var result: LiteralInsertResult
++            do {
++                result = try await service.literalInsert(
++                    text: payload.text, target: .init(identity: identity, bounds: bounds, focusedElement: focused),
++                    clipboard: self.literalInsertClipboard,
++                    checkActive: { try PeekabooBridgeRequestContext.checkRequestIsActive() })
++            } catch {
++                try? await self.services.snapshots.finishSnapshotMutation(lease, requiresFreshObservation: true)
++                throw error
++            }
++            do {
++                try await self.services.snapshots.finishSnapshotMutation(lease,
++                    requiresFreshObservation: result.requires_fresh_observation)
++            } catch {
++                result.requires_fresh_observation = true
++                if result.error == nil {
++                    result.error = .init(code: "SNAPSHOT_FINISH_FAILED",
++                        message: "The insertion result is retained; inspect again before another input.")
++                }
++            }
++            // The signed global receipt binds this GUI-owned clipboard transaction and its nested exact target/result.
++            return .init(response: .literalInsert(result), mutation: .init(
++                outcome: .dispatchedUnverified(delivery: ClipboardMutationResultSemantics.delivery,
++                                              evidence: .deliveryAccepted, unitCount: .one), target: .global))
++        }
++    }
++}
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
+@@ -36,6 +36,7 @@
+ 
+ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Hashable {
+     // Core
++    case literalInsert
+     case permissionsStatus
+     case requestPostEventPermission
+     case daemonStatus
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
+@@ -29,6 +29,7 @@
+ 
+     /// Operations enabled by default for remote helper hosts.
+     public static let remoteDefaultAllowlist: Set<PeekabooBridgeOperation> = [
++        .literalInsert,
+         .permissionsStatus,
+         .requestPostEventPermission,
+         .daemonStatus,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
+@@ -60,6 +60,10 @@
+         }
+ 
+         return switch operation {
++        case .literalInsert:
++            descriptor(ownership: .service, requiredPermissions: [.accessibility, .postEvent],
++                       completion: .dispatchedUnverified(clipboardForeground),
++                       targetPolicy: .global, responseFamilies: [.literalInsert])
+         case .permissionsStatus:
+             descriptor(
+                 completion: .readOnly,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseFamily.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseFamily.swift
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseFamily.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseFamily.swift
+@@ -3,7 +3,8 @@
+ extension PeekabooBridgeOperationResultSemantics.ResponseFamily {
+     func matches(_ response: PeekabooBridgeResponse) -> Bool {
+         switch (self, response) {
+-        case (.agentExecutionTrace, .agentExecutionTrace),
++        case (.literalInsert, .literalInsert),
++             (.agentExecutionTrace, .agentExecutionTrace),
+              (.application, .application),
+              (.applicationMutationInventory, .applicationMutationInventory),
+              (.applications, .applications),
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseTargetEvidence.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseTargetEvidence.swift
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseTargetEvidence.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseTargetEvidence.swift
+@@ -123,7 +123,8 @@
+                 bounds: termination.receipt.windowBounds)]
+         case let .error(envelope):
+             return envelope.actionTargetReceipt.map { [DesktopTargetEvidenceAdapter.evidence(receipt: $0)] } ?? []
+-        case .operationSessionRollover,
++        case .literalInsert,
++             .operationSessionRollover,
+              .handshake,
+              .permissionsStatus,
+              .daemonStatus,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultContracts.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultContracts.swift
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultContracts.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultContracts.swift
+@@ -54,6 +54,7 @@
+     }
+ 
+     enum ResponseFamily: Hashable, Sendable {
++        case literalInsert
+         case agentExecutionTrace
+         case application
+         case applicationMutationInventory
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
+@@ -446,7 +446,8 @@
+             .performAction(target: payload.target, actionName: payload.actionName)
+         case let .selectText(payload):
+             .selectText(target: payload.target, request: payload.request)
+-        case .attestedOperation,
++        case .literalInsert,
++             .attestedOperation,
+              .projectedAction,
+              .handshake,
+              .permissionsStatus,
+@@ -596,7 +597,7 @@
+             .suspectedNoop,
+         ]
+         switch request.operation {
+-        case .agentExecutionTrace:
++        case .literalInsert, .agentExecutionTrace:
+             return [.dispatchedUnverified]
+         case .requestPostEventPermission, .browserExecute, .swipe, .drag, .moveMouse,
+              .clickMenuItem, .clickMenuItemByName, .clickMenuExtra,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequest+DesktopMutation.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequest+DesktopMutation.swift
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequest+DesktopMutation.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequest+DesktopMutation.swift
+@@ -247,7 +247,7 @@
+     /// never own the desktop lane or mutation watermark: its child re-enters this same Bridge and
+     /// each nested tool call owns its own exact-target lane and signed receipt.
+     var bypassesOuterDesktopMutationLane: Bool {
+-        self.unwrappedOperationRequest.operation == .agentExecutionTrace
++        [.agentExecutionTrace, .literalInsert].contains(self.unwrappedOperationRequest.operation)
+     }
+ }
+ 
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
+@@ -6,6 +6,7 @@
+     indirect case attestedOperation(PeekabooBridgeAttestedOperationRequest)
+     indirect case projectedAction(PeekabooBridgeProjectedActionRequest)
+     case handshake(PeekabooBridgeHandshake)
++    case literalInsert(PeekabooBridgeLiteralInsertRequest)
+     case permissionsStatus
+     case requestPostEventPermission
+     case daemonStatus
+@@ -134,6 +135,7 @@
+         case let .attestedOperation(payload): payload.request.operation
+         case let .projectedAction(payload): payload.request.operation
+         case .handshake: .permissionsStatus
++        case .literalInsert: .literalInsert
+         case .permissionsStatus: .permissionsStatus
+         case .requestPostEventPermission: .requestPostEventPermission
+         case .daemonStatus: .daemonStatus
+@@ -262,6 +264,7 @@
+     case operationSessionRollover(PeekabooBridgeOperationSessionRefusal)
+     indirect case projectedAction(PeekabooBridgeProjectedActionResponse)
+     case handshake(PeekabooBridgeHandshakeResponse)
++    case literalInsert(PeekabooBridgeLiteralInsertResult)
+     case permissionsStatus(PermissionsStatus)
+     case daemonStatus(PeekabooDaemonStatus)
+     case agentExecutionTrace(PeekabooBridgeAgentExecutionTraceResponse)
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
+@@ -12,6 +12,8 @@
+         permissions: PermissionsStatus) async throws -> PeekabooBridgeHandledResponse
+     {
+         switch request.operation {
++        case .literalInsert:
++            return try await self.handleLiteralInsert(request)
+         case .permissionsStatus, .daemonStatus, .daemonStop:
+             return try await .init(
+                 response: self.handleCoreRequest(request, peer: peer, permissions: permissions))
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer.swift
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer.swift
+@@ -105,6 +105,7 @@
+         }
+     }
+ 
++    let literalInsertClipboard = ClipboardService()
+     let services: any PeekabooBridgeServiceProviding
+     let hostKind: PeekabooBridgeHostKind
+     let allowlistedTeams: Set<String>

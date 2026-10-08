@@ -1,0 +1,197 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ActionInputDriver.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ActionInputDriver.swift
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ActionInputDriver.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ActionInputDriver.swift
+@@ -171,8 +171,16 @@
+         allowAccessibilityValueFallback: Bool,
+         beforeMutation: @MainActor () throws -> Void = {}) async throws -> UIInputExecutionResult.Action
+     {
++        // WebKit text controls may accept AXPress without moving keyboard focus.
++        if allowAccessibilityValueFallback,
++           let role = element.role,
++           role == "AXTextField" || role == "AXTextArea",
++           element.isFocusedSettable
++        {
++            return try await self.focusForClick(element, beforeMutation: beforeMutation)
++        }
+         do {
+-            return try self.performAction(AXActionNames.kAXPressAction, on: element, beforeMutation: beforeMutation)
++            return try await self.performPressAction(on: element, beforeMutation: beforeMutation)
+         } catch let error as ActionInputError
+             where error == .unsupported(.actionUnsupported) &&
+             allowAccessibilityValueFallback &&
+@@ -204,7 +212,52 @@
+         }
+     }
+ 
+-    /// Issues `AXShowMenu` without waiting on the menu's tracking runloop.
++    /// Keeps the operation lane owned until native completion while allowing a self-targeted app to service AX.
++    private func performPressAction(
++        on element: any AutomationElementRepresenting,
++        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
++    {
++        guard let axElement = element.underlyingAXElement else {
++            return try self.performAction(AXActionNames.kAXPressAction, on: element, beforeMutation: beforeMutation)
++        }
++        try Task.checkCancellation()
++        guard element.supportsAction(AXActionNames.kAXPressAction) else {
++            throw ActionInputError.unsupported(.actionUnsupported)
++        }
++        // The action may remove this element; result metadata must not query it after dispatch.
++        let anchorPoint = element.anchorPoint
++        let elementRole = element.role
++        try beforeMutation()
++        try Task.checkCancellation()
++        do {
++            _ = try await DetachedAXActionRunner.perform(
++                action: AXActionNames.kAXPressAction,
++                on: axElement,
++                gracePeriod: nil)
++            return UIInputExecutionResult.Action(
++                outcome: .dispatchedUnverified(
++                    delivery: Self.accessibilityActionDelivery,
++                    evidence: .deliveryAccepted,
++                    unitCount: .one),
++                actionName: AXActionNames.kAXPressAction,
++                anchorPoint: anchorPoint,
++                elementRole: elementRole)
++        } catch {
++            let classified = Self.classify(error)
++            if Self.nativeMutationFailureMayHaveDispatched(classified) {
++                throw DesktopActionFailure.indeterminate(
++                    delivery: Self.accessibilityActionDelivery,
++                    evidence: .completionUnknown,
++                    unitCount: .one,
++                    message: "Accessibility press returned without reliable completion evidence.",
++                    hint: "Observe the exact target before retrying this click.",
++                    causeDescription: error.localizedDescription)
++            }
++            throw classified
++        }
++    }
++
++    /// Issues `AXShowMenu` without waiting on the menu's tracking runloop.
+     ///
+     /// A successful `AXShowMenu` opens an NSMenu whose tracking loop is a nested runloop on the
+     /// target app's main thread, so `AXUIElementPerformAction` does not return until the menu is
+@@ -566,9 +619,23 @@
+         let observationTarget = try await self.observationTarget(element)
+         try Self.validateBeforeMutation(beforeMutation)
+         do {
+-            try element.setAutomationFocused(true)
++            if let native = element.underlyingAXElement {
++                try await DetachedAXActionRunner.focus(on: native)
++            } else {
++                try element.setAutomationFocused(true)
++            }
+         } catch {
+-            throw Self.classify(error)
++            let classified = Self.classify(error)
++            if Self.nativeMutationFailureMayHaveDispatched(classified) {
++                throw DesktopActionFailure.indeterminate(
++                    delivery: Self.accessibilityValueDelivery,
++                    evidence: .completionUnknown,
++                    unitCount: .one,
++                    message: "Accessibility focus returned without reliable completion evidence.",
++                    hint: "Observe the exact field before deciding whether to retry focus.",
++                    causeDescription: error.localizedDescription)
++            }
++            throw classified
+         }
+         var confirmedIdentity: FocusedElementIdentity?
+         guard await self.observeMutation(
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXActionRunner.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXActionRunner.swift
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXActionRunner.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXActionRunner.swift
+@@ -24,10 +24,11 @@
+     /// modal loop should still be reported as delivered.
+     static let pressGracePeriod: TimeInterval = 2.0
+ 
++    /// A nil grace period retains the awaiting operation and its lane until the native call actually returns.
+     static func perform(
+         action actionName: String,
+         on element: AXUIElement,
+-        gracePeriod: TimeInterval) async throws -> DesktopActionOutcome
++        gracePeriod: TimeInterval?) async throws -> DesktopActionOutcome
+     {
+         let box = UncheckedAXElementBox(element: element)
+         return try await self.run(gracePeriod: gracePeriod) {
+@@ -35,13 +36,26 @@
+         }
+     }
+ 
++    /// Retains the caller's lane until the focus write returns, including after cancellation.
++    static func focus(on element: AXUIElement) async throws {
++        let box = UncheckedAXElementBox(element: element)
++        _ = try await self.run(
++            gracePeriod: nil,
++            delivery: .init(mechanism: .accessibilityValue, mode: .background))
++        {
++            AXUIElementSetAttributeValue(box.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
++        }
++    }
++
+     /// Runs `operation` on a detached thread, resolving with operation-still-running evidence if
+     /// it does not return within `gracePeriod`. Factored over a closure so tests can exercise the
+     /// race without a live accessibility element.
+     static func run(
+-        gracePeriod: TimeInterval,
++        gracePeriod: TimeInterval?,
++        delivery: DesktopActionOutcome.Delivery? = nil,
+         operation: @escaping @Sendable () -> AXError) async throws -> DesktopActionOutcome
+     {
++        let delivery = delivery ?? self.delivery
+         let gate = OneShotOutcomeGate()
+         let result = await withCheckedContinuation { (continuation: CheckedContinuation<
+             Result<DesktopActionOutcome, AccessibilitySystemError>,
+@@ -52,16 +66,18 @@
+                 let result = operation()
+                 if result == .success {
+                     gate.resume(with: .success(.dispatchedUnverified(
+-                        delivery: self.delivery,
++                        delivery: delivery,
+                         evidence: .deliveryAccepted)))
+                 } else {
+                     gate.resume(with: .failure(AccessibilitySystemError(result)))
+                 }
+             }
+-            DispatchQueue.global().asyncAfter(deadline: .now() + gracePeriod) {
+-                gate.resume(with: .success(.dispatchedUnverified(
+-                    delivery: self.delivery,
+-                    evidence: .operationStillRunning)))
++            if let gracePeriod {
++                DispatchQueue.global().asyncAfter(deadline: .now() + gracePeriod) {
++                    gate.resume(with: .success(.dispatchedUnverified(
++                        delivery: delivery,
++                        evidence: .operationStillRunning)))
++                }
+             }
+         }
+         return try result.get()
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ClickService.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ClickService.swift
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ClickService.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ClickService.swift
+@@ -193,8 +193,9 @@
+             validateProcessIdentity: validatesProcessIdentity)
+         switch clickType {
+         case .single:
+-            let valueBefore = element.intAttribute(AXAttributeNames.kAXValueAttribute)
+-            let originalIdentity = element.focusedElementIdentity
++            let valueBefore = element.intAttribute(AXAttributeNames.kAXValueAttribute)
++            let requiresTabVerification = element.subrole == "AXTabButton" && valueBefore == 0
++            let originalIdentity = element.focusedElementIdentity
+             let originalRole = element.role
+             let result = try await self.actionInputDriver.tryClick(
+                 element: element,
+@@ -228,7 +229,11 @@
+             }
+             let tabPressDidNotSelect: Bool
+             do {
+-                tabPressDidNotSelect = try await self.tabSelectionVerifier(element, valueBefore)
++                if requiresTabVerification {
++                    tabPressDidNotSelect = try await self.tabSelectionVerifier(element, valueBefore)
++                } else {
++                    tabPressDidNotSelect = false
++                }
+             } catch {
+                 guard result.outcome.dispatchState.mutationDispatched else { throw error }
+                 throw Self.unconfirmedTabPressFailure(result, cause: error)

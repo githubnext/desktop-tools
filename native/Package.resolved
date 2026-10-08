@@ -1,0 +1,60 @@
+{
+  "originHash" : "1d80ce2cea94149fb16a0e67353938267a00d1ed31116b46fed1dd4bb7235fe9",
+  "pins" : [
+    {
+      "identity" : "axorcist",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/openclaw/AXorcist.git",
+      "state" : {
+        "revision" : "31732870e1fd758247418db9239256d2da497146",
+        "version" : "0.1.11"
+      }
+    },
+    {
+      "identity" : "commander",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/steipete/Commander.git",
+      "state" : {
+        "revision" : "bd219c4ee9032fee3e009856f81fcc6ec09a85f4",
+        "version" : "0.2.4"
+      }
+    },
+    {
+      "identity" : "peekaboo",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/openclaw/Peekaboo.git",
+      "state" : {
+        "revision" : "4d43dc9d80cd2aa3787a27f54b76d692db1dcf8f",
+        "version" : "4.8.0"
+      }
+    },
+    {
+      "identity" : "swift-algorithms",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-algorithms",
+      "state" : {
+        "revision" : "87e50f483c54e6efd60e885f7f5aa946cee68023",
+        "version" : "1.2.1"
+      }
+    },
+    {
+      "identity" : "swift-log",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-log.git",
+      "state" : {
+        "revision" : "9c6fb14227f55d8f711ce3847dc2f419fb0ecacb",
+        "version" : "1.15.1"
+      }
+    },
+    {
+      "identity" : "swift-numerics",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-numerics.git",
+      "state" : {
+        "revision" : "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
+        "version" : "1.1.1"
+      }
+    }
+  ],
+  "version" : 3
+}

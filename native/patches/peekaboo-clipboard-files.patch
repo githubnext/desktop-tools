@@ -1,0 +1,252 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardFilesContents.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardFilesContents.swift
+new file mode 100644
+index 000000000..9ef2670a2
+--- /dev/null
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardFilesContents.swift
+@@ -0,0 +1,13 @@
++import Foundation
++
++/// Advertised file references only; paths are decoded without accessing the filesystem.
++public struct ClipboardFilesContents: Codable, Sendable {
++    public let present: Bool
++    public let files: [File]?
++    public let change_count: Int
++
++    public struct File: Codable, Sendable {
++        public let url: String
++        public let path: String
++    }
++}
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardService.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardService.swift
+index 93366f36b..aba68c503 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardService.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ClipboardService.swift
+@@ -383,6 +383,60 @@ ClipboardReadAccessProviding {
+         return result
+     }
+ 
++    public func readFiles() throws -> ClipboardFilesContents {
++        try Self.requireSilentReadAccess(self.readAccessStatus())
++        let generation = self.pasteboard.changeCount
++        guard let items = self.pasteboard.pasteboardItems, items.count <= 32 else {
++            throw PeekabooError.invalidInput("File reads require a complete clipboard with at most 32 items.")
++        }
++        var files: [ClipboardFilesContents.File] = []
++        for item in items {
++            guard !item.types.isEmpty,
++                  !item.types.contains(where: { $0.rawValue.localizedCaseInsensitiveContains("promise") }) else {
++                throw PeekabooError.invalidInput("Clipboard file promises or unavailable representations cannot be read as file references.")
++            }
++            guard item.types.contains(.fileURL) else {
++                guard !item.types.contains(where: { $0.rawValue == "NSFilenamesPboardType" }) else {
++                    throw PeekabooError.invalidInput("Legacy filename lists are unsupported; copy advertised file URL items.")
++                }
++                continue
++            }
++            guard let data = item.data(forType: .fileURL), data.count <= 24_000,
++                  let raw = String(data: data, encoding: .utf8) else {
++                throw PeekabooError.invalidInput("The advertised file URL could not be read completely within 24 KB.")
++            }
++            guard let url = URL(string: raw, encodingInvalidCharacters: false), url.isFileURL,
++                  !(url as NSURL).isFileReferenceURL(),
++                  url.host == nil || url.host == "" || url.host?.lowercased() == "localhost",
++                  url.user == nil, url.password == nil, url.port == nil,
++                  url.query == nil, url.fragment == nil else {
++                throw PeekabooError.invalidInput("Clipboard files require ordinary absolute local file URLs.")
++            }
++            let path = url.path(percentEncoded: false)
++            guard path.hasPrefix("/"), !path.utf8.contains(0) else {
++                throw PeekabooError.invalidInput("Clipboard files require ordinary absolute local file URLs.")
++            }
++            files.append(.init(url: raw, path: path))
++        }
++        guard files.isEmpty || files.count == items.count else {
++            throw PeekabooError.invalidInput("Clipboard file reads do not omit mixed non-file items.")
++        }
++        if items.isEmpty {
++            guard let types = self.pasteboard.types, types.isEmpty else {
++                throw PeekabooError.invalidInput("The clipboard item inventory is unavailable.")
++            }
++        }
++        guard self.pasteboard.changeCount == generation else {
++            throw PeekabooError.invalidInput("The clipboard changed during the read; request a fresh read.")
++        }
++        let result = ClipboardFilesContents(present: !files.isEmpty, files: files.isEmpty ? nil : files,
++                                            change_count: generation)
++        guard try JSONEncoder().encode(result).count <= 24_000 else {
++            throw PeekabooError.invalidInput("Clipboard file references exceed the complete 24 KB result limit.")
++        }
++        return result
++    }
++
+     private static func plainTextReadRefusal(_ message: String) -> PeekabooError {
+         .invalidInput(message)
+     }
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClipboardFiles.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClipboardFiles.swift
+new file mode 100644
+index 000000000..77ceb76c0
+--- /dev/null
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClipboardFiles.swift
+@@ -0,0 +1,22 @@
++import Foundation
++import PeekabooAutomationKit
++
++extension PeekabooBridgeClient {
++    public func clipboardFilesRead() async throws -> ClipboardFilesContents {
++        switch try await self.send(.clipboardFilesRead) {
++        case let .clipboardFiles(result): return result
++        case let .error(error): throw error
++        default: throw PeekabooBridgeErrorEnvelope(code: .internalError, message: "Unexpected clipboard files response")
++        }
++    }
++}
++
++@MainActor
++extension PeekabooBridgeServer {
++    func handleClipboardFilesRead() async throws -> PeekabooBridgeHandledResponse {
++        try PeekabooBridgeRequestContext.checkRequestIsActive()
++        let result = try self.literalInsertClipboard.readFiles()
++        try PeekabooBridgeRequestContext.checkRequestIsActive()
++        return .init(response: .clipboardFiles(result))
++    }
++}
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
+index c8ba8ea71..4cf85d94e 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
+@@ -39,6 +39,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
+     case literalInsert
+     case clipboardTextRead
+     case clipboardImageRead
++    case clipboardFilesRead
+     case clipboardTextWrite
+     case permissionsStatus
+     case requestPostEventPermission
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
+index a2b3bacc8..fb5c29152 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
+@@ -29,7 +29,7 @@ extension PeekabooBridgeOperation {
+ 
+     /// Operations enabled by default for remote helper hosts.
+     public static let remoteDefaultAllowlist: Set<PeekabooBridgeOperation> = [
+-        .literalInsert, .clipboardTextRead, .clipboardImageRead, .clipboardTextWrite,
++        .literalInsert, .clipboardTextRead, .clipboardImageRead, .clipboardFilesRead, .clipboardTextWrite,
+         .permissionsStatus,
+         .requestPostEventPermission,
+         .daemonStatus,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
+index d3c4c20f1..caaa3dd08 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
+@@ -60,6 +60,8 @@ extension PeekabooBridgeOperationResultSemantics {
+         }
+ 
+         return switch operation {
++        case .clipboardFilesRead:
++            descriptor(completion: .readOnly, targetPolicy: .notApplicable, responseFamilies: [.clipboardFiles])
+         case .clipboardImageRead:
+             descriptor(completion: .readOnly, targetPolicy: .notApplicable, responseFamilies: [.clipboardImage])
+         case .clipboardTextRead:
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseFamily.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseFamily.swift
+index 58fdd785a..62d831d65 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseFamily.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseFamily.swift
+@@ -3,7 +3,8 @@ import Foundation
+ extension PeekabooBridgeOperationResultSemantics.ResponseFamily {
+     func matches(_ response: PeekabooBridgeResponse) -> Bool {
+         switch (self, response) {
+-        case (.clipboardImage, .clipboardImage),
++        case (.clipboardFiles, .clipboardFiles),
++             (.clipboardImage, .clipboardImage),
+              (.clipboardText, .clipboardText),
+              (.clipboardTextWrite, .clipboardTextWrite),
+              (.literalInsert, .literalInsert),
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseTargetEvidence.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseTargetEvidence.swift
+index 3bf1af6bf..461d375c8 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseTargetEvidence.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResponseTargetEvidence.swift
+@@ -123,7 +123,7 @@ extension PeekabooBridgeResponse {
+                 bounds: termination.receipt.windowBounds)]
+         case let .error(envelope):
+             return envelope.actionTargetReceipt.map { [DesktopTargetEvidenceAdapter.evidence(receipt: $0)] } ?? []
+-        case .clipboardImage, .clipboardText, .clipboardTextWrite, .literalInsert,
++        case .clipboardFiles, .clipboardImage, .clipboardText, .clipboardTextWrite, .literalInsert,
+              .operationSessionRollover,
+              .handshake,
+              .permissionsStatus,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultContracts.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultContracts.swift
+index 77ac27a06..c201fe53d 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultContracts.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultContracts.swift
+@@ -57,6 +57,7 @@ enum PeekabooBridgeOperationResultSemantics {
+         case literalInsert
+         case clipboardText
+         case clipboardImage
++        case clipboardFiles
+         case clipboardTextWrite
+         case agentExecutionTrace
+         case application
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
+index b14ec6edf..e053a6ab6 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
+@@ -446,7 +446,7 @@ extension PeekabooBridgeOperationResultSemantics {
+             .performAction(target: payload.target, actionName: payload.actionName)
+         case let .selectText(payload):
+             .selectText(target: payload.target, request: payload.request)
+-        case .clipboardImageRead, .clipboardTextRead, .clipboardTextWrite, .literalInsert,
++        case .clipboardFilesRead, .clipboardImageRead, .clipboardTextRead, .clipboardTextWrite, .literalInsert,
+              .attestedOperation,
+              .projectedAction,
+              .handshake,
+@@ -649,7 +649,7 @@ extension PeekabooBridgeOperationResultSemantics {
+             return [.dispatchedUnverified]
+         case .browserConnect:
+             return [.confirmedNoChange, .dispatchedUnverified]
+-        case .clipboardImageRead, .clipboardTextRead, .permissionsStatus, .observeProcessGeneration, .certificationProducerAttestation,
++        case .clipboardFilesRead, .clipboardImageRead, .clipboardTextRead, .permissionsStatus, .observeProcessGeneration, .certificationProducerAttestation,
+              .createExactWindowHeldPointerOwner,
+              .daemonStatus, .daemonStop, .browserStatus,
+              .browserDisconnect,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
+index 65f2fce18..1743b0a98 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
+@@ -9,6 +9,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
+     case literalInsert(PeekabooBridgeLiteralInsertRequest)
+     case clipboardTextRead
+     case clipboardImageRead
++    case clipboardFilesRead
+     case clipboardTextWrite(String)
+     case permissionsStatus
+     case requestPostEventPermission
+@@ -141,6 +142,7 @@ extension PeekabooBridgeRequest {
+         case .literalInsert: .literalInsert
+         case .clipboardTextRead: .clipboardTextRead
+         case .clipboardImageRead: .clipboardImageRead
++        case .clipboardFilesRead: .clipboardFilesRead
+         case .clipboardTextWrite: .clipboardTextWrite
+         case .permissionsStatus: .permissionsStatus
+         case .requestPostEventPermission: .requestPostEventPermission
+@@ -273,6 +275,7 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
+     case literalInsert(PeekabooBridgeLiteralInsertResult)
+     case clipboardText(ClipboardTextContents)
+     case clipboardImage(ClipboardImageContents)
++    case clipboardFiles(ClipboardFilesContents)
+     case clipboardTextWrite(PeekabooBridgeClipboardTextWriteResult)
+     case permissionsStatus(PermissionsStatus)
+     case daemonStatus(PeekabooDaemonStatus)
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
+index 5cad2d202..5151c95a8 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
+@@ -12,6 +12,8 @@ extension PeekabooBridgeServer {
+         permissions: PermissionsStatus) async throws -> PeekabooBridgeHandledResponse
+     {
+         switch request.operation {
++        case .clipboardFilesRead:
++            return try await self.handleClipboardFilesRead()
+         case .clipboardImageRead:
+             return try await self.handleClipboardImageRead()
+         case .clipboardTextRead, .clipboardTextWrite:

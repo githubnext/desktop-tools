@@ -1,0 +1,24 @@
+{
+	"name": "@githubnext/desktop-tools",
+	"version": "0.1.0",
+	"description": "Signed macOS desktop inspection and input for agents, built on a pinned, patched Peekaboo Bridge",
+	"license": "MIT",
+	"type": "module",
+	"repository": "github:githubnext/desktop-tools",
+	"engines": { "node": ">=22" },
+	"exports": {
+		".": { "types": "./dist/client.d.ts", "default": "./dist/client.js" },
+		"./protocol": { "types": "./dist/protocol.d.ts", "default": "./dist/protocol.js" }
+	},
+	"bin": { "desktop-tools-build": "dist/build.js" },
+	"files": ["dist", "native/Package.swift", "native/Package.resolved", "native/sources", "native/patches", "LICENSE", "README.md"],
+	"scripts": {
+		"build:js": "tsc",
+		"check": "rm -rf .check && tsc --outDir .check && diff -r .check dist && rm -rf .check",
+		"build:native": "node dist/build.js --out build"
+	},
+	"devDependencies": {
+		"@types/node": "24.19.0",
+		"typescript": "7.0.2"
+	}
+}

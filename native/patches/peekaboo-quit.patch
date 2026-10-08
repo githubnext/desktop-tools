@@ -1,0 +1,41 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/ApplicationServiceProtocol.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/ApplicationServiceProtocol.swift
+index a1c9852e9..a72ab102f 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/ApplicationServiceProtocol.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/ApplicationServiceProtocol.swift
+@@ -242,6 +242,12 @@ public enum ApplicationActionResultSemantics {
+                 hint: "Observe the pinned application before retrying and update the runtime host.")
+                 .attributed(to: expectedIdentity.actionTargetReceipt)
+         }
++        // The bool records termination, not whether the quit request was accepted.
++        if !result.payload, outcome.state == .dispatchedUnverified,
++           outcome.evidence == .operationStillRunning
++        {
++            return
++        }
+         if !result.payload, outcome.isAccepted(by: .confirmedOrDispatched) {
+             throw DesktopActionFailure.indeterminate(
+                 route: outcome.route,
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ApplicationService+ActionOutcomes.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ApplicationService+ActionOutcomes.swift
+index de8b7d9b2..448f67d7e 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ApplicationService+ActionOutcomes.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ApplicationService+ActionOutcomes.swift
+@@ -101,9 +101,16 @@ extension ApplicationService {
+                         hint: "Refresh the application inventory before retrying.")
+                 }
+                 let delivery = Self.applicationDelivery(mode: .background)
+-                let outcome: DesktopActionOutcome = attempt.terminated
+-                    ? .confirmedChange(delivery: delivery, unitCount: .one)
+-                    : .suspectedNoop(delivery: delivery, unitCount: .one)
++                let outcome: DesktopActionOutcome
++                if !attempt.terminated, !request.force {
++                    // An accepted quit can be waiting on unsaved work; repeating it is not safe.
++                    outcome = .dispatchedUnverified(
++                        delivery: delivery, evidence: .operationStillRunning, unitCount: .one)
++                } else {
++                    outcome = attempt.terminated
++                        ? .confirmedChange(delivery: delivery, unitCount: .one)
++                        : .suspectedNoop(delivery: delivery, unitCount: .one)
++                }
+                 return DesktopActionResult(payload: attempt.terminated, outcome: outcome)
+             }
+         } catch let failure as DesktopActionFailure {

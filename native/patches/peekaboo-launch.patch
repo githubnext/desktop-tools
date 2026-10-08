@@ -1,0 +1,27 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ApplicationService+ActionOutcomes.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ApplicationService+ActionOutcomes.swift
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ApplicationService+ActionOutcomes.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/System/ApplicationService+ActionOutcomes.swift
+@@ -10,7 +10,22 @@
+     {
+         let access: DesktopOperationAccess = request.activates ? .write : .read
+         return try await self.operationLaneCoordinator.run(scope: .global, access: access) {
+-            let preparedLaunch = try self.prepareApplicationLaunch(request)
++            let preparedLaunch: PreparedApplicationLaunch
++            do {
++                preparedLaunch = try self.prepareApplicationLaunch(request)
++            } catch {
++                // Selector preparation is synchronous and has not opened or activated an application.
++                let reason: DesktopActionOutcome.RefusalReason
++                if let nativeError = error as? PeekabooError, case .invalidInput = nativeError {
++                    reason = .invalidRequest
++                } else {
++                    reason = .targetUnavailable
++                }
++                throw DesktopActionFailure.preDispatchRefusal(
++                    reason: reason,
++                    message: error.localizedDescription,
++                    hint: "Verify the application selector or launch options before choosing a new action.")
++            }
+             return try await self.performApplicationLaunchWithOutcomeOwnedLane(preparedLaunch)
+         }
+     }
