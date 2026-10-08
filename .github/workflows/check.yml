@@ -1,0 +1,16 @@
+name: check
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm ci
+      # dist/ is checked in for Git installs; it must match a fresh compile exactly.
+      - run: npm run check
