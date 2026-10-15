@@ -172,6 +172,18 @@ Later route checks are unchanged: a route can follow an earlier Accessibility at
 dispatched, so a window change detected there still reports uncertain input. Long press keeps its
 existing exact-window exemption, and process-generation checks are unchanged.
 
+`peekaboo-sheet-window.patch` attributes sheet controls to the window the sheet is attached to,
+for [Save sheets refusing every mutation](https://github.com/githubnext/ace/issues/378). A sheet
+is its own WindowServer window but is absent from the application's AXWindows, so an exact-window
+observation reaches it only through the parent window's tree. A sheet control's AXWindow link names
+the sheet, and an Open or Save panel's controls resolve to the Open and Save Panel Service's own
+window; neither matches the observed window, and the detached identity read used before value and
+focus writes accepted only that link. The shared owning-window resolver now accepts the AXWindow
+link only when it is a same-process `AXWindow`; otherwise it walks a bounded `AXParent` chain to the
+nearest same-process `AXWindow`. An element with no such ancestor keeps its direct window identity.
+The detached reader resolves through the same helper under its deadline, so element identity,
+exact-window click receipts, and post-write observation agree. Sibling windows are still refused.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.

@@ -36,6 +36,7 @@ const patches = [
     "peekaboo-menu.patch",
     "peekaboo-clipboard-files-write.patch",
     "peekaboo-stale-click.patch",
+    "peekaboo-sheet-window.patch",
 ].map((name) => join(native, "patches", name));
 function spawn(command, env) {
     return spawnSync(command[0], command.slice(1), { encoding: "utf8", env: env ?? process.env });
