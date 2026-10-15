@@ -223,7 +223,10 @@ func nativeAction(_ client: PeekabooBridgeClient) async throws -> Data {
 			guard observed.knownIsEnabled != false else { throw ActionError("The observed element is disabled.") }
 		}
 		if request.op == .key || request.op == .insert, context.focusedElement == nil {
-			throw ActionError("The snapshot has no exact focused control. Click a control, then inspect the window again.")
+			// Peekaboo resolves keyboard receivers from the window's focused element; without one the key has no target.
+			throw ActionError(request.op == .key
+				? "The snapshot has no exact focused control, so this key has no verified receiver. If the command is in a menu, use the menu instead. Otherwise click the control that should receive the key, inspect the window again, and check that the new snapshot reports a focused element before retrying."
+				: "The snapshot has no exact focused control. Click the text field, then inspect the window again.")
 		}
 		if request.op == .insert {
 			// The GUI owns the snapshot lease and clipboard transaction through consumption and cleanup.
