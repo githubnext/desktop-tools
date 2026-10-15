@@ -25,3 +25,38 @@ diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/S
              return try await self.performApplicationLaunchWithOutcomeOwnedLane(preparedLaunch)
          }
      }
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ApplicationServiceLifecycleTests+Relaunch.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ApplicationServiceLifecycleTests+Relaunch.swift
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ApplicationServiceLifecycleTests+Relaunch.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ApplicationServiceLifecycleTests+Relaunch.swift
+@@ -74,9 +74,11 @@
+         ]
+ 
+         for request in requests {
+-            await #expect(throws: PeekabooError.self) {
++            let failure = await #expect(throws: DesktopActionFailure.self) {
+                 try await service.launchApplication(request: request)
+             }
++            #expect(failure?.outcome.state == .refused)
++            #expect(failure?.outcome.refusalReason == .invalidRequest)
+         }
+         #expect(recorder.calls.isEmpty)
+     }
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ApplicationServiceLifecycleTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ApplicationServiceLifecycleTests.swift
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ApplicationServiceLifecycleTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ApplicationServiceLifecycleTests.swift
+@@ -529,12 +529,14 @@
+         let service = ApplicationService(applicationOpenHandler: recorder.open)
+         let targetURL = try #require(URL(string: "https://example.com"))
+ 
+-        await #expect(throws: PeekabooError.self) {
++        let failure = await #expect(throws: DesktopActionFailure.self) {
+             try await service.launchApplication(request: ApplicationLaunchRequest(
+                 applicationIdentifier: "PID:\(recorder.runningApplication.processIdentifier)",
+                 openURLs: [targetURL],
+                 activates: true))
+         }
++        #expect(failure?.outcome.state == .refused)
++        #expect(failure?.outcome.refusalReason == .invalidRequest)
+ 
+         #expect(recorder.calls.isEmpty)
+     }

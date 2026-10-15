@@ -253,3 +253,48 @@ diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/U
      }
  }
 
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/BackgroundInputDriverPositionalTargetTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/BackgroundInputDriverPositionalTargetTests.swift
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/BackgroundInputDriverPositionalTargetTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/BackgroundInputDriverPositionalTargetTests.swift
+@@ -15,11 +15,16 @@
+         action: BackgroundInputDriver.PositionalClickAction,
+         allowed: Bool) async throws
+     {
+-        let element = PositionalMockElement(isFocusedSettable: true, isSelectedSettable: true)
++        let element = PositionalMockElement(
++            role: "AXTextField",
++            frame: CGRect(x: 20, y: 30, width: 200, height: 80),
++            isFocusedSettable: true,
++            isSelectedSettable: true)
+         if allowed {
+             let outcome = try await BackgroundInputDriver.performPositionalClickAction(
+                 action, on: element, allowsAccessibilityValueDelivery: true)
+-            #expect(outcome.state == .dispatchedUnverified)
++            // Positional focus shares element clicks' verified focus write; selection stays unread.
++            #expect(outcome.state == (action == .focus ? .confirmedChange : .dispatchedUnverified))
+             #expect(outcome.delivery?.mechanism == .accessibilityValue)
+         } else {
+             let failure = await #expect(throws: DesktopActionFailure.self) {
+@@ -504,8 +509,13 @@
+     let isFocusedSettable: Bool
+     let isSelectedSettable: Bool
+     let isEnabled: Bool
+-    let isFocused = false
++    private(set) var isFocused = false
+     let isOffscreen = false
++    var focusedElementIdentity: FocusedElementIdentity? {
++        self.role.map { role in
++            FocusedElementIdentity(processIdentifier: 777, windowID: 42, role: role, frame: self.frame ?? .zero)
++        }
++    }
+     var anchorPoint: CGPoint? {
+         self.frame.map { CGPoint(x: $0.midX, y: $0.midY) }
+     }
+@@ -561,6 +571,7 @@
+ 
+     func setAutomationFocused(_ focused: Bool) throws {
+         self.setFocusedValues.append(focused)
++        self.isFocused = focused
+     }
+ 
+     func setAutomationSelected(_ selected: Bool) throws {

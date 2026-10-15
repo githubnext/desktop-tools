@@ -19,11 +19,10 @@ diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/U
          } catch let error as ActionInputError
              where error == .unsupported(.actionUnsupported) &&
              allowAccessibilityValueFallback &&
-@@ -204,7 +212,52 @@
+@@ -204,6 +212,51 @@
          }
      }
  
--    /// Issues `AXShowMenu` without waiting on the menu's tracking runloop.
 +    /// Keeps the operation lane owned until native completion while allowing a self-targeted app to service AX.
 +    private func performPressAction(
 +        on element: any AutomationElementRepresenting,
@@ -69,20 +68,15 @@ diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/U
 +        }
 +    }
 +
-+    /// Issues `AXShowMenu` without waiting on the menu's tracking runloop.
+     /// Issues `AXShowMenu` without waiting on the menu's tracking runloop.
      ///
      /// A successful `AXShowMenu` opens an NSMenu whose tracking loop is a nested runloop on the
-     /// target app's main thread, so `AXUIElementPerformAction` does not return until the menu is
-@@ -566,9 +619,23 @@
+@@ -566,9 +619,19 @@
          let observationTarget = try await self.observationTarget(element)
          try Self.validateBeforeMutation(beforeMutation)
          do {
 -            try element.setAutomationFocused(true)
-+            if let native = element.underlyingAXElement {
-+                try await DetachedAXActionRunner.focus(on: native)
-+            } else {
-+                try element.setAutomationFocused(true)
-+            }
++            try await element.focusAutomationElement()
          } catch {
 -            throw Self.classify(error)
 +            let classified = Self.classify(error)
@@ -99,6 +93,42 @@ diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/U
          }
          var confirmedIdentity: FocusedElementIdentity?
          guard await self.observeMutation(
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AutomationElement.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AutomationElement.swift
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AutomationElement.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AutomationElement.swift
+@@ -51,6 +51,8 @@
+     func performAutomationAction(_ actionName: String) throws
+     func setAutomationValue(_ value: UIElementValue) throws
+     func setAutomationFocused(_ focused: Bool) throws
++    /// Writes AXFocused=true and returns only when the write does, without occupying MainActor meanwhile.
++    func focusAutomationElement() async throws
+     func setAutomationSelected(_ selected: Bool) throws
+     func setAutomationTextSelection(_ range: TextSelectionRange) throws -> Bool
+     func stringAttribute(_ name: String) -> String?
+@@ -107,6 +109,10 @@
+         throw AccessibilitySystemError(.attributeUnsupported)
+     }
+ 
++    func focusAutomationElement() async throws {
++        try self.setAutomationFocused(true)
++    }
++
+     func doubleAttribute(_: String) -> Double? {
+         nil
+     }
+@@ -345,6 +351,12 @@
+         }
+     }
+ 
++    // A self-targeted app answers its own AX focus write only while MainActor is free.
++    @MainActor
++    func focusAutomationElement() async throws {
++        try await DetachedAXActionRunner.focus(on: self.element.underlyingElement)
++    }
++
+     @MainActor
+     func setAutomationSelected(_ selected: Bool) throws {
+         let error = AXUIElementSetAttributeValue(
 diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXActionRunner.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXActionRunner.swift
 --- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXActionRunner.swift
 +++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXActionRunner.swift
@@ -170,28 +200,64 @@ diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/U
 diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ClickService.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ClickService.swift
 --- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ClickService.swift
 +++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ClickService.swift
-@@ -193,8 +193,9 @@
-             validateProcessIdentity: validatesProcessIdentity)
+@@ -66,7 +66,10 @@
+     let laneCompletion: @MainActor @Sendable (UIInputExecutionResult) async -> Void
+ }
+ 
+-typealias TabSelectionVerifier = @MainActor (AutomationElement, Int?) async throws -> Bool
++typealias TabSelectionVerifier = @MainActor (
++    AutomationElement,
++    _ subroleBefore: String?,
++    _ valueBefore: Int?) async throws -> Bool
+ typealias ExactWindowPixelFocusExecutor = @MainActor @Sendable (
+     CGPoint,
+     UIAutomationTarget.ExactWindow) async throws -> UIInputExecutionResult.Action
+@@ -158,11 +161,16 @@
+         self.exactWindowPixelFocusExecutor = exactWindowPixelFocusExecutor
+     }
+ 
+-    private static func verifyTabSelection(_ element: AutomationElement, valueBefore: Int?) async throws -> Bool {
+-        guard element.subrole == "AXTabButton", valueBefore == 0 else { return false }
++    // Tab identity is read before the press; a pressed non-tab control may already be gone.
++    private static func verifyTabSelection(
++        _ element: AutomationElement,
++        subroleBefore: String?,
++        valueBefore: Int?) async throws -> Bool
++    {
++        guard subroleBefore == "AXTabButton", valueBefore == 0 else { return false }
+         try await Task.sleep(for: .milliseconds(50))
+         return ActionInputDriver.tabPressDidNotSelect(
+-            subrole: element.subrole,
++            subrole: subroleBefore,
+             valueBefore: valueBefore,
+             valueAfter: element.intAttribute(AXAttributeNames.kAXValueAttribute))
+     }
+@@ -194,6 +202,7 @@
          switch clickType {
          case .single:
--            let valueBefore = element.intAttribute(AXAttributeNames.kAXValueAttribute)
--            let originalIdentity = element.focusedElementIdentity
-+            let valueBefore = element.intAttribute(AXAttributeNames.kAXValueAttribute)
-+            let requiresTabVerification = element.subrole == "AXTabButton" && valueBefore == 0
-+            let originalIdentity = element.focusedElementIdentity
+             let valueBefore = element.intAttribute(AXAttributeNames.kAXValueAttribute)
++            let subroleBefore = element.subrole
+             let originalIdentity = element.focusedElementIdentity
              let originalRole = element.role
              let result = try await self.actionInputDriver.tryClick(
-                 element: element,
-@@ -228,7 +229,11 @@
+@@ -228,7 +237,7 @@
              }
              let tabPressDidNotSelect: Bool
              do {
 -                tabPressDidNotSelect = try await self.tabSelectionVerifier(element, valueBefore)
-+                if requiresTabVerification {
-+                    tabPressDidNotSelect = try await self.tabSelectionVerifier(element, valueBefore)
-+                } else {
-+                    tabPressDidNotSelect = false
-+                }
++                tabPressDidNotSelect = try await self.tabSelectionVerifier(element, subroleBefore, valueBefore)
              } catch {
                  guard result.outcome.dispatchState.mutationDispatched else { throw error }
                  throw Self.unconfirmedTabPressFailure(result, cause: error)
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ClickServiceTargetResolutionTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ClickServiceTargetResolutionTests.swift
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ClickServiceTargetResolutionTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ClickServiceTargetResolutionTests.swift
+@@ -1375,7 +1375,7 @@
+                 syntheticInputDriver: synthetic,
+                 automationElementResolver: ClickFixedAutomationElementResolver(),
+                 exactWindowIdentityValidator: { _, _ in true },
+-                tabSelectionVerifier: { _, _ in true })
++                tabSelectionVerifier: { _, _, _ in true })
+ 
+             do {
+                 _ = try await service.click(

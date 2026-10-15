@@ -200,8 +200,17 @@ and assembles the ordered patch stack in a private Git index. A build compares t
 with each complete ordered prefix, since later patches can change earlier patch contexts.
 Only the missing suffix is applied, then verified against the complete expected source before
 compiling Swift. Keep new patches at the end so an existing complete stack remains a valid prefix.
-The real dependency index is unchanged. Drift fails the build instead of producing unexpected
-source. Patch files are excluded from formatting.
+A checkout matching no prefix, such as one built from an earlier revision of a patch, is build
+scratch: it is restored to the pinned revision and receives the complete stack. The real dependency
+index is unchanged, and the build never compiles unexpected source. Patch files are excluded from
+formatting.
+
+Each patch carries the upstream test updates its behavior requires. With the complete stack,
+`swift test` in `Core/PeekabooAutomationKit` builds without local edits. Two upstream tests also
+fail on unpatched Peekaboo 4.8.0 on some hosts:
+`DesktopObservationServiceTests.testGenerationlessRemoteExactObservationStaysReadOnly` when a real
+WindowServer window 42 exists, and the PeekabooBridge test "Cancellation reaps the exact child
+without a zombie".
 
 When updating Peekaboo, review the upstream fixes and these patches together. Update the revision
 guard and patches deliberately, or remove each patch when the dependency includes its fix.

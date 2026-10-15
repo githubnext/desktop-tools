@@ -39,3 +39,39 @@ index de8b7d9b2..448f67d7e 100644
                  return DesktopActionResult(payload: attempt.terminated, outcome: outcome)
              }
          } catch let failure as DesktopActionFailure {
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ApplicationServiceLifecycleTests+Relaunch.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ApplicationServiceLifecycleTests+Relaunch.swift
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ApplicationServiceLifecycleTests+Relaunch.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ApplicationServiceLifecycleTests+Relaunch.swift
+@@ -799,9 +799,11 @@
+         }
+     }
+ 
+-    @Test
++    @Test(arguments: [false, true])
+     @MainActor
+-    func `accepted quit with no observed effect preserves false payload and suspected no-op`() async throws {
++    func `accepted quit with no observed effect preserves false payload and its retry safety`(
++        force: Bool) async throws
++    {
+         let runningApplication = try self.runningApplication()
+         let processIdentifier = runningApplication.processIdentifier
+         let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(processIdentifier))
+@@ -812,12 +814,15 @@
+             applicationQuitTimeout: 0)
+ 
+         let result = try await service.quitApplicationResult(request: ApplicationQuitRequest(
+-            identifier: "PID:\(processIdentifier)"))
++            identifier: "PID:\(processIdentifier)",
++            force: force))
+ 
+         #expect(!result.payload)
+-        #expect(result.outcome?.state == .suspectedNoop)
++        // A normal quit can still be waiting on unsaved work; only force quit is a repeatable no-op.
++        #expect(result.outcome?.state == (force ? .suspectedNoop : .dispatchedUnverified))
++        #expect(result.outcome?.evidence == (force ? .observedNoChange : .operationStillRunning))
+         #expect(result.outcome?.dispatchState == .dispatched(unitCount: .one))
+-        #expect(result.outcome?.retrySafety == .safe)
++        #expect(result.outcome?.retrySafety == (force ? .safe : .unsafe))
+     }
+ 
+     @Test

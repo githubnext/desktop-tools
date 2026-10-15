@@ -96,7 +96,11 @@ try {
         }
     }
     if (applied < 0) {
-        throw new Error("The native checkout differs from every pinned patch prefix. Resolve source drift before building.");
+        // The checkout is build scratch; an earlier revision of an existing patch leaves no valid prefix.
+        console.error("Restoring the native checkout, which matches no pinned patch prefix.");
+        run([...git, "checkout", "--", "."]);
+        run([...git, "clean", "-fdq"]);
+        applied = 0;
     }
     for (const patch of patches.slice(applied))
         run([...git, "apply", patch]);
