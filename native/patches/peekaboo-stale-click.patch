@@ -21,3 +21,16 @@ diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/U
                      mutationReceipt = preparedReceipt
                      syntheticDestination = SyntheticClickDestination(
                          captureReceipt: preparedReceipt,
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ClickServiceExactWindowTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ClickServiceExactWindowTests.swift
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ClickServiceExactWindowTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ClickServiceExactWindowTests.swift
+@@ -268,7 +268,8 @@
+     @MainActor
+     func `Exact click drift after dispatch is indeterminate`() async {
+         let synthetic = ClickRecordingSyntheticInputDriver()
+-        let validations = ExactClickValidationSequence([true, false])
++        // Preparation, the route's final pre-dispatch check, then drift after dispatch.
++        let validations = ExactClickValidationSequence([true, true, false])
+         let identity = WindowMutationIdentity(
+             windowID: 42,
+             ownerProcessIdentifier: 12345,
