@@ -45,7 +45,10 @@ Both the original and intended text must fit the complete 65,536-unit verificati
 An exact receiver in the active frontmost app uses a direct targeted Cmd+V chord. That route
 revalidates the retained editor, selection, active app, and process generation before every input
 unit. Other targets use Peekaboo's target-only window preparation, including its guarded blank
-native title-bar click. The route is fixed before input and never switches after partial delivery.
+native title-bar click. The target may still be handling its activation record when the read-only
+admission before the click runs, so a refused admission is read again at most twice, 50 ms apart;
+input proceeds only after a complete admission, and a refusal that persists keeps the posted
+preparation uncertain. The route is fixed before input and never switches after partial delivery.
 Preparation and delivery form one native outcome; partial preparation remains uncertain input and
 cannot authorize a retry. If the paste key was never posted, clipboard restoration is safe even
 when preparation or modifier input was emitted. Typed refusal causes

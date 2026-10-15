@@ -239,6 +239,41 @@ diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/S
                  return ClipboardRepresentation(utiIdentifier: type.rawValue, data: data)
              }
          }
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/BackgroundWindowKeyboardPreparation.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/BackgroundWindowKeyboardPreparation.swift
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/BackgroundWindowKeyboardPreparation.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/BackgroundWindowKeyboardPreparation.swift
+@@ -86,9 +86,31 @@
+             message: error.localizedDescription)
+     }
+ 
++    /// The target may still be handling the preparation input just posted, so its Accessibility replies
++    /// can miss the short per-message timeouts. A refused observation posted nothing and is read again,
++    /// a bounded number of times; only a complete admission authorizes the next input unit.
+     static func read<Value: Sendable>(
+         target: UIAutomationTarget.ExactWindow,
+         operation: @escaping @Sendable () throws -> Value) async throws -> Value
++    {
++        var attempt = 1
++        while true {
++            do {
++                return try await Self.observe(target: target, operation: operation)
++            } catch let failure as DesktopActionFailure
++                where attempt < 3 && failure.outcome.state == .refused &&
++                failure.outcome.refusalReason == .targetUnavailable
++            {
++                attempt += 1
++                // Cancellation during the pause is reported by the next observation.
++                try? await Task.sleep(for: .milliseconds(50))
++            }
++        }
++    }
++
++    private static func observe<Value: Sendable>(
++        target: UIAutomationTarget.ExactWindow,
++        operation: @escaping @Sendable () throws -> Value) async throws -> Value
+     {
+         do {
+             return try await ElementDetectionTimeoutRunner.runDetached(
 diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService.swift
 --- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService.swift
 +++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService.swift
@@ -662,6 +697,62 @@ new file mode 100644
 +              SystemIdentityResolver.processStartIdentity(target.identity.ownerProcessIdentifier) == target.identity.ownerProcessStartIdentity
 +        else { return nil }
 +        return Self(text: text, location: range.location, length: range.length)
++    }
++}
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/BackgroundWindowKeyboardPreparationTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/BackgroundWindowKeyboardPreparationTests.swift
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/BackgroundWindowKeyboardPreparationTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/BackgroundWindowKeyboardPreparationTests.swift
+@@ -1,4 +1,5 @@
+ import CoreGraphics
++import Foundation
+ import PeekabooFoundation
+ import Testing
+ @testable import PeekabooAutomationKit
+@@ -74,6 +75,30 @@
+         }
+     }
+ 
++    @Test
++    func `a refused observation is read again at most twice`() async throws {
++        let target = try Self.observationTarget()
++        let reads = ReadCount()
++        let value: Int = try await BackgroundWindowKeyboardPreparation.read(target: target) {
++            guard reads.next() > 2 else { throw FocusedElementReceiptError.focusNotConfirmed }
++            return 7
++        }
++        #expect(value == 7)
++        #expect(reads.next() == 4)
++
++        let refusals = ReadCount()
++        do {
++            let _: Int = try await BackgroundWindowKeyboardPreparation.read(target: target) {
++                _ = refusals.next()
++                throw FocusedElementReceiptError.focusNotConfirmed
++            }
++            Issue.record("Expected observation refusal")
++        } catch let failure as DesktopActionFailure {
++            #expect(failure.outcome.state == .refused)
++            #expect(refusals.next() == 4)
++        }
++    }
++
+     private static func observationTarget() throws -> UIAutomationTarget.ExactWindow {
+         let bounds = CGRect(x: 0, y: 32, width: 500, height: 400)
+         return try UIAutomationTarget.ExactWindow(
+@@ -215,3 +240,15 @@
+             unitCount: DesktopActionOutcome.DispatchUnitCount(3))
+     }
+ }
++
++private final class ReadCount: @unchecked Sendable {
++    private let lock = NSLock()
++    private var count = 0
++
++    func next() -> Int {
++        self.lock.withLock {
++            self.count += 1
++            return self.count
++        }
 +    }
 +}
 diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ClipboardPasteTransactionGateTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ClipboardPasteTransactionGateTests.swift
