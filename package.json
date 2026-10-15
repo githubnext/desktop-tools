@@ -11,7 +11,7 @@
 		"./protocol": { "types": "./dist/protocol.d.ts", "default": "./dist/protocol.js" },
 		"./package.json": "./package.json"
 	},
-	"bin": { "desktop-tools-build": "dist/build.js", "desktop-tools-app": "dist/app.js" },
+	"bin": { "desktop-tools-build": "dist/build.js", "desktop-tools-app": "dist/app.js", "desktop-tools-mcp": "dist/mcp.js" },
 	"files": ["dist", "native/Package.swift", "native/Package.resolved", "native/sources", "native/patches", "LICENSE", "README.md"],
 	"scripts": {
 		"build:js": "tsc",

@@ -98,6 +98,29 @@ Each result has:
 
 Before using an observation or receipt, check its `target_receipt` and the inventory completeness fields. Image bytes appear only in `image`.
 
+## Use from an MCP client
+
+`desktop-tools-mcp` (`dist/mcp.js`) serves the same tools as Ace's `desktop_*` tools over stdio MCP, with Ace's native-first guidance as its instructions. Point it at a running host's signed client and socket. For Ace Canary:
+
+```sh
+claude mcp add desktop -- node <path>/dist/mcp.js \
+	--client ~/.local/state/ace-canary/desktop-client \
+	--socket ~/.local/state/ace-canary/desktop.sock \
+	--name "Ace Canary"
+```
+
+For Codex, in `~/.codex/config.toml` (use absolute paths):
+
+```toml
+[mcp_servers.desktop]
+command = "node"
+args = ["<path>/dist/mcp.js", "--client", "<home>/.local/state/ace-canary/desktop-client", "--socket", "<home>/.local/state/ace-canary/desktop.sock", "--name", "Ace Canary"]
+```
+
+Action results start with `Outcome: completed`, `refused`, or `unknown`. Actions run one at a time, and `notifications/cancelled` aborts a call; cancellation does not undo input already delivered.
+
+**Warning:** the server acts with the host app's macOS Accessibility, Screen Recording, and clipboard permissions. It asks for no approval per call beyond what the MCP client itself requires, so any session that can call it can read the screen and clipboard and send input to any app.
+
 ## Licenses
 
 This package is MIT licensed. Native builds link:
