@@ -1,9 +1,9 @@
 diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/MenuCommand.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/MenuCommand.swift
 new file mode 100644
-index 000000000..094ee51ee
+index 000000000..5954f209d
 --- /dev/null
 +++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/MenuCommand.swift
-@@ -0,0 +1,285 @@
+@@ -0,0 +1,315 @@
 +import ApplicationServices
 +import Foundation
 +import os
@@ -258,6 +258,7 @@ index 000000000..094ee51ee
 +        var chain: [AXUIElement] = [menu]
 +        for (index, title) in self.request.path.enumerated() {
 +            var matches: [AXUIElement] = []
++            var candidates: [String] = []
 +            for child in try self.children(menu) {
 +                let role = try self.role(child)
 +                // Separators and known non-item roles cannot compete for this literal title.
@@ -267,12 +268,13 @@ index 000000000..094ee51ee
 +                guard let candidate = rawValue as? String else {
 +                    throw self.refusal("A candidate menu title is unavailable, so its uniqueness cannot be established.")
 +                }
++                candidates.append(candidate)
 +                if candidate.utf16.elementsEqual(title.utf16) { matches.append(child) }
 +            }
 +            guard matches.count == 1, let item = matches.first else {
 +                throw DesktopActionFailure.preDispatchRefusal(
 +                    reason: .invalidRequest,
-+                    message: matches.isEmpty ? "The literal menu path is unavailable without opening ancestor menus." : "The literal menu path is ambiguous.")
++                    message: self.mismatch(at: index, matches: matches.count, candidates: candidates))
 +            }
 +            chain.append(item)
 +            if index == self.request.path.count - 1 { return chain }
@@ -287,6 +289,34 @@ index 000000000..094ee51ee
 +            menu = submenu
 +        }
 +        throw self.refusal("The literal menu path contains no command.")
++    }
++
++    /// Names the failed component and the sibling titles already read; matching itself stays literal.
++    func mismatch(at index: Int, matches: Int, candidates: [String]) -> String {
++        let title = self.request.path[index]
++        let place = index == 0 ? "in the menu bar" : "under \(String(reflecting: self.request.path[index - 1]))"
++        let level = "level \(index + 1) of \(self.request.path.count)"
++        if matches > 1 {
++            return "The literal menu path is ambiguous: \(matches) items titled \(String(reflecting: title)) \(place) (\(level))."
++        }
++        var message = "No menu item titled \(String(reflecting: title)) \(place) (\(level))"
++        let near = candidates.filter {
++            $0.utf16.elementsEqual((title + "\u{2026}").utf16) || $0.utf16.elementsEqual((title + "...").utf16)
++        }
++        message += near.count == 1 ? "; did you mean \(String(reflecting: near[0]))?" : "."
++        message += " Titles must match exactly."
++        let titles = candidates.filter { !$0.isEmpty }.map { String(reflecting: $0) }
++        guard !titles.isEmpty else { return message + " No titled items were read \(place)." }
++        var listed: [String] = []
++        var length = 0
++        for quoted in titles {
++            guard listed.count < 30, length + quoted.count <= 300 else { break }
++            listed.append(quoted)
++            length += quoted.count + 2
++        }
++        if listed.isEmpty { return message + " The \(titles.count) titles \(place) are too long to list." }
++        let rest = titles.count - listed.count
++        return message + " Titles \(place): \(listed.joined(separator: ", "))" + (rest > 0 ? ", and \(rest) more." : ".")
 +    }
 +}
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeMenuCommand.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeMenuCommand.swift

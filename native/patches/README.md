@@ -153,6 +153,8 @@ this accepted outcome.
 operation carries the exact process generation and title array, avoiding the existing String
 API's splitting, fuzzy normalization and intermediate presses. Fresh bounded raw AX traversal
 requires a unique path and supported enabled leaf before one AXPress; lazy missing paths refuse.
+Titles match exact UTF-16, including ellipses. A title with no match refuses with its path level,
+the bounded sibling titles already read, and a lone sibling that only adds a trailing ellipsis.
 The whole native operation runs off MainActor while retaining the existing process write lane
 until actual return, with cancellation checked before dispatch. Per-element AX messaging timeouts
 do not race or abandon native work. `cannotComplete` and other ambiguous delivery failures remain
