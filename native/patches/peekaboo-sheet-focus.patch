@@ -1,0 +1,581 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AXWindowIDResolver.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AXWindowIDResolver.swift
+index 8a1289b86..a7f3fa8a9 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AXWindowIDResolver.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AXWindowIDResolver.swift
+@@ -61,35 +61,53 @@ enum AXWindowIDResolver {
+         return self.copyWindowID(element, into: &windowID) == .success ? windowID : nil
+     }
+ 
++    /// The window that hosts an element, and the nearest sheet between them.
++    struct Owner: Equatable {
++        var windowID: CGWindowID
++        /// A sheet takes keyboard focus from its parent window, so keyboard input reaches this element only
++        /// while this sheet is the key window.
++        var sheetWindowID: CGWindowID?
++    }
++
+     /// The CGWindowID of the same-process `AXWindow` that hosts `element`.
++    static func owningWindowID(of element: AXUIElement, tree: Tree = .system) -> CGWindowID? {
++        self.owner(of: element, tree: tree)?.windowID
++    }
++
++    /// The same-process `AXWindow` that hosts `element`.
+     ///
+     /// Sheets are separate WindowServer windows that are absent from the application's AXWindows, so
+     /// exact-window observations reach them only through the parent window's tree. Their content must
+     /// carry that parent's identity: the AXWindow link of a sheet control names the sheet, and the
+-    /// controls of an Open or Save panel resolve to the Open and Save Panel Service's own window.
+-    /// Neither can match the observed window, so such links are replaced by the nearest same-process
+-    /// `AXWindow` ancestor. Elements with no such ancestor keep their direct native window identity.
+-    static func owningWindowID(of element: AXUIElement, tree: Tree = .system) -> CGWindowID? {
++    /// controls of an Open or Save panel resolve to the Open and Save Panel Service's own window or have
++    /// no AXWindow at all (kAXErrorNoValue). None of these can match the observed window, so such links
++    /// are replaced by the nearest same-process `AXWindow` ancestor. Elements with no such ancestor keep
++    /// their direct native window identity.
++    static func owner(of element: AXUIElement, tree: Tree = .system) -> Owner? {
+         guard let processIdentifier = tree.processIdentifier(element) else { return nil }
+-        let hostWindowID = { (candidate: AXUIElement) -> CGWindowID? in
+-            guard tree.processIdentifier(candidate) == processIdentifier,
+-                  tree.attribute(kAXRoleAttribute, candidate) as? String == kAXWindowRole,
+-                  let windowID = tree.windowID(candidate), windowID > 0
+-            else { return nil }
+-            return windowID
+-        }
+-        if let link = tree.element(kAXWindowAttribute, of: element), let windowID = hostWindowID(link) {
+-            return windowID
++        if let link = tree.element(kAXWindowAttribute, of: element),
++           tree.processIdentifier(link) == processIdentifier,
++           tree.attribute(kAXRoleAttribute, link) as? String == kAXWindowRole,
++           let windowID = tree.windowID(link), windowID > 0
++        {
++            return Owner(windowID: windowID)
+         }
+         var current = element
++        var sheetWindowID: CGWindowID?
+         for _ in 0..<64 {
+-            if let windowID = hostWindowID(current) {
+-                return windowID
++            if tree.processIdentifier(current) == processIdentifier {
++                let role = tree.attribute(kAXRoleAttribute, current) as? String
++                if role == kAXWindowRole, let windowID = tree.windowID(current), windowID > 0 {
++                    return Owner(windowID: windowID, sheetWindowID: sheetWindowID)
++                }
++                if role == kAXSheetRole, sheetWindowID == nil {
++                    sheetWindowID = tree.windowID(current).flatMap { $0 > 0 ? $0 : nil }
++                }
+             }
+             guard let parent = tree.element(kAXParentAttribute, of: current) else { break }
+             current = parent
+         }
+         guard let direct = tree.windowID(element), direct > 0 else { return nil }
+-        return direct
++        return Owner(windowID: direct)
+     }
+ }
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/BackgroundInputDriver.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/BackgroundInputDriver.swift
+index ec2d9b990..010a92924 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/BackgroundInputDriver.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/BackgroundInputDriver.swift
+@@ -1123,14 +1123,15 @@ extension BackgroundInputDriver {
+                     message: "The Accessibility text receiver process changed before mutation.")
+             }
+             if let exactWindow {
+-                try self.validateExactWindowTextReceiver(
+-                    DetachedExactWindowFocusReader.read(element: element, processIdentifier: targetProcessIdentifier),
+-                    exactWindow: exactWindow,
+-                    phase: .continuation)
+-                guard let keyWindow = DetachedExactWindowFocusReader.readKeyWindow(
++                let focused = DetachedExactWindowFocusReader.read(
++                    element: element, processIdentifier: targetProcessIdentifier)
++                try self.validateExactWindowTextReceiver(focused, exactWindow: exactWindow, phase: .continuation)
++                guard let focused, let keyWindow = DetachedExactWindowFocusReader.readKeyWindow(
+                     processIdentifier: targetProcessIdentifier),
+-                    keyWindow.processIdentifier == targetProcessIdentifier,
+-                    keyWindow.windowID == exactWindow.identity.windowID,
++                    keyWindow.isKey(
++                        processIdentifier: targetProcessIdentifier,
++                        windowID: exactWindow.identity.windowID,
++                        focused: focused),
+                     !keyWindow.hasAttachedSheet
+                 else {
+                     throw DesktopActionFailure.preDispatchRefusal(
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
+index 54d20827f..f07513221 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
+@@ -1070,11 +1070,9 @@ extension DetachedAXObservationWorker {
+         guard self.remainingMessagingTimeout(until: deadline) != nil else { return false }
+         var owner: pid_t = 0
+         guard AXUIElementGetPid(element, &owner) == .success, owner == processIdentifier,
+-              let timeout = self.remainingMessagingTimeout(until: deadline),
+-              AXUIElementSetMessagingTimeout(element, timeout) == .success,
+-              let owningWindow = self.elementAttribute(kAXWindowAttribute, of: element)
++              let owningWindowID = AXWindowIDResolver.owningWindowID(of: element, tree: .bounded(deadline: deadline))
+         else { return false }
+-        return CFEqual(owningWindow, window)
++        return owningWindowID == AXWindowIDResolver.windowID(of: window)
+     }
+ }
+ 
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedExactWindowFocusReader.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedExactWindowFocusReader.swift
+index 19349ee6d..90bea6339 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedExactWindowFocusReader.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedExactWindowFocusReader.swift
+@@ -14,6 +14,8 @@ struct RetainedFocusElement: @unchecked Sendable, Equatable {
+ struct ExactWindowFocusSnapshot: Sendable, Equatable {
+     let processIdentifier: pid_t
+     let windowID: Int?
++    /// The attached sheet that holds the element inside `windowID`, if any.
++    let sheetWindowID: Int?
+     let frame: CGRect
+     let role: String?
+     let subrole: String?
+@@ -26,6 +28,7 @@ struct ExactWindowFocusSnapshot: Sendable, Equatable {
+     init(
+         processIdentifier: pid_t,
+         windowID: Int?,
++        sheetWindowID: Int? = nil,
+         frame: CGRect,
+         role: String? = nil,
+         subrole: String? = nil,
+@@ -37,6 +40,7 @@ struct ExactWindowFocusSnapshot: Sendable, Equatable {
+     {
+         self.processIdentifier = processIdentifier
+         self.windowID = windowID
++        self.sheetWindowID = sheetWindowID
+         self.frame = frame
+         self.role = role
+         self.subrole = subrole
+@@ -57,6 +61,16 @@ struct ExactKeyWindowSnapshot: Sendable, Equatable {
+     var hasSheet: Bool {
+         self.isSheet || self.hasAttachedSheet
+     }
++
++    /// Whether keyboard input reaches `focused` in the exact `windowID`. A receiver inside an attached
++    /// sheet is reachable only while that sheet is key; any other receiver needs the window itself.
++    func isKey(processIdentifier: pid_t, windowID: Int, focused: ExactWindowFocusSnapshot) -> Bool {
++        guard self.processIdentifier == processIdentifier else { return false }
++        if let sheetWindowID = focused.sheetWindowID {
++            return self.isSheet && self.windowID == sheetWindowID
++        }
++        return self.windowID == windowID
++    }
+ }
+ 
+ enum DetachedExactWindowFocusReader {
+@@ -111,9 +125,8 @@ enum DetachedExactWindowFocusReader {
+             element: focusedElement,
+             processIdentifier: focusedProcessIdentifier,
+             metadata: metadata,
+-            resolveWindowID: {
+-                AXWindowIDResolver.owningWindowID(of: focusedElement, tree: .bounded(deadline: deadline))
+-                    .map(Int.init)
++            resolveOwner: {
++                AXWindowIDResolver.owner(of: focusedElement, tree: .bounded(deadline: deadline))
+             })
+         guard deadline.map({ ContinuousClock.now < $0 }) ?? true else { return nil }
+         return snapshot
+@@ -123,7 +136,7 @@ enum DetachedExactWindowFocusReader {
+         element: AXUIElement,
+         processIdentifier: pid_t,
+         metadata: [String: AXDescriptorReader.SingleAttributeRead],
+-        resolveWindowID: () -> Int?) -> ExactWindowFocusSnapshot
++        resolveOwner: () -> AXWindowIDResolver.Owner?) -> ExactWindowFocusSnapshot
+     {
+         let value: (String) -> CFTypeRef? = { name in
+             guard let read = metadata[name], read.error == .success, let value = read.value else { return nil }
+@@ -137,14 +150,15 @@ enum DetachedExactWindowFocusReader {
+             .zero
+         }
+         // A sheet control's AXWindow link does not name its host window, so resolve from the element.
+-        let windowID = resolveWindowID()
++        let owner = resolveOwner()
+         let role = value(kAXRoleAttribute) as? String
+         let subrole = self.subroleObservation(metadata[kAXSubroleAttribute])
+         let title = value(kAXTitleAttribute) as? String
+         let identifier = value(kAXIdentifierAttribute) as? String
+         return ExactWindowFocusSnapshot(
+             processIdentifier: processIdentifier,
+-            windowID: windowID,
++            windowID: owner.map { Int($0.windowID) },
++            sheetWindowID: owner?.sheetWindowID.map(Int.init),
+             frame: frame,
+             role: role,
+             subrole: subrole.value,
+@@ -260,6 +274,7 @@ enum DetachedExactWindowFocusReader {
+             return .success(ExactWindowFocusSnapshot(
+                 processIdentifier: current.processIdentifier,
+                 windowID: current.windowID,
++                sheetWindowID: current.sheetWindowID,
+                 frame: current.frame,
+                 role: current.role,
+                 subrole: current.subrole,
+@@ -382,30 +397,29 @@ enum DetachedExactWindowFocusReader {
+         guard AXUIElementGetPid(element, &processIdentifier) == .success,
+               processIdentifier == expected.processIdentifier
+         else { return .failure(.processMismatch) }
+-        let owningWindowRead = CFEqual(element, window)
+-            ? AXDescriptorReader.SingleAttributeRead(error: .success, value: window)
+-            : self.attributeRead(kAXWindowAttribute, of: element)
+-        if case let .failure(error) = self.validateOwningWindow(
+-            owningWindowRead,
+-            expectedWindowID: expected.windowID,
+-            copyWindowID: { AXWindowIDResolver.copyWindowID($0, into: &$1) })
+-        {
+-            return .failure(error)
+-        }
+         guard let frame = self.frame(of: element), !frame.isEmpty else {
+             return .failure(.missingElementFrame)
+         }
+-
+         let subrole = self.subroleObservation(self.attributeRead(kAXSubroleAttribute, of: element))
++        let title = self.stringAttribute(kAXTitleAttribute as String, of: element)
++        let identifier = self.stringAttribute(kAXIdentifierAttribute as String, of: element)
++        // Resolved last: the resolver's bounded reads clear this element's messaging timeout.
++        let owner: AXWindowIDResolver.Owner
++        switch self.validateOwningWindow(AXWindowIDResolver.owner(of: element), expectedWindowID: expected.windowID) {
++        case let .success(value): owner = value
++        case let .failure(error): return .failure(error)
++        }
++
+         return .success(ExactWindowFocusSnapshot(
+             processIdentifier: expected.processIdentifier,
+             windowID: expected.windowID,
++            sheetWindowID: owner.sheetWindowID.map(Int.init),
+             frame: frame,
+             role: expected.role,
+             subrole: subrole.value,
+             subroleIsReadable: subrole.isReadable,
+-            title: self.stringAttribute(kAXTitleAttribute as String, of: element),
+-            identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element),
++            title: title,
++            identifier: identifier,
+             nativeElement: RetainedFocusElement(element: element)))
+     }
+ 
+@@ -442,24 +456,14 @@ enum DetachedExactWindowFocusReader {
+         return .failure(firstUnreadable ?? .windowNotFound)
+     }
+ 
++    /// A sheet or Open and Save Panel control has no AXWindow link to the observed window, so the owner
++    /// comes from the shared resolver rather than the element's own AXWindow attribute.
+     static func validateOwningWindow(
+-        _ observation: AXDescriptorReader.SingleAttributeRead?,
+-        expectedWindowID: Int,
+-        copyWindowID: (AXUIElement, inout CGWindowID) -> AXError) -> Result<Void, FocusedElementReceiptError>
++        _ owner: AXWindowIDResolver.Owner?,
++        expectedWindowID: Int) -> Result<AXWindowIDResolver.Owner, FocusedElementReceiptError>
+     {
+-        guard let observation else {
+-            return .failure(.windowObservationFailed(stage: .owningWindow, errorCode: nil))
+-        }
+-        guard observation.error == .success else {
+-            return .failure(.windowObservationFailed(stage: .owningWindow, errorCode: observation.error.rawValue))
+-        }
+-        guard let value = observation.value, CFGetTypeID(value as CFTypeRef) == AXUIElementGetTypeID() else {
+-            return .failure(.windowObservationFailed(stage: .owningWindow, errorCode: nil))
+-        }
+-        let window = unsafeDowncast(value as CFTypeRef, to: AXUIElement.self)
+-        return self.windowIdentifier(window, stage: .owningWindowID, copyWindowID: copyWindowID).flatMap { actual in
+-            actual == expectedWindowID ? .success(()) : .failure(.windowMismatch)
+-        }
++        guard let owner else { return .failure(.windowObservationFailed(stage: .owningWindow, errorCode: nil)) }
++        return Int(owner.windowID) == expectedWindowID ? .success(owner) : .failure(.windowMismatch)
+     }
+ 
+     private static func windowIdentifier(
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+ElementLookup.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+ElementLookup.swift
+index 11ab7b84c..0dc894fb5 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+ElementLookup.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+ElementLookup.swift
+@@ -132,8 +132,10 @@ extension UIAutomationService {
+               focused.processIdentifier == targetProcessIdentifier,
+               focused.windowID == expectedWindowIdentity.windowID,
+               let keyWindow,
+-              keyWindow.processIdentifier == targetProcessIdentifier,
+-              keyWindow.windowID == expectedWindowIdentity.windowID
++              keyWindow.isKey(
++                  processIdentifier: targetProcessIdentifier,
++                  windowID: expectedWindowIdentity.windowID,
++                  focused: focused)
+         else {
+             throw self.exactWindowKeyboardFocusChangedError()
+         }
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/AXWindowIDResolverTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/AXWindowIDResolverTests.swift
+index 72470bbaf..edf780e4c 100644
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/AXWindowIDResolverTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/AXWindowIDResolverTests.swift
+@@ -40,7 +40,7 @@ struct AXWindowIDResolverTests {
+             (self.field, Node(role: "AXTextField", windowID: 9, window: self.document, parent: self.group)),
+             (self.document, Node(role: "AXWindow", windowID: 42)),
+         ])
+-        #expect(AXWindowIDResolver.owningWindowID(of: self.field, tree: tree) == 42)
++        #expect(AXWindowIDResolver.owner(of: self.field, tree: tree) == .init(windowID: 42))
+     }
+ 
+     @Test
+@@ -51,9 +51,22 @@ struct AXWindowIDResolverTests {
+             (self.sheet, Node(role: "AXSheet", windowID: 43, parent: self.document)),
+             (self.document, Node(role: "AXWindow", windowID: 42)),
+         ])
++        #expect(AXWindowIDResolver.owner(of: self.field, tree: tree) == .init(windowID: 42, sheetWindowID: 43))
+         #expect(AXWindowIDResolver.owningWindowID(of: self.field, tree: tree) == 42)
+     }
+ 
++    @Test
++    func `nested sheet content keeps the innermost sheet`() {
++        let inner = AXUIElementCreateApplication(-106)
++        let tree = self.tree([
++            (self.field, Node(role: "AXTextField", window: inner, parent: inner)),
++            (inner, Node(role: "AXSheet", windowID: 44, parent: self.sheet)),
++            (self.sheet, Node(role: "AXSheet", windowID: 43, parent: self.document)),
++            (self.document, Node(role: "AXWindow", windowID: 42)),
++        ])
++        #expect(AXWindowIDResolver.owner(of: self.field, tree: tree) == .init(windowID: 42, sheetWindowID: 44))
++    }
++
+     @Test(arguments: [true, false])
+     func `remote save panel content belongs to the document window`(linksServiceWindow: Bool) {
+         let tree = self.tree([
+@@ -67,7 +80,7 @@ struct AXWindowIDResolverTests {
+             (self.sheet, Node(role: "AXSheet", windowID: 172, parent: self.document)),
+             (self.document, Node(role: "AXWindow", windowID: 167)),
+         ])
+-        #expect(AXWindowIDResolver.owningWindowID(of: self.field, tree: tree) == 167)
++        #expect(AXWindowIDResolver.owner(of: self.field, tree: tree) == .init(windowID: 167, sheetWindowID: 172))
+     }
+ 
+     @Test
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedExactWindowFocusMetadataTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedExactWindowFocusMetadataTests.swift
+index 1c5610302..f44a052b2 100644
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedExactWindowFocusMetadataTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedExactWindowFocusMetadataTests.swift
+@@ -161,9 +161,9 @@ struct DetachedExactWindowFocusMetadataTests {
+                     element: native,
+                     processIdentifier: 4242,
+                     metadata: metadata,
+-                    resolveWindowID: {
++                    resolveOwner: {
+                         events.append("window")
+-                        return 42
++                        return .init(windowID: 42)
+                     })
+             },
+             readAttribute: { name, _ in
+@@ -201,7 +201,7 @@ struct DetachedExactWindowFocusMetadataTests {
+             element: native,
+             processIdentifier: 4242,
+             metadata: metadata,
+-            resolveWindowID: { windowReads += 1; return 42 })
++            resolveOwner: { windowReads += 1; return .init(windowID: 42) })
+         #expect(windowReads == 1)
+         let result = DetachedAXMutationReader.readSynchronously(
+             request: (
+@@ -223,7 +223,7 @@ struct DetachedExactWindowFocusMetadataTests {
+             copyAttributes: { _ in (.success, values) },
+             copyAttribute: { _ in Issue.record("Unexpected fallback"); return nil }))
+         let snapshot = DetachedExactWindowFocusReader.snapshot(
+-            element: native, processIdentifier: 4242, metadata: metadata, resolveWindowID: { 42 })
++            element: native, processIdentifier: 4242, metadata: metadata, resolveOwner: { .init(windowID: 42) })
+         #expect(snapshot.subrole == nil)
+         #expect(snapshot.subroleIsReadable == (error == .noValue || error == .attributeUnsupported))
+         #expect(DetachedExactWindowFocusReader.allowsValueRead(snapshot) == snapshot.subroleIsReadable)
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedExactWindowFocusWindowTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedExactWindowFocusWindowTests.swift
+index 06db6e760..e768236c9 100644
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedExactWindowFocusWindowTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedExactWindowFocusWindowTests.swift
+@@ -95,81 +95,38 @@ struct DetachedExactWindowFocusWindowTests {
+         }
+     }
+ 
+-    @Test(arguments: [
+-        AXError.cannotComplete,
+-        .invalidUIElement,
+-        .apiDisabled,
+-        .noValue,
+-        .attributeUnsupported,
+-        .failure,
+-    ])
+-    func `owning window read failures retain native status without ID lookup`(error: AXError) {
+-        let result = DetachedExactWindowFocusReader.validateOwningWindow(
+-            .init(error: error, value: self.first),
+-            expectedWindowID: 42,
+-            copyWindowID: { _, _ in Issue.record("Failed AXWindow read must not query ID"); return .success })
+-        #expect(throws: FocusedElementReceiptError.windowObservationFailed(
+-            stage: .owningWindow,
+-            errorCode: error.rawValue))
+-        {
+-            try result.get()
+-        }
+-    }
+-
+     @Test
+-    func `missing and malformed owning windows are not compared with expected identity`() {
+-        let observations: [AXDescriptorReader.SingleAttributeRead?] = [
+-            nil, .init(error: .success, value: nil), .init(error: .success, value: "not a window"),
+-            .init(error: .success, value: [self.first]), .init(error: .success, value: NSNumber(value: 42)),
+-        ]
+-        for observation in observations {
+-            let result = DetachedExactWindowFocusReader.validateOwningWindow(
+-                observation,
+-                expectedWindowID: 42,
+-                copyWindowID: { _, _ in Issue.record("Malformed AXWindow must not query ID"); return .success })
+-            #expect(throws: FocusedElementReceiptError.windowObservationFailed(stage: .owningWindow, errorCode: nil)) {
+-                try result.get()
+-            }
+-        }
+-    }
+-
+-    @Test(arguments: [AXError.cannotComplete, .success])
+-    func `failed and zero owning IDs remain unreadable rather than mismatched`(error: AXError) {
+-        var reads = 0
+-        let result = DetachedExactWindowFocusReader.validateOwningWindow(
+-            .init(error: .success, value: self.first),
+-            expectedWindowID: 42,
+-            copyWindowID: { element, _ in
+-                #expect(CFEqual(element, self.first))
+-                reads += 1
+-                return error
+-            })
+-        #expect(throws: FocusedElementReceiptError.windowObservationFailed(
+-            stage: .owningWindowID, errorCode: error == .success ? nil : error.rawValue))
+-        {
+-            try result.get()
++    func `an unresolved owner is unreadable rather than mismatched`() {
++        #expect(throws: FocusedElementReceiptError.windowObservationFailed(stage: .owningWindow, errorCode: nil)) {
++            try DetachedExactWindowFocusReader.validateOwningWindow(nil, expectedWindowID: 42).get()
+         }
+-        #expect(reads == 1)
+     }
+ 
+     @Test(arguments: [CGWindowID(42), 99])
+-    func `only positive owning IDs establish a match or mismatch`(actual: CGWindowID) throws {
+-        var reads = 0
+-        let result = DetachedExactWindowFocusReader.validateOwningWindow(
+-            .init(error: .success, value: self.first),
+-            expectedWindowID: 42,
+-            copyWindowID: { element, id in
+-                #expect(CFEqual(element, self.first))
+-                reads += 1
+-                id = actual
+-                return .success
+-            })
++    func `the resolved owner establishes a match or mismatch`(actual: CGWindowID) throws {
++        let owner = AXWindowIDResolver.Owner(windowID: actual, sheetWindowID: 43)
++        let result = DetachedExactWindowFocusReader.validateOwningWindow(owner, expectedWindowID: 42)
+         if actual == 42 {
+-            try result.get()
++            #expect(try result.get() == owner)
+         } else {
+             #expect(throws: FocusedElementReceiptError.windowMismatch) { try result.get() }
+         }
+-        #expect(reads == 1)
++    }
++
++    @Test
++    func `a receiver inside a sheet needs that sheet as the key window`() {
++        let inSheet = ExactWindowFocusSnapshot(processIdentifier: 7, windowID: 42, sheetWindowID: 43, frame: .zero)
++        let inWindow = ExactWindowFocusSnapshot(processIdentifier: 7, windowID: 42, frame: .zero)
++        let key = { (processIdentifier: pid_t, windowID: Int, isSheet: Bool) in
++            ExactKeyWindowSnapshot(
++                processIdentifier: processIdentifier, windowID: windowID, isSheet: isSheet, hasAttachedSheet: false)
++        }
++        #expect(key(7, 43, true).isKey(processIdentifier: 7, windowID: 42, focused: inSheet))
++        #expect(!key(8, 43, true).isKey(processIdentifier: 7, windowID: 42, focused: inSheet))
++        #expect(!key(7, 44, true).isKey(processIdentifier: 7, windowID: 42, focused: inSheet))
++        #expect(!key(7, 42, false).isKey(processIdentifier: 7, windowID: 42, focused: inSheet))
++        #expect(key(7, 42, false).isKey(processIdentifier: 7, windowID: 42, focused: inWindow))
++        #expect(!key(7, 43, true).isKey(processIdentifier: 7, windowID: 42, focused: inWindow))
+     }
+ 
+     @Test(arguments: [
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/UIAutomationExactWindowFocusTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/UIAutomationExactWindowFocusTests.swift
+index e8db1501f..8cbe5cbf6 100644
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/UIAutomationExactWindowFocusTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/UIAutomationExactWindowFocusTests.swift
+@@ -672,6 +672,59 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
+         XCTAssertGreaterThan(fixture.postedEvents.value, 0)
+     }
+ 
++    func testReceiverInsideTheKeySheetOfTheExactWindowRemainsEligibleForKeyboardDispatch() async throws {
++        let processIdentifier = getpid()
++        let fixture = self.exactSheetKeyboardFixture(
++            processIdentifier: processIdentifier,
++            processStartIdentity: SystemIdentityResolver.processStartIdentity(processIdentifier) ?? 98,
++            isSheet: true,
++            hasAttachedSheet: false,
++            keyWindowID: 43,
++            receiverSheetWindowID: 43)
++
++        _ = try await fixture.hotkey.hotkey(
++            keys: "cmd,a",
++            holdDuration: 0,
++            targetProcessIdentifier: fixture.identity.ownerProcessIdentifier,
++            deliveryValidator: {
++                try await fixture.automation.requireExactWindowKeyboardFocus(
++                    expectedWindowIdentity: fixture.identity,
++                    expectedWindowBounds: fixture.bounds)
++            })
++
++        XCTAssertGreaterThan(fixture.postedEvents.value, 0)
++    }
++
++    func testReceiverInsideAnAttachedSheetRefusesUnlessThatSheetIsKey() async throws {
++        // Another sheet, the parent window holding the sheet, and the parent itself as an unrelated key window.
++        for (isSheet, hasAttachedSheet, keyWindowID) in [(true, false, 44), (false, true, 42), (false, false, 42)] {
++            let fixture = self.exactSheetKeyboardFixture(
++                processIdentifier: 930_014,
++                processStartIdentity: 99,
++                isSheet: isSheet,
++                hasAttachedSheet: hasAttachedSheet,
++                keyWindowID: keyWindowID,
++                receiverSheetWindowID: 43)
++
++            do {
++                _ = try await fixture.hotkey.hotkey(
++                    keys: "cmd,a",
++                    holdDuration: 0,
++                    targetProcessIdentifier: fixture.identity.ownerProcessIdentifier,
++                    deliveryValidator: {
++                        try await fixture.automation.requireExactWindowKeyboardFocus(
++                            expectedWindowIdentity: fixture.identity,
++                            expectedWindowBounds: fixture.bounds)
++                    })
++                XCTFail("Expected key window \(keyWindowID) to refuse a receiver inside sheet 43")
++            } catch let PeekabooError.invalidInput(message) {
++                XCTAssertTrue(message.contains("not on the target window"), message)
++            }
++
++            XCTAssertEqual(fixture.postedEvents.value, 0)
++        }
++    }
++
+     func testExactSheetWithNestedAttachedSheetRefusesBeforeKeyboardDispatch() async throws {
+         let fixture = self.exactSheetKeyboardFixture(
+             processIdentifier: 930_013,
+@@ -764,7 +817,9 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
+         processIdentifier: pid_t,
+         processStartIdentity: UInt64,
+         isSheet: Bool,
+-        hasAttachedSheet: Bool) -> ExactSheetKeyboardFixture
++        hasAttachedSheet: Bool,
++        keyWindowID: Int = 42,
++        receiverSheetWindowID: Int? = nil) -> ExactSheetKeyboardFixture
+     {
+         let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+         let identity = WindowMutationIdentity(
+@@ -779,12 +834,13 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
+                 ExactWindowFocusSnapshot(
+                     processIdentifier: observedProcessIdentifier,
+                     windowID: identity.windowID,
++                    sheetWindowID: receiverSheetWindowID,
+                     frame: CGRect(x: 50, y: 100, width: 200, height: 30))
+             },
+             exactKeyWindowReader: { observedProcessIdentifier in
+                 ExactKeyWindowSnapshot(
+                     processIdentifier: observedProcessIdentifier,
+-                    windowID: identity.windowID,
++                    windowID: keyWindowID,
+                     isSheet: isSheet,
+                     hasAttachedSheet: hasAttachedSheet)
+             },

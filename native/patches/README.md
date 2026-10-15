@@ -184,6 +184,17 @@ nearest same-process `AXWindow`. An element with no such ancestor keeps its dire
 The detached reader resolves through the same helper under its deadline, so element identity,
 exact-window click receipts, and post-write observation agree. Sibling windows are still refused.
 
+`peekaboo-sheet-focus.patch` extends that attribution to keyboard input, for
+[literal insertion refusing a Save sheet's filename field](https://github.com/githubnext/ace/issues/390).
+The exact focused-element receipt read before keyboard input, literal insertion and paste still
+required the receiver's own `AXWindow` link to name the observed window, and an Open or Save panel
+field can have no link at all (kAXErrorNoValue). It now resolves the owner through the shared resolver,
+which also reports the nearest attached sheet on the way to that window; focus corroboration during
+observation uses the same resolver. Because a sheet takes keyboard focus from its parent, a receiver
+inside a sheet is admitted only while that exact sheet is the application's focused window, and a
+receiver outside any sheet still requires the observed window itself. A parent window with an attached
+sheet, another sheet, and sibling windows remain refused.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.
