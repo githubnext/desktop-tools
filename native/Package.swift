@@ -8,6 +8,7 @@ let package = Package(
 	products: [
 		.library(name: "DesktopTools", type: .dynamic, targets: ["DesktopTools"]),
 		.executable(name: "desktop-tools-client", targets: ["DesktopToolsClient"]),
+		.executable(name: "desktop-tools-app", targets: ["DesktopToolsApp"]),
 	],
 	dependencies: [
 		.package(url: "https://github.com/openclaw/Peekaboo.git", exact: "4.8.0"),
@@ -37,6 +38,7 @@ let package = Package(
 			],
 			path: "sources/client"
 		),
+		.executableTarget(name: "DesktopToolsApp", path: "sources/app"),
 	],
 	swiftLanguageModes: [.v6]
 )
