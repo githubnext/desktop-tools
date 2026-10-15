@@ -39,6 +39,7 @@ const patches = [
 	"peekaboo-stale-click.patch",
 	"peekaboo-sheet-window.patch",
 	"peekaboo-sheet-focus.patch",
+	"peekaboo-restore.patch",
 ].map((name) => join(native, "patches", name));
 
 function spawn(command: string[], env?: NodeJS.ProcessEnv) {
