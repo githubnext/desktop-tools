@@ -1,0 +1,354 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AXWindowIDResolver.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AXWindowIDResolver.swift
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AXWindowIDResolver.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AXWindowIDResolver.swift
+@@ -5,6 +5,53 @@ import CoreGraphics
+ private func copyAXWindowID(_ element: AXUIElement, _ windowID: inout CGWindowID) -> AXError
+ 
+ enum AXWindowIDResolver {
++    /// Native reads used to attribute an element to the application window that hosts it.
++    struct Tree {
++        var windowID: (AXUIElement) -> CGWindowID?
++        var attribute: (String, AXUIElement) -> CFTypeRef?
++        var processIdentifier: (AXUIElement) -> pid_t?
++
++        static var system: Self { .bounded(deadline: nil) }
++
++        /// Every read carries a short messaging timeout; with a deadline, it also stops once that deadline passes.
++        static func bounded(deadline: ContinuousClock.Instant?) -> Self {
++            func admitted<T>(_ element: AXUIElement, _ read: () -> T?) -> T? {
++                var timeout: Float = 0.05
++                if let deadline {
++                    let remaining = ContinuousClock.now.duration(to: deadline).components
++                    let seconds = Float(remaining.seconds) + Float(remaining.attoseconds) / 1e18
++                    guard seconds > 0 else { return nil }
++                    timeout = min(timeout, seconds)
++                }
++                guard AXUIElementSetMessagingTimeout(element, timeout) == .success else { return nil }
++                defer { AXUIElementSetMessagingTimeout(element, 0) }
++                let value = read()
++                return deadline.map { ContinuousClock.now < $0 } ?? true ? value : nil
++            }
++            return Self(
++                windowID: { element in admitted(element) { AXWindowIDResolver.windowID(of: element) } },
++                attribute: { name, element in
++                    admitted(element) {
++                        var value: CFTypeRef?
++                        let error = AXUIElementCopyAttributeValue(element, name as CFString, &value)
++                        return error == .success ? value : nil
++                    }
++                },
++                processIdentifier: { element in
++                    var processIdentifier: pid_t = 0
++                    return AXUIElementGetPid(element, &processIdentifier) == .success ? processIdentifier : nil
++                })
++        }
++
++        func element(_ name: String, of element: AXUIElement) -> AXUIElement? {
++            // AX attributes contain native AXUIElement values, not AXorcist Element wrappers.
++            guard let value = self.attribute(name, element), CFGetTypeID(value) == AXUIElementGetTypeID() else {
++                return nil
++            }
++            return unsafeDowncast(value, to: AXUIElement.self)
++        }
++    }
++
+     static func copyWindowID(_ element: AXUIElement, into windowID: inout CGWindowID) -> AXError {
+         copyAXWindowID(element, &windowID)
+     }
+@@ -14,28 +61,35 @@ enum AXWindowIDResolver {
+         return self.copyWindowID(element, into: &windowID) == .success ? windowID : nil
+     }
+ 
+-    static func owningWindowID(
+-        of element: AXUIElement,
+-        windowID: (AXUIElement) -> CGWindowID? = AXWindowIDResolver.windowID(of:),
+-        windowAttribute: (AXUIElement) -> CFTypeRef? = AXWindowIDResolver.windowAttribute(of:)) -> CGWindowID?
+-    {
+-        if let direct = windowID(element), direct > 0 {
+-            return direct
++    /// The CGWindowID of the same-process `AXWindow` that hosts `element`.
++    ///
++    /// Sheets are separate WindowServer windows that are absent from the application's AXWindows, so
++    /// exact-window observations reach them only through the parent window's tree. Their content must
++    /// carry that parent's identity: the AXWindow link of a sheet control names the sheet, and the
++    /// controls of an Open or Save panel resolve to the Open and Save Panel Service's own window.
++    /// Neither can match the observed window, so such links are replaced by the nearest same-process
++    /// `AXWindow` ancestor. Elements with no such ancestor keep their direct native window identity.
++    static func owningWindowID(of element: AXUIElement, tree: Tree = .system) -> CGWindowID? {
++        guard let processIdentifier = tree.processIdentifier(element) else { return nil }
++        let hostWindowID = { (candidate: AXUIElement) -> CGWindowID? in
++            guard tree.processIdentifier(candidate) == processIdentifier,
++                  tree.attribute(kAXRoleAttribute, candidate) as? String == kAXWindowRole,
++                  let windowID = tree.windowID(candidate), windowID > 0
++            else { return nil }
++            return windowID
+         }
+-        // AX attributes contain native AXUIElement values, not AXorcist Element wrappers.
+-        guard let value = windowAttribute(element), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+-        let window = unsafeDowncast(value, to: AXUIElement.self)
+-        AXUIElementSetMessagingTimeout(window, 0.05)
+-        defer { AXUIElementSetMessagingTimeout(window, 0) }
+-        guard let linked = windowID(window), linked > 0 else { return nil }
+-        return linked
+-    }
+-
+-    private static func windowAttribute(of element: AXUIElement) -> CFTypeRef? {
+-        var value: CFTypeRef?
+-        guard AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &value) == .success else {
+-            return nil
++        if let link = tree.element(kAXWindowAttribute, of: element), let windowID = hostWindowID(link) {
++            return windowID
++        }
++        var current = element
++        for _ in 0..<64 {
++            if let windowID = hostWindowID(current) {
++                return windowID
++            }
++            guard let parent = tree.element(kAXParentAttribute, of: current) else { break }
++            current = parent
+         }
+-        return value
++        guard let direct = tree.windowID(element), direct > 0 else { return nil }
++        return direct
+     }
+ }
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedExactWindowFocusReader.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedExactWindowFocusReader.swift
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedExactWindowFocusReader.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedExactWindowFocusReader.swift
+@@ -111,19 +111,9 @@ enum DetachedExactWindowFocusReader {
+             element: focusedElement,
+             processIdentifier: focusedProcessIdentifier,
+             metadata: metadata,
+-            resolveWindowID: { window in
+-                if deadline == nil {
+-                    AXUIElementSetMessagingTimeout(window, self.messagingTimeout)
+-                }
+-                defer {
+-                    if deadline != nil {
+-                        AXUIElementSetMessagingTimeout(window, 0)
+-                    }
+-                }
+-                return self.readBeforeDeadline(
+-                    deadline,
+-                    applyTimeout: { AXUIElementSetMessagingTimeout(window, $0) == .success },
+-                    read: { AXWindowIDResolver.windowID(of: window).map(Int.init) })
++            resolveWindowID: {
++                AXWindowIDResolver.owningWindowID(of: focusedElement, tree: .bounded(deadline: deadline))
++                    .map(Int.init)
+             })
+         guard deadline.map({ ContinuousClock.now < $0 }) ?? true else { return nil }
+         return snapshot
+@@ -133,7 +123,7 @@ enum DetachedExactWindowFocusReader {
+         element: AXUIElement,
+         processIdentifier: pid_t,
+         metadata: [String: AXDescriptorReader.SingleAttributeRead],
+-        resolveWindowID: (AXUIElement) -> Int?) -> ExactWindowFocusSnapshot
++        resolveWindowID: () -> Int?) -> ExactWindowFocusSnapshot
+     {
+         let value: (String) -> CFTypeRef? = { name in
+             guard let read = metadata[name], read.error == .success, let value = read.value else { return nil }
+@@ -146,10 +136,8 @@ enum DetachedExactWindowFocusReader {
+         } else {
+             .zero
+         }
+-        let windowID = value(kAXWindowAttribute).flatMap { window -> Int? in
+-            guard CFGetTypeID(window) == AXUIElementGetTypeID() else { return nil }
+-            return resolveWindowID(unsafeDowncast(window, to: AXUIElement.self))
+-        }
++        // A sheet control's AXWindow link does not name its host window, so resolve from the element.
++        let windowID = resolveWindowID()
+         let role = value(kAXRoleAttribute) as? String
+         let subrole = self.subroleObservation(metadata[kAXSubroleAttribute])
+         let title = value(kAXTitleAttribute) as? String
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/AXWindowIDResolverTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/AXWindowIDResolverTests.swift
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/AXWindowIDResolverTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/AXWindowIDResolverTests.swift
+@@ -5,80 +5,86 @@ import Testing
+ @testable import PeekabooAutomationKit
+ 
+ struct AXWindowIDResolverTests {
+-    private let element = AXUIElementCreateApplication(-101)
+-    private let window = AXUIElementCreateApplication(-102)
+-
+-    @Test
+-    func `direct native window identity does not query an owning window`() {
+-        var linkedReads = 0
+-        let result = AXWindowIDResolver.owningWindowID(
+-            of: self.element,
+-            windowID: { _ in 42 },
+-            windowAttribute: { _ in
+-                linkedReads += 1
+-                return self.window
+-            })
+-
+-        #expect(result == 42)
+-        #expect(linkedReads == 0)
++    private struct Node {
++        var processIdentifier: pid_t = 7
++        var role: String?
++        var windowID: CGWindowID?
++        var window: AXUIElement?
++        var parent: AXUIElement?
+     }
+ 
+-    @Test(arguments: [CGWindowID?.none, .some(0)])
+-    func `web content with no direct window identifier uses its AXWindow link`(direct: CGWindowID?) {
+-        var linkedReads = 0
+-        var lookedUpElements: [AXUIElement] = []
+-        let result = AXWindowIDResolver.owningWindowID(
+-            of: self.element,
+-            windowID: { element in
+-                lookedUpElements.append(element)
+-                return CFEqual(element, self.window) ? 42 : direct
+-            },
+-            windowAttribute: { element in
+-                #expect(CFEqual(element, self.element))
+-                linkedReads += 1
+-                return self.window
+-            })
++    private let field = AXUIElementCreateApplication(-101)
++    private let group = AXUIElementCreateApplication(-102)
++    private let sheet = AXUIElementCreateApplication(-103)
++    private let document = AXUIElementCreateApplication(-104)
++    private let panelService = AXUIElementCreateApplication(-105)
+ 
+-        #expect(result == 42)
+-        #expect(linkedReads == 1)
+-        #expect(lookedUpElements.count == 2)
+-        #expect(CFEqual(lookedUpElements[0], self.element))
+-        #expect(CFEqual(lookedUpElements[1], self.window))
++    private func tree(_ nodes: [(AXUIElement, Node)]) -> AXWindowIDResolver.Tree {
++        let node = { (element: AXUIElement) in nodes.first { CFEqual($0.0, element) }?.1 }
++        return AXWindowIDResolver.Tree(
++            windowID: { node($0)?.windowID },
++            attribute: { name, element in
++                switch name {
++                case kAXRoleAttribute: node(element)?.role as CFTypeRef?
++                case kAXWindowAttribute: node(element)?.window
++                case kAXParentAttribute: node(element)?.parent
++                default: nil
++                }
++            },
++            processIdentifier: { node($0)?.processIdentifier })
+     }
+ 
+-    @Test(arguments: [CGWindowID?.none, .some(0)])
+-    func `missing or unresolved AXWindow never fabricates an identity`(linked: CGWindowID?) {
+-        #expect(AXWindowIDResolver.owningWindowID(
+-            of: self.element,
+-            windowID: { element in CFEqual(element, self.window) ? linked : nil },
+-            windowAttribute: { _ in self.window }) == nil)
++    @Test
++    func `a same-process AXWindow link names the owning window`() {
++        let tree = self.tree([
++            (self.field, Node(role: "AXTextField", windowID: 9, window: self.document, parent: self.group)),
++            (self.document, Node(role: "AXWindow", windowID: 42)),
++        ])
++        #expect(AXWindowIDResolver.owningWindowID(of: self.field, tree: tree) == 42)
+     }
+ 
+     @Test
+-    func `missing and malformed owning-window attributes are refused`() {
+-        for value: CFTypeRef? in [nil, "not an AX element" as CFString, kCFBooleanTrue] {
+-            var identifierReads = 0
+-            let result = AXWindowIDResolver.owningWindowID(
+-                of: self.element,
+-                windowID: { _ in
+-                    identifierReads += 1
+-                    return nil
+-                },
+-                windowAttribute: { _ in value })
++    func `sheet content belongs to the window the sheet is attached to`() {
++        let tree = self.tree([
++            (self.field, Node(role: "AXTextField", windowID: 43, window: self.sheet, parent: self.group)),
++            (self.group, Node(role: "AXGroup", parent: self.sheet)),
++            (self.sheet, Node(role: "AXSheet", windowID: 43, parent: self.document)),
++            (self.document, Node(role: "AXWindow", windowID: 42)),
++        ])
++        #expect(AXWindowIDResolver.owningWindowID(of: self.field, tree: tree) == 42)
++    }
+ 
+-            #expect(result == nil)
+-            #expect(identifierReads == 1)
+-        }
++    @Test(arguments: [true, false])
++    func `remote save panel content belongs to the document window`(linksServiceWindow: Bool) {
++        let tree = self.tree([
++            (self.field, Node(
++                role: "AXTextField",
++                windowID: 173,
++                window: linksServiceWindow ? self.panelService : nil,
++                parent: self.group)),
++            (self.panelService, Node(processIdentifier: 8, role: "AXWindow", windowID: 173)),
++            (self.group, Node(role: "AXSplitGroup", parent: self.sheet)),
++            (self.sheet, Node(role: "AXSheet", windowID: 172, parent: self.document)),
++            (self.document, Node(role: "AXWindow", windowID: 167)),
++        ])
++        #expect(AXWindowIDResolver.owningWindowID(of: self.field, tree: tree) == 167)
+     }
+ 
+     @Test
+-    func `owning window identity is not guessed from the expected target`() {
+-        let actualWindowID = AXWindowIDResolver.owningWindowID(
+-            of: self.element,
+-            windowID: { element in CFEqual(element, self.window) ? 99 : nil },
+-            windowAttribute: { _ in self.window })
++    func `an element without a window ancestor keeps its direct identity`() {
++        let tree = self.tree([
++            (self.field, Node(role: "AXMenuItem", windowID: 44, parent: self.group)),
++            (self.group, Node(role: "AXMenu")),
++        ])
++        #expect(AXWindowIDResolver.owningWindowID(of: self.field, tree: tree) == 44)
++    }
+ 
+-        #expect(actualWindowID == 99)
+-        #expect(actualWindowID != 42)
++    @Test(arguments: [CGWindowID?.none, .some(0)])
++    func `unresolved windows never fabricate an identity`(windowID: CGWindowID?) {
++        let tree = self.tree([
++            (self.field, Node(role: "AXTextField", windowID: windowID, window: self.document, parent: self.document)),
++            (self.document, Node(role: "AXWindow", windowID: windowID)),
++        ])
++        #expect(AXWindowIDResolver.owningWindowID(of: self.field, tree: tree) == nil)
+     }
+ }
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedExactWindowFocusMetadataTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedExactWindowFocusMetadataTests.swift
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedExactWindowFocusMetadataTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedExactWindowFocusMetadataTests.swift
+@@ -162,7 +162,6 @@ struct DetachedExactWindowFocusMetadataTests {
+                     processIdentifier: 4242,
+                     metadata: metadata,
+                     resolveWindowID: {
+-                        #expect(CFEqual($0, native))
+                         events.append("window")
+                         return 42
+                     })
+@@ -183,7 +182,7 @@ struct DetachedExactWindowFocusMetadataTests {
+         #expect(events == identityReads + ["value"] + identityReads)
+     }
+ 
+-    @Test(arguments: [kAXPositionAttribute, kAXSizeAttribute, kAXWindowAttribute, kAXRoleAttribute], [false, true])
++    @Test(arguments: [kAXPositionAttribute, kAXSizeAttribute, kAXRoleAttribute], [false, true])
+     func `invalid native metadata cannot admit a value observation`(attribute: String, embeddedError: Bool) throws {
+         let native = AXUIElementCreateApplication(4242)
+         var values = try Self.nativeMetadata(window: native)
+@@ -202,8 +201,8 @@ struct DetachedExactWindowFocusMetadataTests {
+             element: native,
+             processIdentifier: 4242,
+             metadata: metadata,
+-            resolveWindowID: { _ in windowReads += 1; return 42 })
+-        #expect(windowReads == (attribute == kAXWindowAttribute ? 0 : 1))
++            resolveWindowID: { windowReads += 1; return 42 })
++        #expect(windowReads == 1)
+         let result = DetachedAXMutationReader.readSynchronously(
+             request: (
+                 target: AXMutationObservationTarget(processIdentifier: 4242, processStartIdentity: 99),
+@@ -224,7 +223,7 @@ struct DetachedExactWindowFocusMetadataTests {
+             copyAttributes: { _ in (.success, values) },
+             copyAttribute: { _ in Issue.record("Unexpected fallback"); return nil }))
+         let snapshot = DetachedExactWindowFocusReader.snapshot(
+-            element: native, processIdentifier: 4242, metadata: metadata, resolveWindowID: { _ in 42 })
++            element: native, processIdentifier: 4242, metadata: metadata, resolveWindowID: { 42 })
+         #expect(snapshot.subrole == nil)
+         #expect(snapshot.subroleIsReadable == (error == .noValue || error == .attributeUnsupported))
+         #expect(DetachedExactWindowFocusReader.allowsValueRead(snapshot) == snapshot.subroleIsReadable)
