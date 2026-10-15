@@ -106,8 +106,8 @@ function bounded(data, field) {
         values.pop();
         text = JSON.stringify({
             ...value,
-            ace_truncated: true,
-            ace_omitted: source.length - values.length,
+            truncated: true,
+            omitted: source.length - values.length,
         });
     }
     if (Buffer.byteLength(text) > MAX_TEXT) {
