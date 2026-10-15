@@ -208,6 +208,15 @@ requested-state mismatch for `restoreWindow` is read again, at most 8 times 100 
 posts no input and repeats the full identity, process-generation and bounds validation. Identity
 failures, lookup errors and a window that stays minimized remain indeterminate.
 
+`peekaboo-title.patch` lets an Accessibility observation succeed while the window's title changes,
+found in the [Ace desktop study](https://github.com/githubnext/ace/issues/427). The resolver reads the
+title from WindowServer; the traversal reads it again from Accessibility, so a page with a live title
+failed binding validation with `window-context window title`. A window context that names a window is
+already pinned by that exact window ID, its WindowServer receipt and bounds, and one process generation,
+and the traversal selects its AX window by that ID, so its title is no longer compared. A context without
+a window ID still must match the title. The resolved target keeps its title; the client reports the newer
+traversal title. Input actions bind by window ID, receipt and focused-element identity, never the title.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.
