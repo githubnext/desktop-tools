@@ -90,7 +90,7 @@ mkdirSync(staging, { recursive: true });
 mkdirSync(output, { recursive: true });
 try {
 	log("==> Build");
-	const app = await assemble(join(staging, "app"));
+	const app = assemble(join(staging, "app"), join(root, ".build", "native"));
 	log("==> App signing");
 	sign(app, identity, true);
 	const zip = join(staging, "notarize.zip");
