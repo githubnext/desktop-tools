@@ -1,9 +1,9 @@
 diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/MenuCommand.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/MenuCommand.swift
 new file mode 100644
-index 000000000..5954f209d
+index 000000000..90f84bc95
 --- /dev/null
 +++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/MenuCommand.swift
-@@ -0,0 +1,315 @@
+@@ -0,0 +1,319 @@
 +import ApplicationServices
 +import Foundation
 +import os
@@ -107,7 +107,11 @@ index 000000000..5954f209d
 +        }
 +        guard let enabled = try read.attribute(leaf, kAXEnabledAttribute as String),
 +              CFGetTypeID(enabled) == CFBooleanGetTypeID(), CFEqual(enabled, kCFBooleanTrue)
-+        else { throw read.refusal("The exact menu command is disabled or its enabled state is unavailable.") }
++        else {
++            throw read.refusal("The exact menu command is disabled or its enabled state is unavailable. " +
++                "Apps often disable document commands while they are not active; " +
++                "activate the app and read the menu path again before retrying.")
++        }
 +        let actions: [String] = try read.withElement(leaf) {
 +            var value: CFArray?
 +            guard AXUIElementCopyActionNames(leaf, &value) == .success,
