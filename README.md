@@ -40,7 +40,7 @@ The build:
 3. Assembles the ordered patch stack in a private Git index and applies only the missing suffix. Drift from every complete prefix fails the build instead of producing unexpected source.
 4. Builds in release mode.
 
-`--out` receives `libDesktopTools.dylib`, `desktop-tools-client`, and `Licenses/<dependency>/` notices for this package and every resolved pin. Existing files in `<out>/Licenses` are kept.
+`--out` receives `libDesktopTools.dylib`, `desktop-tools-client`, `desktop-tools-app` (the standalone host below), and `Licenses/<dependency>/` notices for this package and every resolved pin. Existing files in `<out>/Licenses` are kept.
 
 Give each concurrent build its own `--scratch` directory, or run builds one at a time. Patches are applied to the scratch's Peekaboo checkout outside SwiftPM's lock. The default scratch is `native/.build` inside the package, which is not suitable for an installed dependency.
 
@@ -62,7 +62,19 @@ CI checks that `dist/` matches a fresh compile and that the modules import on Li
 | `void desktop_tools_permission(const char *kind)` | Request `accessibility`, `screenRecording`, or `eventSynthesizing` |
 | `void desktop_tools_free(void *)` | Release a status string |
 
-macOS grants Accessibility, Screen Recording, and event synthesis to the embedding app. Each embedding app needs its own grants on each machine. Clients must be signed by the host's team with the exact allowlisted identifier, and the client verifies the host's team. A vendor-signed companion that serves other consumers is not part of this package.
+macOS grants Accessibility, Screen Recording, and event synthesis to the embedding app. Each embedding app needs its own grants on each machine. Clients must be signed by the host's team with the exact allowlisted identifier, and the client verifies the host's team. For agents outside an embedding app, use the Desktop Tools app below.
+
+## Desktop Tools app
+
+`Desktop Tools.app` (`dev.githubnext.desktop-tools`) is a menu bar host for agents that don't embed the library, such as Claude Code or Codex through the MCP server. It holds its own Accessibility, Screen Recording and Keyboard input grants, shown and requested from its menu, and serves `~/.local/state/desktop-tools/desktop.sock`. It links `desktop-client` there to its signed client. Turning off **Serve agents** stops the runtime.
+
+Anything running as the user can use those grants while the app serves, so grant them only on machines where that is acceptable, and quit the app when it isn't needed.
+
+```sh
+node dist/app.js --out build --identity "Developer ID Application: … (TEAM)" --release
+```
+
+`assemble(out, scratch?)` and `sign(app, identity, release)` in `dist/app.js` are what the release workflow uses.
 
 ## Use from Node
 

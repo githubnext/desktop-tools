@@ -132,7 +132,7 @@ if (location.status !== 0)
     throw new Error("Cannot locate the native build products");
 const products = location.stdout.trim();
 mkdirSync(out, { recursive: true });
-for (const name of ["libDesktopTools.dylib", "desktop-tools-client"]) {
+for (const name of ["libDesktopTools.dylib", "desktop-tools-client", "desktop-tools-app"]) {
     copyFileSync(join(products, name), join(out, name));
 }
 // Every artifact carries the notices of what it links; other files in <out>/Licenses stay.
