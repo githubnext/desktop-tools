@@ -155,6 +155,10 @@ private func readLaunch(opensItem: Bool) throws -> ApplicationLaunchRequest {
 				scheme.range(of: "^[A-Za-z][A-Za-z0-9+.-]*$", options: .regularExpression) != nil,
 				url.absoluteString == raw
 			else { throw LaunchError("Use a correctly encoded absolute URL with an explicit scheme and no control characters.") }
+			// LaunchServices hands file URLs to apps as documents, so a query or fragment would be dropped silently.
+			guard !url.isFileURL || (url.query == nil && url.fragment == nil) else {
+				throw LaunchError("A file URL's query or fragment is dropped when the file is opened as a document. Serve the file over http to keep it, or open the file without one.")
+			}
 			urls = [url]
 		}
 	}
