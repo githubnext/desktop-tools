@@ -179,7 +179,8 @@ private enum Client {
 			inspection_mode: accessibility ? InspectionMode.accessibility.rawValue : InspectionMode.pixels.rawValue,
 			note: accessibility ? nil : "Pixel snapshot: no Accessibility elements or focused control. Its snapshot_id authorizes only screenshot-point clicks, point scrolls, and drags in this exact window; element, text, key, and insertion actions are refused.",
 			application_name: result.target.app?.name,
-			window_title: result.target.window?.title,
+			// The traversal reads the title after target resolution, so a live title is newer there.
+			window_title: result.elements?.metadata.windowContext?.windowTitle ?? result.target.window?.title,
 			snapshot_id: result.files.publishedSnapshotID,
 			element_count: result.elements?.metadata.elementCount ?? 0,
 			ui_elements: result.elements?.elements.all.map(Element.init) ?? [],
