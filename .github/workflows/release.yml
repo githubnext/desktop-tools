@@ -1,0 +1,58 @@
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a GitHub Release for package.json's version
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  app:
+    runs-on: macos-15
+    timeout-minutes: 90
+    environment: release
+    permissions:
+      contents: write
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: npm ci
+      # The release imports the checked-in dist/, so it must match the source it ships.
+      - run: npm run check
+      - name: Install signing credentials
+        env:
+          DT_CERTIFICATE_P12: ${{ secrets.DT_CERTIFICATE_P12 }}
+          DT_CERTIFICATE_PASSWORD: ${{ secrets.DT_CERTIFICATE_PASSWORD }}
+          DT_NOTARY_PRIVATE_KEY: ${{ secrets.DT_NOTARY_PRIVATE_KEY }}
+        run: node scripts/credentials.ts
+      - name: Build, sign, and notarize
+        env:
+          DT_CODESIGN_IDENTITY: ${{ vars.DT_CODESIGN_IDENTITY }}
+          DT_NOTARY_KEY_ID: ${{ vars.DT_NOTARY_KEY_ID }}
+          DT_NOTARY_ISSUER: ${{ vars.DT_NOTARY_ISSUER }}
+        run: node scripts/release.ts
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-tools-macos-arm64
+          path: build/release/*.dmg
+          if-no-files-found: error
+      - name: Publish
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          gh release create "v$version" build/release/*.dmg \
+            --target "$GITHUB_SHA" --title "Desktop Tools $version" --generate-notes
+      - name: Remove signing credentials
+        if: always()
+        run: node scripts/credentials.ts clean
