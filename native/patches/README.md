@@ -200,6 +200,14 @@ inside a sheet is admitted only while that exact sheet is the application's focu
 receiver outside any sheet still requires the observed window itself. A parent window with an attached
 sheet, another sheet, and sibling windows remain refused.
 
+`peekaboo-restore.patch` keeps a confirmed restore from reporting an unknown outcome while the
+Dock's unminimize animation runs, found in the [Ace desktop study](https://github.com/githubnext/ace/issues/427).
+The service confirms an exact minimized restore by repinning unchanged WindowServer bounds, so the
+bridge's single readback could still see Accessibility report the window minimized. Only that
+requested-state mismatch for `restoreWindow` is read again, at most 8 times 100 ms apart; each read
+posts no input and repeats the full identity, process-generation and bounds validation. Identity
+failures, lookup errors and a window that stays minimized remain indeterminate.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.
