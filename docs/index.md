@@ -12,6 +12,7 @@ The native runtime and client require macOS 15 or later. The `protocol` export a
 
 - [Desktop Tools app](app.md): a signed menu bar host for agents that don't embed the runtime.
 - [Use from an MCP client](mcp.md): Claude Code, Codex, and other MCP clients.
+- [Tools](tools.md): what agents can observe and do, and what isn't supported.
 - [Use from Node](node.md): the TypeScript client and its results.
 - [Embed](embed.md): ship the runtime inside your own signed app.
 - [Install and build](build.md): Git installs, native builds, and the patch stack.
