@@ -28,6 +28,7 @@ These stay manual, because they are destructive, change system settings, need a 
 - **#80 media, volume and brightness keys:** they change the output volume, playback and display brightness system-wide, and each delivered key is `unknown`.
 - **#43 window outline:** what the outline looks like, during a Space switch, on a full-screen window and while dragging; the menu toggle; clicks through the margin and label.
 - **#78 full screen, #66 Spaces and #1 `other_space`:** each needs a second Space.
+- **#1 incomplete Accessibility retry:** it needs a web view whose first read comes back incomplete, which can't be produced on demand; when one does, the inspect or read lists the page after its retry, or fails with `retried: true`.
 - **#2 two displays:** negative-origin displays, rearranging a display between inspect and click, and SIGKILL of a client mid-drag.
 - **#3 clipboard lifecycle:** SIGKILL of the MCP client during an insert, and quitting Desktop Tools after an uncertain insert.
 - **#99 wedge and permission cases:** an image into a plain-text TextEdit document (holds the clipboard until TextEdit quits), `clipboard: "replace"` into Slack or a browser, Mail and Notes, a 10 MiB TIFF, and clipboard read access set to Ask.

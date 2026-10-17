@@ -104,6 +104,11 @@ export function windowAvailability(window: WindowFacts, session: SessionFacts): 
 	return { state: "available", reason: "visible" };
 }
 
+/** Whether a failure is an incomplete Accessibility read, which inspect and read retry once. */
+export function incompleteAccessibility(message: string) {
+	return /incomplete|sparse/i.test(message);
+}
+
 /**
  * Classifies a failed inspection, read or action from the window's row read afterwards. A window that looks
  * available but failed with an incomplete Accessibility read has a sparse tree, as on a web view's first load.
@@ -122,11 +127,11 @@ export function failureAvailability(
 		};
 	}
 	const availability = windowAvailability(window, session);
-	if (availability.state !== "unavailable" && /incomplete|sparse/i.test(message)) {
+	if (availability.state !== "unavailable" && incompleteAccessibility(message)) {
 		return {
 			state: "limited",
 			reason: "sparse_accessibility",
-			hint: "The window is on screen on the current Space, but its Accessibility tree was incomplete, as often happens while a web view first loads. Wait a second or two and inspect again once; otherwise inspect with mode pixels, adding ocr true to read its text.",
+			hint: "The window is on screen on the current Space, but its Accessibility tree was incomplete, as often happens while a web view first loads. A page still loading may fill in after a few more seconds; otherwise inspect with mode pixels, adding ocr true to read its text.",
 		};
 	}
 	return availability;
