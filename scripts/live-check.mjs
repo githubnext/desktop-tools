@@ -513,9 +513,9 @@ const ISOLATED = "Launches an isolated Chrome (temporary profile, no first-run U
 
 /** Whether the host asks before serving callers: it keeps their answers, and the harness's own caller needs one. */
 const approvesCallers = () =>
-	existsSync(join(STATE, "callers.json")) || skip("this host doesn't approve callers (#PR not in it)");
+	existsSync(join(STATE, "callers.json")) || skip("this host doesn't approve callers (#120 not in it)");
 
-check("PR", "input to Desktop Tools itself is refused with SELF_TARGET_REFUSED, and observing it still works", async (s, m) => {
+check(120, "input to Desktop Tools itself is refused with SELF_TARGET_REFUSED, and observing it still works", async (s, m) => {
 	approvesCallers();
 	const { data } = await m.call("desktop_apps", { query: HOST });
 	const host = (data.apps ?? []).find((a) => a.bundle_id === HOST) ?? skip("no Desktop Tools app is listed");
@@ -1019,7 +1019,7 @@ check(70, "desktop_wait text_contains matches text typed into TextEdit", async (
 });
 
 // Last, since it can leave a prompt open that only the user may answer, and every input waits for that answer.
-check("PR", "a caller the user hasn't allowed is refused, and input waits while its prompt is open", async (s, m) => {
+check(120, "a caller the user hasn't allowed is refused, and input waits while its prompt is open", async (s, m) => {
 	approvesCallers();
 	const win = await s.textedit("plain");
 	// perl stays the server's parent, so the host sees /usr/bin/perl as the caller.
