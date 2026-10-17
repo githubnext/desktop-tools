@@ -8,6 +8,15 @@ Download the notarized DMG from the [latest release](https://github.com/githubne
 
 Anything running as the user can use those grants while the app serves, so grant them only on machines where that is acceptable, and quit the app when it isn't needed.
 
+**Recent Activity** in the menu lists the last 5 operations agents ran. **All Activity** holds the last 20. Each line names:
+- the operation, such as Click, Key, Type, Capture or Read clipboard;
+- the target app and window title;
+- the agent (`DESKTOP_TOOLS_AGENT`, or the name of the process that ran the client, such as `node` for the MCP server) and that process's pid;
+- the time;
+- the outcome: completed, unknown or refused.
+
+Identical operations in a row fold into one line with a count. Every desktop change is listed, and so are screen captures and clipboard reads. Listings and snapshot bookkeeping are not. Only the operation and its target are kept, never typed text, clipboard contents or values. The list lives in memory and is gone when the app quits.
+
 ## Build
 
 ```sh

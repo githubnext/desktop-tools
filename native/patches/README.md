@@ -516,6 +516,17 @@ in `ClipboardImageContents.original`, which stays nil for an ordinary read. The 
 export whose original doesn't match the source's byte count. The new operation shares the clipboard image
 response, descriptor and semantics with the read; the operation inventory tests count it.
 
+`peekaboo-operation-record.patch` reports each finished request to the embedding app, for its recent-activity menu. The embedded runtime's configuration gains an `operationObserver`, which is passed through the bootstrap to the Bridge server.
+- **What it reports.** `route` reports a `PeekabooBridgeOperationRecord` once the request has finished:
+  - the requesting peer's PID;
+  - the operation;
+  - whether its result contract mutates the desktop;
+  - the target process and exact window, when the request names them (the window found as `peekaboo-agent-window.patch` finds it, which is now a shared `requestTargetWindow`, else the process from the operation scope);
+  - an outcome. A confirmed or non-mutating success is `completed`. A refused mutation is `refused`. Any other mutation state is `unknown`. A failure is `unknown` when `operationMayHaveCompleted`, else `refused`.
+- **What it leaves out.** The record carries no payload. Peers that fail authorization report nothing.
+- **Advisory only.** The report changes no routing or response. Without an observer, the server does no extra work.
+- **No new operation.** The wire count is unchanged.
+
 When updating Peekaboo, review the upstream fixes and these patches together. Update the revision
 guard and patches deliberately, or remove each patch when the dependency includes its fix.
 Revalidate real button clicks, changed-focus refusal, literal multiline insertion, clipboard
