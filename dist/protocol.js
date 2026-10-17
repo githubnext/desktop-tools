@@ -73,6 +73,7 @@ export function isDesktopAction(request) {
         || request.op === "insert" || request.op === "select" || request.op === "scroll"
         || request.op === "drag" || request.op === "clipboard-write" || request.op === "launch"
         || request.op === "open" || request.op === "menu" || request.op === "dialog-answer"
+        || request.op === "menubar-click" || request.op === "dock"
         || isDesktopManagement(request);
 }
 export function isDesktopManagement(request) {

@@ -40,6 +40,9 @@ private enum Client {
 			|| (operation == "menus" && args.count == 2)
 			|| (operation == "menu" && args.count == 2)
 			|| (operation == "dialog" && args.count == 2)
+			|| (operation == "menubar" && args.count == 2)
+			|| (operation == "menubar-click" && args.count == 3)
+			|| (operation == "dock" && args.count == 2)
 		else { throw ClientError.usage }
 		let identity = try SigningIdentity.current()
 		let client = PeekabooBridgeClient(
@@ -70,6 +73,13 @@ private enum Client {
 			return try await nativeMenus(client)
 		case "dialog":
 			return try await nativeDialog(client, handshake: handshake)
+		case "menubar":
+			return try await nativeMenuBarItems(client)
+		case "menubar-click":
+			guard args[2].hasPrefix("/") else { throw ClientError.usage }
+			return try await nativeMenuBarClick(client, handshake: handshake, path: args[2])
+		case "dock":
+			return try await nativeDock(client, handshake: handshake)
 		case "management":
 			return try await nativeManagement(client, handshake: handshake)
 		case "launch":
@@ -376,7 +386,7 @@ private enum ClientError: LocalizedError {
 	var errorDescription: String? {
 		switch self {
 		case .usage:
-			"Usage: desktop-tools-client <socket> apps | windows <pid> | inspect <pid> <window> <absolute-output-path> [accessibility|pixels] | screen <absolute-output-path> [display] | menus|menu|dialog|action|management|launch|open|clipboard < JSON"
+			"Usage: desktop-tools-client <socket> apps | windows <pid> | inspect <pid> <window> <absolute-output-path> [accessibility|pixels] | screen <absolute-output-path> [display] | menubar | menubar-click <absolute-output-path> < JSON | menus|menu|dialog|dock|action|management|launch|open|clipboard < JSON"
 		case .target:
 			"The native observation did not confirm the requested process and window. Refresh the window list and try again."
 		case .image:

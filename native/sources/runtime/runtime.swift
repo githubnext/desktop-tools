@@ -83,6 +83,7 @@ private final class Desktop {
 						.focusWindow, .minimizeWindow, .restoreWindow, .maximizeWindow,
 						.moveWindow, .resizeWindow,
 						.targetedDialogListElements, .prepareDialogAction, .exactDialogClickButton, .exactDialogEnterText,
+						.listMenuBarItems, .clickMenuBarItemIndex, .listDockItems, .launchDockItem, .rightClickDockItem,
 					],
 					hostKind: .gui,
 					hostCapabilities: [PeekabooBridgeHostCapability.backgroundBridgeHost, desktopToolsProtocol],

@@ -47,6 +47,11 @@ export type DesktopDialogAnswer = {
     field: number;
     text: string;
 });
+/** One status item from desktop_menubar_items: owner process generation, inventory index and its window if it has one. */
+export type DesktopStatusItemTarget = DesktopAppTarget & {
+    index: number;
+    window_id?: number;
+};
 export type DesktopApplication = {
     path: string;
 } | {
@@ -96,6 +101,15 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     op: "menu";
     target: DesktopAppTarget;
     path: string[];
+} | {
+    op: "menubar-items";
+} | {
+    op: "menubar-click";
+    target: DesktopStatusItemTarget;
+} | {
+    op: "dock";
+    title?: string;
+    menu_item?: string;
 } | {
     op: "inspect";
     pid: number;
@@ -164,7 +178,7 @@ export type DesktopKey = (typeof DESKTOP_KEYS)[number];
 export type DesktopModifier = (typeof DESKTOP_MODIFIERS)[number];
 export type DesktopSelection = (typeof DESKTOP_SELECTIONS)[number];
 export type DesktopAction = Extract<DesktopRequest, {
-    op: "click" | "type" | "key" | "insert" | "select" | "scroll" | "drag" | "activate" | "launch" | "open" | "quit" | "close" | "focus" | "minimize" | "restore" | "move" | "resize" | "clipboard-write" | "menu" | "dialog-answer" | "hide" | "unhide" | "maximize";
+    op: "click" | "type" | "key" | "insert" | "select" | "scroll" | "drag" | "activate" | "launch" | "open" | "quit" | "close" | "focus" | "minimize" | "restore" | "move" | "resize" | "clipboard-write" | "menu" | "dialog-answer" | "hide" | "unhide" | "maximize" | "menubar-click" | "dock";
 }>;
 export type DesktopOutcome = "completed" | "refused" | "unknown";
 export type DesktopImage = {

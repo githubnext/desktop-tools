@@ -19,6 +19,8 @@ export type DesktopManagement =
 export type DesktopDialogAnswer =
 	& { op: "dialog-answer"; target: DesktopAppTarget | DesktopWindowTarget }
 	& ({ button: string } | { field: number; text: string });
+/** One status item from desktop_menubar_items: owner process generation, inventory index and its window if it has one. */
+export type DesktopStatusItemTarget = DesktopAppTarget & { index: number; window_id?: number };
 export type DesktopApplication = { path: string } | { bundle_id: string };
 export type DesktopLaunch = {
 	op: "launch";
@@ -44,6 +46,9 @@ export type DesktopRequest =
 	| { op: "windows"; pid: number }
 	| { op: "menus"; target: DesktopAppTarget; path?: string[] }
 	| { op: "menu"; target: DesktopAppTarget; path: string[] }
+	| { op: "menubar-items" }
+	| { op: "menubar-click"; target: DesktopStatusItemTarget }
+	| { op: "dock"; title?: string; menu_item?: string }
 	| { op: "inspect"; pid: number; window: number; mode?: "accessibility" | "pixels" }
 	| { op: "screen"; display?: number }
 	| {
@@ -185,7 +190,9 @@ export type DesktopAction = Extract<
 			| "dialog-answer"
 			| "hide"
 			| "unhide"
-			| "maximize";
+			| "maximize"
+			| "menubar-click"
+			| "dock";
 	}
 >;
 export type DesktopOutcome = "completed" | "refused" | "unknown";
@@ -203,6 +210,7 @@ export function isDesktopAction(request: DesktopRequest): request is DesktopActi
 		|| request.op === "insert" || request.op === "select" || request.op === "scroll"
 		|| request.op === "drag" || request.op === "clipboard-write" || request.op === "launch"
 		|| request.op === "open" || request.op === "menu" || request.op === "dialog-answer"
+		|| request.op === "menubar-click" || request.op === "dock"
 		|| isDesktopManagement(request);
 }
 
