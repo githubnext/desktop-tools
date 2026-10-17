@@ -1,3 +1,4 @@
+import AppKit
 import DesktopToolsIdentity
 import Darwin
 import Foundation
@@ -149,9 +150,13 @@ private enum Client {
 		case "windows":
 			let pid = try processID(args[2])
 			let inventory = try await client.listWindowMutationInventory(target: .application("PID:\(pid)"))
+			let places = WindowPlaces()
+			let session = CGSessionCopyCurrentDictionary() as NSDictionary?
 			return try encode(Windows(
 				pid: pid,
-				windows: inventory.items.map { Window($0, pid: pid) },
+				session_locked: session?["CGSSessionScreenIsLocked"] as? Bool == true,
+				app_hidden: NSRunningApplication(processIdentifier: pid)?.isHidden,
+				windows: inventory.items.map { Window($0, pid: pid, places: places) },
 				inventory_completeness: inventory.completeness.rawValue,
 				inventory_warnings: inventory.warnings
 			))
@@ -361,6 +366,8 @@ private struct App: Encodable {
 
 private struct Windows: Encodable {
 	let pid: Int32
+	let session_locked: Bool
+	let app_hidden: Bool?
 	let windows: [Window]
 	let inventory_completeness: String
 	let inventory_warnings: [String]
@@ -375,12 +382,16 @@ struct Window: Encodable {
 	let is_key: Bool?
 	/// WindowServer's Spaces for this window, as desktop_spaces lists them; empty when it reports none.
 	let space_ids: [UInt64]
+	/// The display holding most of the window, as desktop_screen indexes it; absent when the window is on no display.
+	let display_index: Int?
+	let display_current_space_id: UInt64?
+	let display_asleep: Bool?
 	let observation_capability: String?
 	let observation_reason: String?
 	let process_start_identity_decimal: String?
 	let target: ManagementTarget?
 
-	init(_ window: ServiceWindowInfo, pid: Int32) {
+	init(_ window: ServiceWindowInfo, pid: Int32, places: WindowPlaces) {
 		window_id = window.windowID
 		window_title = window.title
 		bounds = Bounds(window.bounds)
@@ -388,6 +399,7 @@ struct Window: Encodable {
 		is_minimized = window.isMinimized
 		is_key = window.isKeyWindow
 		space_ids = spaceIDs(window: window.windowID)
+		(display_index, display_current_space_id, display_asleep) = places.place(window.bounds)
 		observation_capability = window.observationCapability?.mode.rawValue
 		observation_reason = window.observationCapability?.reason?.rawValue
 		process_start_identity_decimal = window.mutationIdentity.map { String($0.processIdentity.processStartIdentity) }

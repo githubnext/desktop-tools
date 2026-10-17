@@ -40,9 +40,10 @@ func createdWindows(
 	guard let inventory = try? await client.listWindowMutationInventory(
 		target: .application("PID:\(process.processIdentifier)")
 	) else { return nil }
+	let places = WindowPlaces()
 	let windows = inventory.items.filter { item in
 		!before.contains(item.windowID) && item.mutationIdentity?.processIdentity == process
-	}.map { Window($0, pid: process.processIdentifier) }
+	}.map { Window($0, pid: process.processIdentifier, places: places) }
 	switch windows.count {
 	case 0:
 		return CreatedWindows(windows: [], attribution: "none", note: "No new window of the app appeared within about \(Int(seconds.rounded())) second\(seconds < 1.5 ? "" : "s"). One may still open later, or the action may reuse an existing window; list desktop_windows before acting.")

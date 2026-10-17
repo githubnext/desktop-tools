@@ -413,3 +413,29 @@ func nativeSwitchSpace(_ client: PeekabooBridgeClient, handshake: PeekabooBridge
 	}
 	return try JSONEncoder().encode(SwitchSpaceReply(data: result))
 }
+
+/// Where windows sit: the active displays, each display's current Space, and whether it's asleep. Read once per listing.
+struct WindowPlaces {
+	private let displays: [Display]
+	private let current: [UInt32: UInt64]
+
+	init() {
+		displays = (try? activeDisplays()) ?? []
+		let managed = managedDisplays()
+		var current: [UInt32: UInt64] = [:]
+		for entry in managed {
+			// When Spaces span displays, WindowServer lists one shared entry for all of them.
+			let shown = spansDisplays() ? displays : display(for: entry.uuid, in: displays).map { [$0] } ?? []
+			for display in shown { current[display.display_id] = entry.current }
+		}
+		self.current = current
+	}
+
+	/// The display holding most of the window, its current Space and whether it sleeps; all nil when the window is on no display.
+	func place(_ bounds: CGRect) -> (index: Int?, space: UInt64?, asleep: Bool?) {
+		guard let index = displayIndex(of: bounds, in: displays),
+			let display = displays.first(where: { $0.index == index })
+		else { return (nil, nil, nil) }
+		return (index, current[display.display_id], CGDisplayIsAsleep(display.display_id) != 0)
+	}
+}

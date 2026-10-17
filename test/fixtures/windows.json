@@ -1,0 +1,60 @@
+{
+	"note": "desktop_windows rows shaped like native output, one per availability case. Display 0's current Space is 1; display 1's is 2608.",
+	"session": { "session_locked": false, "app_hidden": false },
+	"rows": {
+		"visible": {
+			"window_id": 101, "bounds": { "x": 100, "y": 80, "width": 900, "height": 700 },
+			"is_on_screen": true, "is_minimized": false, "space_ids": [1],
+			"display_index": 0, "display_current_space_id": 1, "display_asleep": false,
+			"observation_capability": "accessibility", "observation_reason": null
+		},
+		"all_spaces": {
+			"window_id": 102, "bounds": { "x": 100, "y": 80, "width": 400, "height": 300 },
+			"is_on_screen": true, "is_minimized": false, "space_ids": [1, 5, 9],
+			"display_index": 0, "display_current_space_id": 1, "display_asleep": false,
+			"observation_capability": "accessibility"
+		},
+		"other_space": {
+			"window_id": 103, "bounds": { "x": 120, "y": 90, "width": 900, "height": 700 },
+			"is_on_screen": false, "is_minimized": false, "space_ids": [5],
+			"display_index": 0, "display_current_space_id": 1, "display_asleep": false,
+			"observation_capability": "pixels_only", "observation_reason": "no_matching_accessibility_window"
+		},
+		"other_display_current": {
+			"window_id": 104, "bounds": { "x": 1800, "y": 40, "width": 800, "height": 600 },
+			"is_on_screen": true, "is_minimized": false, "space_ids": [2608],
+			"display_index": 1, "display_current_space_id": 2608, "display_asleep": false,
+			"observation_capability": "accessibility"
+		},
+		"minimized": {
+			"window_id": 105, "bounds": { "x": 100, "y": 80, "width": 900, "height": 700 },
+			"is_on_screen": false, "is_minimized": true, "space_ids": [],
+			"display_index": 0, "display_current_space_id": 1, "display_asleep": false,
+			"observation_capability": "pixels_only", "observation_reason": "no_matching_accessibility_window"
+		},
+		"off_screen": {
+			"window_id": 106, "bounds": { "x": -9000, "y": 5000, "width": 640, "height": 480 },
+			"is_on_screen": false, "is_minimized": false, "space_ids": [1],
+			"display_index": null, "display_current_space_id": null, "display_asleep": null,
+			"observation_capability": "pixels_only"
+		},
+		"asleep": {
+			"window_id": 107, "bounds": { "x": 1800, "y": 40, "width": 800, "height": 600 },
+			"is_on_screen": true, "is_minimized": false, "space_ids": [2608],
+			"display_index": 1, "display_current_space_id": 2608, "display_asleep": true,
+			"observation_capability": "accessibility"
+		},
+		"no_accessibility": {
+			"window_id": 108, "bounds": { "x": 100, "y": 80, "width": 900, "height": 700 },
+			"is_on_screen": true, "is_minimized": false, "space_ids": [1],
+			"display_index": 0, "display_current_space_id": 1, "display_asleep": false,
+			"observation_capability": "pixels_only", "observation_reason": "no_matching_accessibility_window"
+		},
+		"unexplained_off_screen": {
+			"window_id": 109, "bounds": { "x": 100, "y": 80, "width": 900, "height": 700 },
+			"is_on_screen": false, "is_minimized": false, "space_ids": [],
+			"display_index": 0, "display_current_space_id": 1, "display_asleep": false,
+			"observation_capability": "pixels_only"
+		}
+	}
+}

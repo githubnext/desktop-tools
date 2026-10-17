@@ -9,13 +9,28 @@ Targets are exact: an app target binds a process generation, and a window target
 | Tool | Does |
 | --- | --- |
 | `desktop_apps` | List running apps, optionally filtered by name or bundle ID |
-| `desktop_windows` | List one app's windows |
+| `desktop_windows` | List one app's windows, each with whether it can be observed and acted on now, and why not |
 | `desktop_inspect` | Read one window's Accessibility elements and a screenshot, or only pixels when Accessibility is unavailable; returns the snapshot that input uses. `scope` lists one element's subtree from a much larger read, and `ocr` adds recognized text |
 | `desktop_read` | Read the text of one window, or of one inspected element's subtree, through Accessibility, up to 96 KB including content scrolled out of view; read only, with no snapshot |
 | `desktop_screen` | Capture one whole display and list the displays and the windows on it, front to back; observation only, with no input snapshot. `ocr` adds recognized text |
 | `desktop_menus` | Read an app's menu bar structure without opening it |
 | `desktop_dialog` | Read the open dialog or sheet in an app or window: its buttons, text fields and labels |
 | `desktop_clipboard_read` | Read the clipboard as text, an image, or file references |
+
+Each `desktop_windows` row has an `availability` object with a `state` (`available`, `limited` or `unavailable`), a `reason`, and a `hint` naming the tool that recovers it. Nothing is recovered automatically.
+
+| Reason | Means | Recovery |
+| --- | --- | --- |
+| `session_locked` | The Mac's session is locked | Unlock it, then observe again |
+| `display_asleep` | The window's display is asleep | Wake the display |
+| `minimized` | The window is minimized | `desktop_restore` |
+| `app_hidden` | The app is hidden | `desktop_unhide` |
+| `other_space` | The window is on another Space than its display's current one; `space_id` names it | `desktop_switch_space`, or `desktop_focus` or `desktop_activate`, which switch Spaces |
+| `off_screen` | The window's bounds are on no display | `desktop_move` |
+| `not_on_screen` | macOS reports it off screen for no reason the listing shows | `desktop_focus` |
+| `accessibility_unavailable` | It's on screen, but Accessibility can't see it (`limited`) | Wait briefly if it just opened, or inspect with `mode: "pixels"` |
+
+When `desktop_inspect`, `desktop_read` or an action is refused, the result's `target_availability` carries the same classification, read from a fresh listing after the failure. A window that looks available but failed with an incomplete Accessibility tree, as while a web view first loads, is `sparse_accessibility`: wait a second or two and inspect once more, or use pixels mode and OCR. A window missing from the listing is `window_gone`. The classification names the likely cause; it can't prove it.
 
 Captures go through ScreenCaptureKit, which every Peekaboo process for the user shares one call at a time. When an earlier capture timed out and hasn't returned, which usually means another capture on the Mac is busy, a new capture waits up to 2 seconds for it. If it still hasn't returned, the capture is refused with a message saying the problem is temporary; wait a few seconds and inspect again. There is no fallback capture, because every other capture path would also use ScreenCaptureKit while the abandoned call still runs. `desktop_apps` has 2.5 seconds to read the app inventory and is refused, not cut short, when the Mac is too busy to finish in time.
 
