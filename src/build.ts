@@ -48,6 +48,7 @@ const patches = [
 	"peekaboo-press.patch",
 	"peekaboo-layout-keys.patch",
 	"peekaboo-element-action.patch",
+	"peekaboo-drag-settle.patch",
 ].map((name) => join(native, "patches", name));
 
 function spawn(command: string[], env?: NodeJS.ProcessEnv) {

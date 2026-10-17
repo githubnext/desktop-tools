@@ -136,6 +136,7 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     snapshot: string;
     from: DesktopPoint;
     to: DesktopPoint;
+    to_snapshot?: string;
     button?: DesktopButton;
     duration_ms?: number;
 } | {

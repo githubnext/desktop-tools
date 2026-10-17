@@ -496,7 +496,9 @@ export function desktopTools({ place, app }) {
         {
             name: "desktop_drag",
             op: "drag",
-            description: `Press, move in a straight line, and release inside the exact window from a fresh desktop_inspect result. Pass snapshot_id as snapshot; from/to are distinct normalized screenshot points (x from its left edge, y from its top edge, each >= 0 and < 1). button defaults to left, with right also supported. duration_ms defaults to 500 and must be 1 to 10000. The native bridge owns the whole gesture and release cleanup; no button stays held across calls. Background delivery never moves the physical pointer or switches windows. Accepted delivery does not prove a drop; verify the effect with a fresh desktop_inspect. An inactive view may ignore the gesture. If observation shows no effect, use explicit desktop_focus followed by a fresh desktop_inspect before deciding on another action. Unsupported or changed windows are refused. The snapshot is single-use; never blindly repeat an interrupted drag because part may already have run.`,
+            description: `Press, move in a straight line, and release inside the exact window from a fresh desktop_inspect result. Pass snapshot_id as snapshot; from/to are distinct normalized screenshot points (x from its left edge, y from its top edge, each >= 0 and < 1). button defaults to left, with right also supported. duration_ms defaults to 500 and must be 1 to 10000. The native bridge owns the whole gesture and release cleanup; no button stays held across calls. Background delivery never moves the physical pointer or switches windows. Accepted delivery does not prove a drop; verify the effect with a fresh desktop_inspect. An inactive view may ignore the gesture. If observation shows no effect, use explicit desktop_focus followed by a fresh desktop_inspect before deciding on another action. Unsupported or changed windows are refused. The snapshot is single-use; never blindly repeat an interrupted drag because part may already have run.
+
+To drag into another window or app, such as a file from Finder into an app, inspect both windows and pass the destination's snapshot_id as to_snapshot; from is then a point in snapshot and to a point in to_snapshot. This is foreground input: it moves the user's real pointer, and pressing in the source may bring its app forward. Both points must be visible and uncovered, so arrange the windows first if needed. duration_ms defaults to 800 for these drags. A drop between windows can't be confirmed, so the result is unknown; inspect both windows to see what happened.`,
             parameters: {
                 type: "object",
                 required: ["snapshot", "from", "to"],
@@ -504,6 +506,7 @@ export function desktopTools({ place, app }) {
                     snapshot: id,
                     from: point,
                     to: point,
+                    to_snapshot: id,
                     button: {
                         anyOf: [
                             { type: "string", const: "left" },
