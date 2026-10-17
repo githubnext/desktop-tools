@@ -76,6 +76,7 @@ private let activityNames: [PeekabooBridgeOperation: String] = [
 	.exactWindowTargetedTypeActions: "Type",
 	.selectText: "Select text",
 	.literalInsert: "Insert text",
+	.attachmentInsert: "Insert attachment",
 	.targetedScroll: "Scroll",
 	.exactWindowDrag: "Drag",
 	.drag: "Drag",

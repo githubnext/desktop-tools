@@ -535,6 +535,21 @@ response, descriptor and semantics with the read; the operation inventory tests 
 
 The same patch adds an `operationAdmission` hook, for the embedding app's pause switch. The server asks it for every authorized request, after operation access is validated and before the target window is reported or anything is dispatched. It passes the operation and whether its result contract mutates the desktop. A returned message fails the request as a pre-dispatch `permissionDenied`, so it may not have completed and is recorded as `refused`. Without a hook, nothing changes.
 
+`peekaboo-attachment-insert.patch` adds the `attachmentInsert` Bridge operation for pasting an image or file
+references into the snapshot's exact focused receiver. The literal insertion transaction becomes one paste
+routine that takes the clipboard payload and the edit it expects; text insertion calls it unchanged. The image is
+validated as for a clipboard image write and keeps its original bytes and type; files become one `public.file-url`
+item each, through a new file-items path in the claimed clipboard write. The route is fixed before any input: a
+guarded paste needs a focused `AXTextArea` whose ancestry proves native text, not web content, and whose complete
+text and selection can be read. Its expected edit is the selection replaced by one U+FFFC per item with the caret
+after them, and when `AXAttributedStringForRange` marks any of those characters with `AXAttachment` it must mark
+every one. Any other receiver is refused before the clipboard is touched. Observation, reservation and restore
+then follow the text rules exactly. With `replace`, the paste uses a claimed write that never reads or keeps the
+prior clipboard and takes no paste reservation; only the exact focus is revalidated when the text can't be read,
+and the result reports `left_replaced`. The response reuses the literal insertion result, which gains
+`attachment_evidence`. The operation inventory tests count it (the wire count is now 132), and new tests cover the replacing and file-items
+writes.
+
 When updating Peekaboo, review the upstream fixes and these patches together. Update the revision
 guard and patches deliberately, or remove each patch when the dependency includes its fix.
 Revalidate real button clicks, changed-focus refusal, literal multiline insertion, clipboard

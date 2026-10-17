@@ -39,6 +39,11 @@ private struct ActionRequest: Decodable {
 	var route: String?
 	let keys: [KeyChord]?
 	let `repeat`: Int?
+	/// An attachment insertion pastes an image (its bytes) or file references instead of text.
+	let format: String?
+	let image: Data?
+	let paths: [String]?
+	let clipboard: String?
 
 	/// One key of a sequence: a named key or the one character a key types, with optional modifiers.
 	struct KeyChord: Decodable {
@@ -94,8 +99,8 @@ private struct ActionRequest: Decodable {
 		if op != .drag, op != .press, button != nil || duration_ms != nil {
 			throw ActionError("Only dragging or pressing accepts a button or duration.")
 		}
-		if op != .insert, route != nil {
-			throw ActionError("Only insertion accepts a route.")
+		if op != .insert, route != nil || format != nil || image != nil || paths != nil || clipboard != nil {
+			throw ActionError("Only insertion accepts a route, format, image, paths or clipboard.")
 		}
 		if op != .click, op != .scroll, op != .hover, op != .press, point != nil {
 			throw ActionError("Only clicks, scrolling, hovering, or pressing accept a target point.")
@@ -210,7 +215,27 @@ private struct ActionRequest: Decodable {
 					throw ActionError("Choose text, cursor_before, or cursor_after selection.")
 				}
 			}
+		case .insert where format != nil:
+			guard element == nil, key == nil, text == nil, route == nil,
+				clipboard == nil || clipboard == "restore" || clipboard == "replace"
+			else {
+				throw ActionError("Insert an image or file references with format, and clipboard restore or replace, without text or a route.")
+			}
+			if format == "image" {
+				guard let image, !image.isEmpty, image.count <= 10 * 1024 * 1024, paths == nil else {
+					throw ActionError("An image insertion takes at most 10 MiB of image data.")
+				}
+			} else {
+				guard format == "files", image == nil, let paths, (1...32).contains(paths.count),
+					paths.allSatisfy({ $0.hasPrefix("/") && $0.utf16.count <= 4096 && !$0.utf8.contains(0) })
+				else {
+					throw ActionError("A files insertion takes 1–32 absolute paths.")
+				}
+			}
 		case .insert:
+			guard image == nil, paths == nil, clipboard == nil else {
+				throw ActionError("Only an image or files insertion accepts image, paths or clipboard.")
+			}
 			guard element == nil, key == nil, let text, !text.isEmpty, text.utf16.count <= 8192 else {
 				throw ActionError("Insert nonempty text of at most 8,192 UTF-16 code units into the observed focused control.")
 			}
@@ -396,6 +421,7 @@ private struct ActionResult: Encodable {
 	var clipboard_cleanup: String?
 	var clipboard_ownership: String?
 	var consumption: String?
+	var attachment_evidence: String?
 	var pointer_moved: Bool?
 	var destination_receipt: Receipt?
 	var release: String?
@@ -457,6 +483,33 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 			}
 			try checkElementRequest(request, observed)
 		}
+		if request.op == .insert, request.format != nil {
+			guard context.focusedElement != nil else {
+				throw ActionError("The snapshot has no exact focused control to paste into. Click the receiver and inspect the window again.")
+			}
+			guard (handshake.enabledOperations ?? handshake.supportedOperations).contains(.attachmentInsert) else {
+				throw ActionError("The native runtime does not allow attachment insertion. Update the desktop runtime before acting.")
+			}
+			// The GUI owns the snapshot lease and the clipboard through consumption, cleanup or replacement.
+			let insertion: PeekabooBridgeLiteralInsertResult
+			do {
+				invoked = true
+				insertion = try await client.attachmentInsert(
+					snapshot: request.snapshot, image: request.image, paths: request.paths,
+					replace: request.clipboard == "replace"
+				)
+			} catch let error where refusalMessage(error) == AttachmentPasteRefusal.message {
+				result.outcome = "refused"
+				result.error = ActionMessage(
+					code: "PASTE_UNVERIFIABLE_RECEIVER", message: AttachmentPasteRefusal.message, hint: AttachmentPasteRefusal.hint
+				)
+				return try JSONEncoder().encode(ActionReply(data: result, target_receipt: receipt))
+			}
+			try applyInsertion(insertion, to: &result, identity: identity)
+			result.attachment_evidence = insertion.attachment_evidence
+			await explainMinimized(client, &result, receipt: receipt)
+			return try JSONEncoder().encode(ActionReply(data: result, target_receipt: receipt))
+		}
 		// Without an observed focused control there's no text to read back, so insertion types into window focus.
 		let typesInsertion = request.op == .insert
 			&& (request.route == "type" || (request.route == nil && context.focusedElement == nil))
@@ -481,22 +534,7 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 			// The GUI owns the snapshot lease and clipboard transaction through consumption and cleanup.
 			invoked = true
 			let insertion = try await client.literalInsert(snapshot: request.snapshot, text: request.text!)
-			result.outcome = insertion.outcome
-			result.native_outcome = insertion.native_outcome
-			result.clipboard_changed = insertion.clipboard_changed
-			result.clipboard_cleanup = insertion.clipboard_cleanup
-			result.clipboard_ownership = insertion.clipboard_ownership
-			result.consumption = insertion.consumption
-			result.requires_fresh_observation = insertion.requires_fresh_observation
-			if let error = insertion.error {
-				result.error = ActionMessage(code: error.code, message: error.message, hint: error.hint, cause: error.cause)
-			}
-			guard let target = insertion.target_receipt,
-				target.pid == identity.ownerProcessIdentifier, target.window_id == identity.windowID,
-				target.process_start_identity_decimal == String(identity.ownerProcessStartIdentity)
-			else {
-				throw ActionError("Literal insertion returned without its expected exact-window receipt. Inspect before retrying.")
-			}
+			try applyInsertion(insertion, to: &result, identity: identity)
 			await explainMinimized(client, &result, receipt: receipt)
 			return try JSONEncoder().encode(ActionReply(data: result, target_receipt: receipt))
 		}
@@ -820,6 +858,33 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 	return try JSONEncoder().encode(ActionReply(data: result, target_receipt: receipt))
 }
 
+/// Copies a GUI paste's result, which must name the snapshot's exact window.
+private func applyInsertion(
+	_ insertion: PeekabooBridgeLiteralInsertResult, to result: inout ActionResult, identity: WindowMutationIdentity
+) throws {
+	result.outcome = insertion.outcome
+	result.native_outcome = insertion.native_outcome
+	result.clipboard_changed = insertion.clipboard_changed
+	result.clipboard_cleanup = insertion.clipboard_cleanup
+	result.clipboard_ownership = insertion.clipboard_ownership
+	result.consumption = insertion.consumption
+	result.requires_fresh_observation = insertion.requires_fresh_observation
+	if let error = insertion.error {
+		result.error = ActionMessage(code: error.code, message: error.message, hint: error.hint, cause: error.cause)
+	}
+	guard let target = insertion.target_receipt,
+		target.pid == identity.ownerProcessIdentifier, target.window_id == identity.windowID,
+		target.process_start_identity_decimal == String(identity.ownerProcessStartIdentity)
+	else {
+		throw ActionError("Literal insertion returned without its expected exact-window receipt. Inspect before retrying.")
+	}
+}
+
+/// The message of a host refusal, whether it arrives as an action failure or a bridge error.
+private func refusalMessage(_ error: any Error) -> String? {
+	(error as? DesktopActionFailure)?.message ?? (error as? PeekabooBridgeErrorEnvelope)?.message
+}
+
 /// The observed web field that typing may replace: it must be the snapshot's keyboard focus, since a click to focus
 /// it could also act on the page.
 private func webTypingReceiver(
@@ -1119,9 +1184,14 @@ func coordinateAuthority(
 
 private func readAction() throws -> ActionRequest {
 	var data = Data()
+	// Only an image insertion carries its encoded bytes; every other action fits 64 KiB.
 	while let chunk = try FileHandle.standardInput.read(upToCount: 4096), !chunk.isEmpty {
 		data.append(chunk)
-		guard data.count <= 65_536 else { throw ActionError("The desktop action request exceeds 64 KiB.") }
+		guard data.count <= 14 * 1024 * 1024 else { throw ActionError("The desktop action request exceeds 14 MiB.") }
 	}
-	return try JSONDecoder().decode(ActionRequest.self, from: data)
+	let request = try JSONDecoder().decode(ActionRequest.self, from: data)
+	guard data.count <= 65_536 || (request.op == .insert && request.format == "image") else {
+		throw ActionError("The desktop action request exceeds 64 KiB.")
+	}
+	return request
 }
