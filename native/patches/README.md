@@ -403,6 +403,18 @@ was refused as a changed target and the test failed
 ([#50](https://github.com/githubnext/desktop-tools/issues/50)). The test now stubs missing bounds as well,
 like the restore test after it. The server is unchanged.
 
+`peekaboo-notification-actions.patch` lists and performs Notification Center's custom actions. Since
+macOS 11 its banners and entries advertise them as `Name:Close\nTarget:…\nSelector:…` descriptors, for
+Close, Show, Options and the posting app's own actions. Upstream observation keeps only standard `AX` action
+names, and `performAction` accepts only letters, digits, `_` and `-`, so none of them can be seen or run. The
+observation worker now lists, only when the traversed process runs Notification Center's executable, each
+element's custom action names as `attributes.customActions`, one per line: at most 8, each at most 64
+characters with no control characters, and never a name advertised twice. `performAction` accepts
+`AXCustomAction:<name>` with the same snapshot, exact-element and process checks as any element action, and
+also refuses it before dispatch unless the target process is Notification Center and the element lists
+exactly that name. It performs the matching descriptor and reports the requested name, which the Bridge
+receipt requires. No Bridge operation is added. Built against the macOS 11 to 15 structure; tests use fixtures.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.

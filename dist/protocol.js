@@ -95,7 +95,7 @@ export function isDesktopAction(request) {
         || request.op === "element-action" || request.op === "set-value"
         || request.op === "open" || request.op === "menu" || request.op === "dialog-answer"
         || request.op === "menubar-click" || request.op === "dock"
-        || isDesktopManagement(request);
+        || request.op === "notification-action" || isDesktopManagement(request);
 }
 export function isDesktopManagement(request) {
     return request.op === "activate" || request.op === "quit" || request.op === "hide"
