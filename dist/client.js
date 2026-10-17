@@ -152,8 +152,12 @@ async function screenshot(input, output, signal) {
     if (!file.isFile() || file.size > 32_000_000) {
         throw new Error("The native screenshot is missing or too large.");
     }
+    const source = await dimensions(input, signal);
+    const longest = Math.max(source.width, source.height);
     // A single result must fit the hosted channel's 2 MB SQLite row, including its base64 image.
-    for (const size of [1600, 1200, 800]) {
+    // Captures are only scaled down: a small display or window keeps its own pixels.
+    const sizes = [...new Set([1600, 1200, 800].map((size) => Math.min(size, longest)))];
+    for (const size of sizes) {
         await run("/usr/bin/sips", [
             "-s",
             "format",
@@ -161,19 +165,14 @@ async function screenshot(input, output, signal) {
             "-s",
             "formatOptions",
             "70",
-            "--resampleHeightWidthMax",
-            String(size),
+            ...(size < longest ? ["--resampleHeightWidthMax", String(size)] : []),
             input,
             "--out",
             output,
         ], signal);
         if ((await stat(output)).size > MAX_IMAGE)
             continue;
-        const info = await run("/usr/bin/sips", ["-g", "pixelWidth", "-g", "pixelHeight", output], signal);
-        const width = Number(/pixelWidth:\s*(\d+)/.exec(info)?.[1]);
-        const height = Number(/pixelHeight:\s*(\d+)/.exec(info)?.[1]);
-        if (!width || !height)
-            throw new Error("Could not read the screenshot dimensions.");
+        const { width, height } = await dimensions(output, signal);
         const bytes = await readFile(output);
         if (bytes.length > MAX_IMAGE) {
             throw new Error("The resized screenshot exceeds the result limit.");
@@ -181,6 +180,14 @@ async function screenshot(input, output, signal) {
         return { image: { mimeType: "image/jpeg", data: bytes.toString("base64") }, width, height };
     }
     throw new Error("The screenshot could not be resized within the result limit.");
+}
+async function dimensions(path, signal) {
+    const info = await run("/usr/bin/sips", ["-g", "pixelWidth", "-g", "pixelHeight", path], signal);
+    const width = Number(/pixelWidth:\s*(\d+)/.exec(info)?.[1]);
+    const height = Number(/pixelHeight:\s*(\d+)/.exec(info)?.[1]);
+    if (!width || !height)
+        throw new Error("Could not read the screenshot dimensions.");
+    return { width, height };
 }
 function clipboardFiles(data) {
     const files = data.files;
@@ -261,10 +268,10 @@ async function inspect(native, request, signal) {
         const { screenshot_raw: _raw, screenshot_annotated: _annotated, ...observation } = data;
         const text = bounded({
             ...observation,
-            ace_image: {
+            image: {
                 width,
                 height,
-                note: "Screenshot resized; Accessibility bounds remain in their original coordinate system. Pointer points use fractions of this image: x from the left edge and y from the top, each >= 0 and < 1.",
+                note: "Screenshot, scaled down when large but never up; Accessibility bounds remain in their original coordinate system. Pointer points use fractions of this image: x from the left edge and y from the top, each >= 0 and < 1.",
             },
         }, "ui_elements", limit);
         return { text, image };
@@ -311,10 +318,10 @@ async function screen(native, request, signal) {
         const { image, width, height } = await screenshot(path, join(directory, "image.jpg"), signal);
         const text = bounded({
             ...data,
-            ace_image: {
+            image: {
                 width,
                 height,
-                note: "Whole-display screenshot, resized. Observation only: there is no snapshot_id and no input can target this image. Window and display bounds are global desktop points; pass a window's pid and window_id to desktop_inspect to act on it.",
+                note: "Whole-display screenshot, scaled down when large but never up. Observation only: there is no snapshot_id and no input can target this image. Window and display bounds are global desktop points; pass a window's pid and window_id to desktop_inspect to act on it.",
             },
         }, "windows", limit);
         return { text, image };
@@ -996,10 +1003,10 @@ async function menubarClick(native, request, signal) {
             const { image, width, height } = await screenshot(join(directory, "capture.png"), join(directory, "image.jpg"), signal);
             const text = JSON.stringify({
                 action: data,
-                ace_image: {
+                image: {
                     width,
                     height,
-                    note: "Screenshot of the region that opened after the click, resized. Observation only: there is no snapshot_id and no input can target this image.",
+                    note: "Screenshot of the region that opened after the click, scaled down when large but never up. Observation only: there is no snapshot_id and no input can target this image.",
                 },
             });
             if (Buffer.byteLength(text) > MAX_TEXT)
