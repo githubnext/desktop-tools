@@ -487,7 +487,7 @@ check(107, "desktop_read leaves Safari's web accessibility alone and reports not
 // 0.10.0
 const finderPaste = (m) =>
 	/PASTE_NAME_EXISTS/.test(m.tools.get("desktop_insert")?.description ?? "") ||
-	skip("this build's desktop_insert doesn't paste into Finder folders (#PR not in it)");
+	skip("this build's desktop_insert doesn't paste into Finder folders (#114 not in it)");
 
 /** A Finder fixture window whose file list has focus, freshly inspected. */
 async function finderListFocus(s, m) {
@@ -497,7 +497,7 @@ async function finderListFocus(s, m) {
 	return s.inspect(first.win);
 }
 
-check("PR", "desktop_insert format files copies into a Finder folder and restores the clipboard", async (s, m) => {
+check(114, "desktop_insert format files copies into a Finder folder and restores the clipboard", async (s, m) => {
 	finderPaste(m);
 	await s.clipboard();
 	const { snap } = await finderListFocus(s, m);
@@ -515,7 +515,7 @@ check("PR", "desktop_insert format files copies into a Finder folder and restore
 	);
 });
 
-check("PR", "desktop_insert format files refuses a name already in the Finder folder, before input", async (s, m) => {
+check(114, "desktop_insert format files refuses a name already in the Finder folder, before input", async (s, m) => {
 	finderPaste(m);
 	await s.clipboard();
 	const { snap } = await finderListFocus(s, m);
