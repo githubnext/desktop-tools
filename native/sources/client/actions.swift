@@ -1,8 +1,12 @@
+import Carbon
 import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooFoundation
+
+/// Typed insertion checks focus before every character, so it is kept short enough to finish well within a request.
+private let maximumTypedInsertion = 1000
 
 private struct ActionRequest: Decodable {
 	enum Operation: String, Decodable {
@@ -32,6 +36,7 @@ private struct ActionRequest: Decodable {
 	let value: UIElementValue?
 	let to_snapshot: String?
 	let path: [PointerPoint]?
+	var route: String?
 
 	/// Modifier keys and drags between windows need real global input; other drags stay in the background.
 	var dragsInForeground: Bool {
@@ -65,6 +70,9 @@ private struct ActionRequest: Decodable {
 		}
 		if op != .drag, op != .press, button != nil || duration_ms != nil {
 			throw ActionError("Only dragging or pressing accepts a button or duration.")
+		}
+		if op != .insert, route != nil {
+			throw ActionError("Only insertion accepts a route.")
 		}
 		if op != .click, op != .scroll, op != .hover, op != .press, point != nil {
 			throw ActionError("Only clicks, scrolling, hovering, or pressing accept a target point.")
@@ -170,6 +178,21 @@ private struct ActionRequest: Decodable {
 		case .insert:
 			guard element == nil, key == nil, let text, !text.isEmpty, text.utf16.count <= 8192 else {
 				throw ActionError("Insert nonempty text of at most 8,192 UTF-16 code units into the observed focused control.")
+			}
+			guard route == nil || route == "paste" || route == "type" else {
+				throw ActionError("Choose the paste or type route, or omit route.")
+			}
+			if route == "type" {
+				guard text.utf16.count <= maximumTypedInsertion else {
+					throw ActionError("Typed insertion takes at most \(maximumTypedInsertion) UTF-16 code units; insert longer text in parts.")
+				}
+				// Typing a newline or tab presses Return or Tab, which can run a command or move focus.
+				guard !text.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) else {
+					throw ActionError(
+						"Typed insertion can't contain newlines, tabs or other control characters, because typing them presses keys such as Return.",
+						hint: "Insert each line separately and press desktop_key enter or tab between them only where you mean to."
+					)
+				}
 			}
 		case .key:
 			guard element == nil, text == nil, let key, serviceKey(key) != nil else {
@@ -359,10 +382,27 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 			}
 			try checkElementRequest(request, observed)
 		}
-		if request.op == .insert, context.focusedElement == nil {
-			throw ActionError("The snapshot has no exact focused control. Click the text field, then inspect the window again.")
+		// Without an observed focused control there's no text to read back, so insertion types into window focus.
+		let typesInsertion = request.op == .insert
+			&& (request.route == "type" || (request.route == nil && context.focusedElement == nil))
+		if request.op == .insert, request.route == "paste", context.focusedElement == nil {
+			throw ActionError("The snapshot has no exact focused control to paste into. Click the text field and inspect the window again, or omit route to type into the window's focus.")
 		}
-		if request.op == .insert {
+		if typesInsertion {
+			var effective = request
+			effective.route = "type"
+			try effective.validate()
+			guard (handshake.enabledOperations ?? handshake.supportedOperations).contains(.exactWindowTargetedTypeActions) else {
+				throw ActionError("The native runtime does not allow typed insertion. Update the desktop runtime before acting.")
+			}
+			if IsSecureEventInputEnabled() {
+				throw ActionError(
+					"Secure keyboard entry is on, as for a password field or a terminal's Secure Keyboard Entry, so typed text can't be delivered. Nothing was typed.",
+					hint: "Use a field that isn't secure, or turn off Secure Keyboard Entry in the app."
+				)
+			}
+		}
+		if request.op == .insert, !typesInsertion {
 			// The GUI owns the snapshot lease and clipboard transaction through consumption and cleanup.
 			invoked = true
 			let insertion = try await client.literalInsert(snapshot: request.snapshot, text: request.text!)
@@ -502,7 +542,20 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 				))
 			}
 		case .insert:
-			throw ActionError("Literal insertion must use its GUI-owned transaction.")
+			// Typing leaves the clipboard alone. The host checks focus before each character, as for keys.
+			if let focusedElement = context.focusedElement {
+				result.receiver = "observed_control"
+				evidence = try await ActionEvidence(client.typeActionsWithOutcome(
+					[.text(request.text!)], cadence: .fixed(milliseconds: 2), snapshotId: request.snapshot,
+					target: .init(windowIdentity: identity, windowBounds: bounds, focusedElement: focusedElement)
+				))
+			} else {
+				result.receiver = "window_focus"
+				evidence = try await ActionEvidence(client.typeActionsWithOutcome(
+					[.text(request.text!)], cadence: .fixed(milliseconds: 2), snapshotId: request.snapshot,
+					expectedWindowIdentity: identity, expectedWindowBounds: bounds
+				))
+			}
 		case .select:
 			let selected = try await client.selectText(
 				target: request.element!,
@@ -534,6 +587,15 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 			result.outcome = "unknown"
 		default:
 			result.outcome = outcome.evidence == .operationStillRunning || !verified ? "unknown" : "completed"
+		}
+		// Delivered keystrokes don't show what the receiver did with them unless the host read the change back.
+		if request.op == .insert, result.outcome == "completed", outcome.state != .confirmedChange {
+			result.outcome = "unknown"
+			result.error = ActionMessage(
+				code: "INSERTION_UNVERIFIED",
+				message: "The text was typed into the window's keyboard focus, but nothing could read back what the receiver did with it.",
+				hint: "Inspect the window, or capture it with desktop_screen, to check the text before acting again; do not repeat the insertion blindly."
+			)
 		}
 		if !verified, result.outcome != "refused" {
 			result.outcome = "unknown"
