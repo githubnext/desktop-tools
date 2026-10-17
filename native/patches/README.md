@@ -396,6 +396,13 @@ when waypoints are given; its modifier keys were already supported. The bridge p
 exact-window request decode a missing `waypoints` as empty. Tests in
 `ExactWindowHeldPointerLifecycleTests.swift` cover the samples, the refusals and decoding.
 
+`peekaboo-minimized-close-test.patch` changes only a test. The upstream test "minimized identity may dispatch
+when WindowServer omits its entry" stubs a missing owner for window 77, but not its bounds, so the server read
+the bounds of any real WindowServer window 77. On a Mac where one exists, even off screen, the pinned close
+was refused as a changed target and the test failed
+([#50](https://github.com/githubnext/desktop-tools/issues/50)). The test now stubs missing bounds as well,
+like the restore test after it. The server is unchanged.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.
@@ -421,8 +428,7 @@ named `*Bridge*`) in a few batches. Two upstream tests also
 fail on unpatched Peekaboo 4.8.0 on some hosts:
 `DesktopObservationServiceTests.testGenerationlessRemoteExactObservationStaysReadOnly` when a real
 WindowServer window 42 exists, and the PeekabooBridge test "Cancellation reaps the exact child
-without a zombie". With the stack, "minimized identity may dispatch when WindowServer omits its
-entry" also fails ([#50](https://github.com/githubnext/desktop-tools/issues/50)).
+without a zombie".
 
 When updating Peekaboo, review the upstream fixes and these patches together. Update the revision
 guard and patches deliberately, or remove each patch when the dependency includes its fix.
