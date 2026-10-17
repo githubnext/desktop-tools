@@ -97,6 +97,8 @@ export type DesktopRequest =
 	}
 	| { op: "read"; pid: number; window: number; scope?: DesktopScope }
 	| DesktopWait
+	| { op: "notifications" }
+	| { op: "notification-action"; id: string; action: string }
 	| { op: "screen"; display?: number; ocr?: boolean }
 	| {
 		op: "click";
@@ -266,7 +268,8 @@ export type DesktopAction = Extract<
 			| "unhide"
 			| "maximize"
 			| "menubar-click"
-			| "dock";
+			| "dock"
+			| "notification-action";
 	}
 >;
 export type DesktopOutcome = "completed" | "refused" | "unknown";
@@ -288,7 +291,7 @@ export function isDesktopAction(request: DesktopRequest): request is DesktopActi
 		|| request.op === "element-action" || request.op === "set-value"
 		|| request.op === "open" || request.op === "menu" || request.op === "dialog-answer"
 		|| request.op === "menubar-click" || request.op === "dock"
-		|| isDesktopManagement(request);
+		|| request.op === "notification-action" || isDesktopManagement(request);
 }
 
 export function isDesktopManagement(request: DesktopRequest): request is DesktopManagement {

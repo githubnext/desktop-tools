@@ -1,0 +1,143 @@
+{
+	"_comment": "Notification Center window inspections in the macOS 11-15 structure; macOS 27 is unverified.",
+	"window": [
+		{
+			"id": "e0",
+			"role": "window",
+			"attributes": {
+				"role": "AXWindow",
+				"depth": "0"
+			}
+		},
+		{
+			"id": "e1",
+			"role": "group",
+			"attributes": {
+				"role": "AXGroup",
+				"depth": "1",
+				"subrole": "AXNotificationCenterBanner",
+				"customActions": "Close\nShow\nReply"
+			},
+			"label": "Messages, Ada, See you at 6"
+		},
+		{
+			"id": "e2",
+			"role": "statictext",
+			"attributes": {
+				"role": "AXStaticText",
+				"depth": "2"
+			},
+			"value": "Ada"
+		},
+		{
+			"id": "e3",
+			"role": "statictext",
+			"attributes": {
+				"role": "AXStaticText",
+				"depth": "2"
+			},
+			"value": "See you at 6"
+		},
+		{
+			"id": "e4",
+			"role": "group",
+			"attributes": {
+				"role": "AXGroup",
+				"depth": "1",
+				"subrole": "AXNotificationCenterAlertStack",
+				"customActions": "Clear All"
+			},
+			"label": "Mail, 2 notifications"
+		},
+		{
+			"id": "e5",
+			"role": "group",
+			"attributes": {
+				"role": "AXGroup",
+				"depth": "2",
+				"subrole": "AXNotificationCenterAlert",
+				"customActions": "Close"
+			},
+			"label": "Mail, Bob, Invoice, Due Friday"
+		},
+		{
+			"id": "e6",
+			"role": "statictext",
+			"attributes": {
+				"role": "AXStaticText",
+				"depth": "3",
+				"identifier": "title"
+			},
+			"value": "Bob"
+		},
+		{
+			"id": "e7",
+			"role": "statictext",
+			"attributes": {
+				"role": "AXStaticText",
+				"depth": "3",
+				"identifier": "subtitle"
+			},
+			"value": "Invoice"
+		},
+		{
+			"id": "e8",
+			"role": "statictext",
+			"attributes": {
+				"role": "AXStaticText",
+				"depth": "3",
+				"identifier": "body"
+			},
+			"value": "Due Friday"
+		},
+		{
+			"id": "e9",
+			"role": "statictext",
+			"attributes": {
+				"role": "AXStaticText",
+				"depth": "3",
+				"identifier": "date"
+			},
+			"value": "5m ago"
+		}
+	],
+	"after_close": [
+		{
+			"id": "e0",
+			"role": "window",
+			"attributes": {
+				"role": "AXWindow",
+				"depth": "0"
+			}
+		},
+		{
+			"id": "e1",
+			"role": "group",
+			"attributes": {
+				"role": "AXGroup",
+				"depth": "1",
+				"subrole": "AXNotificationCenterBanner",
+				"customActions": "Close\nShow\nReply"
+			},
+			"label": "Messages, Ada, See you at 6"
+		},
+		{
+			"id": "e2",
+			"role": "statictext",
+			"attributes": {
+				"role": "AXStaticText",
+				"depth": "2"
+			},
+			"value": "Ada"
+		},
+		{
+			"id": "e3",
+			"role": "statictext",
+			"attributes": {
+				"role": "AXStaticText",
+				"depth": "2"
+			},
+			"value": "See you at 6"
+		}
+	]
+}

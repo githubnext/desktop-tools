@@ -29,6 +29,13 @@ import {
 	isDesktopKey,
 	isDesktopManagement,
 } from "./protocol.js";
+import {
+	NOTIFICATIONS_MS,
+	type NotificationIO,
+	notificationAction,
+	readNotifications,
+	validateNotificationAction,
+} from "./notifications.js";
 import { waitFor } from "./wait.js";
 
 /** Explicit paths for one signed host and client pair; nothing is discovered. */
@@ -689,6 +696,10 @@ function validateAction(request: DesktopAction) {
 			throw new Error("A system key accepts only key and modifiers.");
 		}
 		return validateKey(request);
+	}
+	if (request.op === "notification-action") {
+		validateNotificationAction(request);
+		return;
 	}
 	if (typeof request.snapshot !== "string" || !request.snapshot || request.snapshot.length > 256) {
 		throw new Error("Use the snapshot_id from a fresh desktop_inspect result.");
@@ -1402,6 +1413,8 @@ async function execute(
 			"inspect",
 			"read",
 			"wait",
+			"notifications",
+			"notification-action",
 			"screen",
 			"click",
 			"type",
@@ -1451,6 +1464,29 @@ async function execute(
 					target: { pid: input.pid as number, window: input.window as number },
 				}),
 		}, request, abort);
+	}
+	// Notifications compose several reads, each with its own 30-second limit, under one overall limit.
+	if (request.op === "notifications" || request.op === "notification-action") {
+		const signal = AbortSignal.any([...(abort ? [abort] : []), AbortSignal.timeout(NOTIFICATIONS_MS)]);
+		const io: NotificationIO = {
+			observe: (read, signal) => execute(native, read, signal),
+			perform: (input, signal, onDispatch) =>
+				native(["action"], signal, { input: JSON.stringify(input), onDispatch }),
+		};
+		if (request.op === "notifications") {
+			if (Object.keys(request).some((key) => key !== "op")) throw new Error("Reading notifications takes no arguments.");
+			return { text: bounded(await readNotifications(io, signal), "notifications") };
+		}
+		try {
+			const { data, outcome } = await notificationAction(io, request, signal);
+			return actionResult(data, outcome);
+		} catch (error) {
+			return actionResult({
+				outcome: "refused",
+				reason: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
+				message: "No input was sent.",
+			}, "refused");
+		}
 	}
 	const deadline = new AbortController();
 	const timer = setTimeout(

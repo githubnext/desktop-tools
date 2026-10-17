@@ -144,7 +144,7 @@ private struct ActionRequest: Decodable {
 				throw ActionError("Choose a literal element ID from the inspected snapshot.")
 			}
 			if op == .elementAction {
-				guard let action, elementActions.contains(action) else {
+				guard let action, elementActions.contains(action) || customActionName(action) != nil else {
 					throw ActionError("Choose one of \(elementActions.sorted().joined(separator: ", ")).")
 				}
 			} else {
@@ -240,6 +240,15 @@ private struct PointerPoint: Decodable, Equatable {
 let elementActions: Set<String> = [
 	"AXShowMenu", "AXIncrement", "AXDecrement", "AXConfirm", "AXCancel", "AXPick", "AXRaise", "AXScrollToVisible",
 ]
+/// A Notification Center custom action requested as `AXCustomAction:<name>`: one line of at most 64 characters.
+func customActionName(_ action: String) -> String? {
+	guard action.hasPrefix("AXCustomAction:") else { return nil }
+	let name = String(action.dropFirst("AXCustomAction:".count))
+	guard !name.isEmpty, name.count <= 64,
+		!name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+	else { return nil }
+	return name
+}
 /// Roles whose Accessibility value is one on/off state.
 private let booleanValueRoles: Set<String> = ["AXCheckBox", "AXSwitch", "AXToggle", "AXDisclosureTriangle"]
 /// Roles whose Accessibility value is one number.
@@ -813,6 +822,16 @@ private func checkElementRequest(_ request: ActionRequest, _ observed: DetectedE
 	switch request.op {
 	case .elementAction:
 		let action = request.action!
+		if let name = customActionName(action) {
+			// Only Notification Center elements list custom actions, by their exact names.
+			let listed = observed.attributes["customActions"]?.split(separator: "\n").map(String.init) ?? []
+			guard listed.contains(name) else {
+				throw ActionError(listed.isEmpty
+					? "The observed element lists no custom actions."
+					: "The observed element does not list \(name). It lists \(listed.joined(separator: ", ")).")
+			}
+			return
+		}
 		guard let listed = observed.attributes["actions"] else {
 			throw ActionError("This snapshot did not record the element's advertised actions. Inspect the window again.")
 		}

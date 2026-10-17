@@ -1,6 +1,6 @@
 # Tools
 
-The [MCP server](mcp.md) and `desktopTools()` expose 42 tools, one per protocol operation. Each tool's description and argument schema in `src/tools.ts` is the full contract; this page is the map.
+The [MCP server](mcp.md) and `desktopTools()` expose 44 tools, one per protocol operation. Each tool's description and argument schema in `src/tools.ts` is the full contract; this page is the map.
 
 Targets are exact: an app target binds a process generation, and a window target binds its window ID and bounds. Input acts on a single-use snapshot from the latest `desktop_inspect`. A stale or changed target is refused rather than redirected. Action results report `completed`, `refused`, or `unknown`, and nothing is retried automatically.
 
@@ -85,6 +85,8 @@ Mission Control and App Exposé are `desktop_system_key` with `control` and `up`
 | --- | --- |
 | `desktop_menubar_items` | List the menu bar's status items left to right, with owner app, pid and process generation, identifier, title and bounds |
 | `desktop_menubar_click` | Press one status item by its exact listed target, then list and capture the windows that opened |
+| `desktop_notifications` | List the notification banners and alerts on screen, and Notification Center's entries when it is open, with app, title, body and actions |
+| `desktop_notification_action` | Open, close or run one listed action of one notification, then read again to confirm it went away |
 | `desktop_dock` | List the Dock; launch or activate one item by exact title, or right-click it and choose a context-menu item by exact title |
 
 A status item is pressed through Accessibility in its owner process without moving the pointer. Control Center, Notification Center and many popovers open as windows that `desktop_inspect` can read and drive; an app's plain status menu may show only in the click's capture. The Dock right-click is a real mouse event that moves the physical pointer.
@@ -128,6 +130,8 @@ With `ocr: true`, `desktop_inspect` (in either mode) and `desktop_screen` also r
 `desktop_inspect` lists the actions each element offers in `attributes.actions`. A pop-up button has no settable value: click it, then pick the item from the next observation, which puts an open menu's items first.
 
 `desktop_system_key` is for shortcuts that belong to macOS rather than a window: Spotlight (Command-Space), the app switcher (Command-Tab), Mission Control (Control-Up), the screenshot tools (Command-Shift-4 and 5) and the next input source (Control-Space). It takes the same keys and modifiers as `desktop_key`, but no snapshot. The keys are posted as ordinary keyboard input, so they reach whatever is frontmost, and they often move focus, activate an app or open system UI. Nothing reads back what a shortcut did, so the result is `unknown` even after delivery; observe with `desktop_screen`, `desktop_apps` or `desktop_windows`. Any chord with Command and W, Q, H or M is refused before anything is sent, including Command-Shift-Q (log out).
+
+`desktop_notifications` inspects Notification Center's windows on screen: its banners and alerts, and its panel when open (click the clock with `desktop_menubar_click` to open it). Each notification has an `id`, its app, title, subtitle, body and time where they can be read, its raw `texts` and `description`, and its `actions`: `open`, plus the custom actions Notification Center lists for it by exact name, such as Close, Show, Options or the posting app's own. `desktop_notification_action` takes that `id` and one of those actions. `open` is the notification's default click (on a stack, it expands the group); `close` runs Close; any other name runs that one listed custom action through Accessibility. Only Notification Center's elements list or run custom actions, at most 8 per element, each one line of at most 64 characters, and a name listed twice is never offered. A notification that has gone or changed is refused before input. Afterwards the notifications are read again: the result is `completed` only when the notification is gone, and `unknown` otherwise. System alerts such as permission prompts are dialogs, so `desktop_notifications` lists them under `system_alerts` for `desktop_dialog` and `desktop_dialog_answer` and never acts on them. This is built against the Notification Center structure of macOS 11 to 15.
 
 An action refused because its window was minimized after inspection reports `WINDOW_MINIMIZED`, with the low-level reason as its `cause`. Restore the window with `desktop_restore`, then inspect it again.
 
