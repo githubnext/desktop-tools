@@ -608,6 +608,47 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 			},
 		},
 		{
+			name: "desktop_set_value",
+			op: "set-value",
+			description:
+				`Set the value of one non-text control from a fresh desktop_inspect result and verify it by reading the same element back: a number for a slider, stepper (AXIncrementor), or level indicator, or true/false for a checkbox, switch, or disclosure triangle (true expands it). Pass snapshot_id as snapshot and the literal element ID as element. A number is written directly and must read back exactly, so a control that rounds or clamps it reports unknown; desktop_element_action with AXIncrement or AXDecrement steps a control without a settable value. A toggle with a read-only value that advertises AXPress gets at most one press, and none when it already has the requested state; a mixed state is refused. Use desktop_type for text fields. A pop-up button has no settable value: open it with desktop_click, then choose the item from the fresh observation, which lists an open menu's items first, with desktop_element_action AXPick or desktop_click. The snapshot binds the exact process, window, and element and is single-use. This does not activate the window. Inspect again after an unknown result and never blindly repeat interrupted input.`,
+			parameters: {
+				type: "object",
+				required: ["snapshot", "element", "value"],
+				properties: {
+					snapshot: id,
+					element: id,
+					value: { anyOf: [{ type: "number" }, { type: "boolean" }] },
+				},
+			},
+		},
+		{
+			name: "desktop_element_action",
+			op: "element-action",
+			description:
+				`Perform one named Accessibility action on one element from a fresh desktop_inspect result, without pointer or keyboard input. The element must list the action in its attributes.actions; others are refused before any input. AXShowMenu opens the element's context menu without a right click; AXIncrement and AXDecrement step a slider or stepper by its own increment; AXConfirm and AXCancel accept or dismiss, such as AXCancel on an open menu; AXPick chooses an open menu's item; AXRaise brings a window forward within its app; AXScrollToVisible scrolls the element into view. Use desktop_click to press a button. Pass snapshot_id as snapshot and the literal element ID as element. The snapshot binds the exact process, window, and element and is single-use. Accepted delivery does not prove the effect; inspect again before acting further, and never blindly repeat an action, because each repetition can step, toggle, or open again.`,
+			parameters: {
+				type: "object",
+				required: ["snapshot", "element", "action"],
+				properties: {
+					snapshot: id,
+					element: id,
+					action: {
+						anyOf: [
+							{ type: "string", const: "AXShowMenu" },
+							{ type: "string", const: "AXIncrement" },
+							{ type: "string", const: "AXDecrement" },
+							{ type: "string", const: "AXConfirm" },
+							{ type: "string", const: "AXCancel" },
+							{ type: "string", const: "AXPick" },
+							{ type: "string", const: "AXRaise" },
+							{ type: "string", const: "AXScrollToVisible" },
+						],
+					},
+				},
+			},
+		},
+		{
 			name: "desktop_select",
 			op: "select",
 			description:

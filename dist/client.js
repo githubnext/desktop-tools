@@ -4,7 +4,7 @@ import { lstat, mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { DESKTOP_BUTTONS, DESKTOP_CLICKS, DESKTOP_DIRECTIONS, DESKTOP_MODIFIERS, DESKTOP_SELECTIONS, isDesktopAction, isDesktopKey, isDesktopManagement, } from "./protocol.js";
+import { DESKTOP_BUTTONS, DESKTOP_CLICKS, DESKTOP_DIRECTIONS, DESKTOP_ELEMENT_ACTIONS, DESKTOP_MODIFIERS, DESKTOP_SELECTIONS, isDesktopAction, isDesktopKey, isDesktopManagement, } from "./protocol.js";
 const exec = promisify(execFile);
 const MAX_TEXT = 32_000;
 const MAX_IMAGE = 900_000;
@@ -525,6 +525,13 @@ function validateAction(request) {
     if (typeof request.element !== "string" || !request.element || request.element.length > 256) {
         throw new Error("Choose an element ID from the inspected snapshot.");
     }
+    if (request.op === "element-action" && !DESKTOP_ELEMENT_ACTIONS.includes(request.action)) {
+        throw new Error(`Choose one of ${DESKTOP_ELEMENT_ACTIONS.join(", ")}.`);
+    }
+    if (request.op === "set-value" && typeof request.value !== "boolean"
+        && (typeof request.value !== "number" || !Number.isFinite(request.value))) {
+        throw new Error("Set a finite number or true/false; use desktop_type for text.");
+    }
     if (request.op === "type" && (typeof request.text !== "string" || request.text.length > 8192)) {
         throw new Error("Replacement text must contain at most 8192 UTF-16 code units.");
     }
@@ -1019,6 +1026,8 @@ async function execute(native, request, abort) {
             "key",
             "insert",
             "select",
+            "element-action",
+            "set-value",
             "scroll",
             "drag",
             "hover",

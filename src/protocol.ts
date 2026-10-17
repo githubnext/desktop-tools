@@ -85,6 +85,8 @@ export type DesktopRequest =
 	}
 	| { op: "type"; snapshot: string; element: string; text: string }
 	| { op: "insert"; snapshot: string; text: string }
+	| { op: "element-action"; snapshot: string; element: string; action: DesktopElementAction }
+	| { op: "set-value"; snapshot: string; element: string; value: number | boolean }
 	| {
 		op: "select";
 		snapshot: string;
@@ -162,11 +164,23 @@ export const DESKTOP_KEYS = [
 ] as const;
 export const DESKTOP_MODIFIERS = ["command", "control", "option", "shift"] as const;
 export const DESKTOP_SELECTIONS = ["text", "cursor_before", "cursor_after"] as const;
+/** Named Accessibility actions; AXPress is desktop_click's route and is not listed separately. */
+export const DESKTOP_ELEMENT_ACTIONS = [
+	"AXShowMenu",
+	"AXIncrement",
+	"AXDecrement",
+	"AXConfirm",
+	"AXCancel",
+	"AXPick",
+	"AXRaise",
+	"AXScrollToVisible",
+] as const;
 export type DesktopNamedKey = (typeof DESKTOP_KEYS)[number];
 /** A named key, or the one printable character a key types without Shift or Option, such as `,` or `a`. */
 export type DesktopKey = DesktopNamedKey | (string & {});
 export type DesktopModifier = (typeof DESKTOP_MODIFIERS)[number];
 export type DesktopSelection = (typeof DESKTOP_SELECTIONS)[number];
+export type DesktopElementAction = (typeof DESKTOP_ELEMENT_ACTIONS)[number];
 export type DesktopAction = Extract<
 	DesktopRequest,
 	{
@@ -176,6 +190,8 @@ export type DesktopAction = Extract<
 			| "key"
 			| "insert"
 			| "select"
+			| "element-action"
+			| "set-value"
 			| "scroll"
 			| "drag"
 			| "hover"
@@ -215,6 +231,7 @@ export function isDesktopAction(request: DesktopRequest): request is DesktopActi
 		|| request.op === "insert" || request.op === "select" || request.op === "scroll"
 		|| request.op === "drag" || request.op === "hover" || request.op === "press"
 		|| request.op === "clipboard-write" || request.op === "launch"
+		|| request.op === "element-action" || request.op === "set-value"
 		|| request.op === "open" || request.op === "menu" || request.op === "dialog-answer"
 		|| request.op === "menubar-click" || request.op === "dock"
 		|| isDesktopManagement(request);

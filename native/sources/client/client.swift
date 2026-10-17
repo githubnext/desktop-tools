@@ -205,7 +205,7 @@ private enum Client {
 			window_title: result.elements?.metadata.windowContext?.windowTitle ?? result.target.window?.title,
 			snapshot_id: result.files.publishedSnapshotID,
 			element_count: result.elements?.metadata.elementCount ?? 0,
-			ui_elements: result.elements?.elements.all.map(Element.init) ?? [],
+			ui_elements: openMenusFirst(result.elements?.elements.all ?? []).map(Element.init),
 			coordinate_context: result.elements?.metadata.captureCoordinateContext
 				?? CaptureCoordinateContext(metadata: result.capture.metadata),
 			capture_warning: result.capture.warning,
@@ -354,6 +354,12 @@ private struct Inspection: Encodable {
 	let timings: ObservationTimings
 }
 
+/// An open menu's items come first, so a bounded result keeps the choices a click just revealed.
+private func openMenusFirst(_ elements: [DetectedElement]) -> [DetectedElement] {
+	let menu: (DetectedElement) -> Bool = { ["AXMenu", "AXMenuItem"].contains($0.attributes["role"] ?? "") }
+	return elements.filter(menu) + elements.filter { !menu($0) }
+}
+
 private struct Element: Encodable {
 	let id: String
 	let role: String
@@ -372,7 +378,13 @@ private struct Element: Encodable {
 		bounds = Bounds(element.bounds)
 		is_enabled = element.isEnabled
 		is_selected = element.isSelected
-		attributes = element.attributes
+		var attributes = element.attributes
+		// Report only the actions an agent can request, keeping each element's result small.
+		if let listed = attributes["actions"] {
+			let offered = listed.split(separator: ",").filter { elementActions.contains(String($0)) }
+			attributes["actions"] = offered.isEmpty ? nil : offered.joined(separator: ",")
+		}
+		self.attributes = attributes
 	}
 }
 

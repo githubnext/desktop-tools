@@ -1,6 +1,6 @@
 # Tools
 
-The [MCP server](mcp.md) and `desktopTools()` expose 33 tools, one per protocol operation. Each tool's description and argument schema in `src/tools.ts` is the full contract; this page is the map.
+The [MCP server](mcp.md) and `desktopTools()` expose 35 tools, one per protocol operation. Each tool's description and argument schema in `src/tools.ts` is the full contract; this page is the map.
 
 Targets are exact: an app target binds a process generation, and a window target binds its window ID and bounds. Input acts on a single-use snapshot from the latest `desktop_inspect`. A stale or changed target is refused rather than redirected. Action results report `completed`, `refused`, or `unknown`, and nothing is retried automatically.
 
@@ -54,6 +54,8 @@ A status item is pressed through Accessibility in its owner process without movi
 | `desktop_press` | Press and hold an element or point for up to 10 seconds, then release in place |
 | `desktop_type` | Replace an editable field's whole value |
 | `desktop_select` | Select literal text in a field, or put the caret before or after it |
+| `desktop_set_value` | Set a slider, stepper or level indicator to a number, or a checkbox, switch or disclosure triangle on or off, and read it back |
+| `desktop_element_action` | Perform one Accessibility action an element lists, such as `AXShowMenu`, `AXIncrement`, `AXDecrement`, `AXPick` or `AXCancel` |
 | `desktop_insert` | Insert text at the caret or over the selection with one temporary paste, then restore the clipboard |
 | `desktop_key` | Press one key with optional Command, Control, Option and Shift: any character key, such as `,` or `/`, or a named key |
 | `desktop_menu` | Run one menu command by its exact title path |
@@ -65,6 +67,8 @@ Pointer input is delivered to the exact window without moving the physical point
 When the host turns on the window highlight, the window an inspection or action targets gets an orange outline and a label such as "Claude is using TextEdit". It shows from the moment the request reaches the host, moves to a new window when the target changes, and fades about four seconds after the last request. The outline follows the window as it moves or resizes and stays directly above it in the window order, so windows in front of the target also cover the outline. It hides while the window is minimized, off screen or on another Space. Like the cursor, it never takes clicks or focus and is left out of captures. Requests without one exact window, such as `desktop_screen`, menus or the clipboard, don't show it.
 
 `desktop_key` takes a character key as the character it types, and finds that key on the current keyboard layout, so `,` is the comma key on any layout. A character that needs Shift or Option, such as `?` or `A`, is refused with the key and modifier to send instead (`/` with `shift` on a US layout); the key press never holds a modifier that wasn't asked for. The named keys are `enter`, `tab`, `escape`, `space`, `backspace`, `delete` (forward delete), `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `help` (Insert on PC keyboards), `f1` to `f20`, and the keypad keys `keypad0` to `keypad9`, `keypaddecimal`, `keypadplus`, `keypadminus`, `keypadmultiply`, `keypaddivide`, `keypadequals`, `keypadenter` and `keypadclear`. Dead keys, such as `´` on some layouts, can't be pressed alone; use `desktop_insert` for text.
+
+`desktop_inspect` lists the actions each element offers in `attributes.actions`. A pop-up button has no settable value: click it, then pick the item from the next observation, which puts an open menu's items first.
 
 ## Not supported
 

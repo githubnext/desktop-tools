@@ -84,7 +84,7 @@ private final class Desktop {
 						.listApplications, .listWindows, .listMenus, .menuCommand, .desktopObservation,
 						.createSnapshot, .cleanSnapshot, .ownsSnapshot, .getDetectionResult, .beginSnapshotMutation,
 						.finishSnapshotMutation,
-						.targetedClick, .exactWindowTargetedClick, .setValue, .exactWindowTargetedHotkey,
+						.targetedClick, .exactWindowTargetedClick, .setValue, .performAction, .exactWindowTargetedHotkey,
 						.selectText, .literalInsert, .clipboardTextRead, .clipboardImageRead, .clipboardFilesRead, .clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite, .targetedScroll, .exactWindowDrag, .moveMouse,
 						.createExactWindowHeldPointerOwner, .beginExactWindowHeldPointer, .releaseExactWindowHeldPointer,
 						.revokeExactWindowHeldPointer, .disconnectExactWindowHeldPointerOwner,

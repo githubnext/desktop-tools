@@ -160,6 +160,16 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     snapshot: string;
     text: string;
 } | {
+    op: "element-action";
+    snapshot: string;
+    element: string;
+    action: DesktopElementAction;
+} | {
+    op: "set-value";
+    snapshot: string;
+    element: string;
+    value: number | boolean;
+} | {
     op: "select";
     snapshot: string;
     element: string;
@@ -187,13 +197,16 @@ export type DesktopButton = (typeof DESKTOP_BUTTONS)[number];
 export declare const DESKTOP_KEYS: readonly ["enter", "tab", "escape", "backspace", "delete", "up", "down", "left", "right", "space", "home", "end", "pageup", "pagedown", "help", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "keypad0", "keypad1", "keypad2", "keypad3", "keypad4", "keypad5", "keypad6", "keypad7", "keypad8", "keypad9", "keypaddecimal", "keypadmultiply", "keypadplus", "keypadminus", "keypaddivide", "keypadequals", "keypadenter", "keypadclear"];
 export declare const DESKTOP_MODIFIERS: readonly ["command", "control", "option", "shift"];
 export declare const DESKTOP_SELECTIONS: readonly ["text", "cursor_before", "cursor_after"];
+/** Named Accessibility actions; AXPress is desktop_click's route and is not listed separately. */
+export declare const DESKTOP_ELEMENT_ACTIONS: readonly ["AXShowMenu", "AXIncrement", "AXDecrement", "AXConfirm", "AXCancel", "AXPick", "AXRaise", "AXScrollToVisible"];
 export type DesktopNamedKey = (typeof DESKTOP_KEYS)[number];
 /** A named key, or the one printable character a key types without Shift or Option, such as `,` or `a`. */
 export type DesktopKey = DesktopNamedKey | (string & {});
 export type DesktopModifier = (typeof DESKTOP_MODIFIERS)[number];
 export type DesktopSelection = (typeof DESKTOP_SELECTIONS)[number];
+export type DesktopElementAction = (typeof DESKTOP_ELEMENT_ACTIONS)[number];
 export type DesktopAction = Extract<DesktopRequest, {
-    op: "click" | "type" | "key" | "insert" | "select" | "scroll" | "drag" | "hover" | "press" | "activate" | "launch" | "open" | "quit" | "close" | "focus" | "minimize" | "restore" | "move" | "resize" | "clipboard-write" | "menu" | "dialog-answer" | "hide" | "unhide" | "maximize" | "menubar-click" | "dock";
+    op: "click" | "type" | "key" | "insert" | "select" | "element-action" | "set-value" | "scroll" | "drag" | "hover" | "press" | "activate" | "launch" | "open" | "quit" | "close" | "focus" | "minimize" | "restore" | "move" | "resize" | "clipboard-write" | "menu" | "dialog-answer" | "hide" | "unhide" | "maximize" | "menubar-click" | "dock";
 }>;
 export type DesktopOutcome = "completed" | "refused" | "unknown";
 export type DesktopImage = {

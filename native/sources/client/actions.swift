@@ -7,6 +7,8 @@ import PeekabooFoundation
 private struct ActionRequest: Decodable {
 	enum Operation: String, Decodable {
 		case click, type, key, insert, select, scroll, drag, hover, press
+		case elementAction = "element-action"
+		case setValue = "set-value"
 	}
 
 	let op: Operation
@@ -26,6 +28,8 @@ private struct ActionRequest: Decodable {
 	let to: PointerPoint?
 	let button: String?
 	let duration_ms: Int?
+	let action: String?
+	let value: UIElementValue?
 
 	func validate() throws {
 		guard !snapshot.isEmpty, snapshot.utf16.count <= 256 else {
@@ -45,6 +49,12 @@ private struct ActionRequest: Decodable {
 		}
 		if op != .drag, from != nil || to != nil {
 			throw ActionError("Only dragging accepts endpoints.")
+		}
+		if op != .elementAction, action != nil {
+			throw ActionError("Only element actions accept an action name.")
+		}
+		if op != .setValue, value != nil {
+			throw ActionError("Only set-value accepts a value.")
 		}
 		if op != .drag, op != .press, button != nil || duration_ms != nil {
 			throw ActionError("Only dragging or pressing accepts a button or duration.")
@@ -92,6 +102,24 @@ private struct ActionRequest: Decodable {
 			guard button == nil || ExactWindowHeldPointerButton(rawValue: button!) != nil,
 				ExactWindowDragRequest.durationMillisecondsRange.contains(duration_ms ?? 500)
 			else { throw ActionError("Choose a left or right drag lasting 1 to 10000 milliseconds.") }
+		case .elementAction, .setValue:
+			guard let element, !element.isEmpty, element.utf16.count <= 256, key == nil, text == nil else {
+				throw ActionError("Choose a literal element ID from the inspected snapshot.")
+			}
+			if op == .elementAction {
+				guard let action, elementActions.contains(action) else {
+					throw ActionError("Choose one of \(elementActions.sorted().joined(separator: ", ")).")
+				}
+			} else {
+				switch value {
+				case .bool?, .int?:
+					break
+				case let .double(number)? where number.isFinite:
+					break
+				default:
+					throw ActionError("Set a finite number or true/false; use desktop_type for text.")
+				}
+			}
 		case .type, .select:
 			guard let element, !element.isEmpty, element.utf16.count <= 256, key == nil else {
 				throw ActionError("Choose a literal element ID from the inspected snapshot.")
@@ -148,6 +176,18 @@ private struct PointerPoint: Decodable, Equatable {
 		return point
 	}
 }
+
+/// AXPress stays with desktop_click, whose element route already performs it with tab and focus checks.
+let elementActions: Set<String> = [
+	"AXShowMenu", "AXIncrement", "AXDecrement", "AXConfirm", "AXCancel", "AXPick", "AXRaise", "AXScrollToVisible",
+]
+/// Roles whose Accessibility value is one on/off state.
+private let booleanValueRoles: Set<String> = ["AXCheckBox", "AXSwitch", "AXToggle", "AXDisclosureTriangle"]
+/// Roles whose Accessibility value is one number.
+private let numericValueRoles: Set<String> = ["AXSlider", "AXIncrementor", "AXStepper", "AXLevelIndicator"]
+private let textValueRoles: Set<String> = [
+	"AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXSecureTextField",
+]
 
 private let pointerClicks: Set<String> = ["single", "double", "right", "middle", "triple"]
 private let keyboardModifiers: [String: String] = [
@@ -212,6 +252,9 @@ private struct ActionResult: Encodable {
 	var native_outcome: DesktopActionOutcome?
 	var selected_leaf_evidence: [DesktopSelectedLeafEvidence]?
 	var selection: TextSelectionResult?
+	var element_action: String?
+	var previous_value: String?
+	var value: String?
 	var clipboard_changed: Bool?
 	var clipboard_cleanup: String?
 	var clipboard_ownership: String?
@@ -266,6 +309,7 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 			guard request.op == .hover || observed.knownIsEnabled != false else {
 				throw ActionError("The observed element is disabled.")
 			}
+			try checkElementRequest(request, observed)
 		}
 		if request.op == .key || request.op == .insert, context.focusedElement == nil {
 			// Peekaboo resolves keyboard receivers from the window's focused element; without one the key has no target.
@@ -374,6 +418,19 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 			evidence = try await ActionEvidence(client.setValueWithOutcome(
 				target: request.element!, value: .string(request.text!), snapshotId: request.snapshot
 			))
+		case .setValue:
+			let set = try await client.setValueWithOutcome(
+				target: request.element!, value: request.value!, snapshotId: request.snapshot
+			)
+			evidence = ActionEvidence(set)
+			result.previous_value = set.payload.oldValue
+			result.value = set.payload.newValue
+		case .elementAction:
+			let performed = try await client.performActionWithOutcome(
+				target: request.element!, actionName: request.action!, snapshotId: request.snapshot
+			)
+			evidence = ActionEvidence(performed)
+			result.element_action = performed.payload.actionName
 		case .key:
 			// Text-action emulation rejects WKWebView's focused receiver; deliver the exact-window key instead.
 			evidence = try await ActionEvidence(client.hotkeyWithOutcome(
@@ -439,7 +496,7 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 		result.requires_fresh_observation = dispatched || failure.outcome.escalation == .refreshTarget
 		result.error = ActionMessage(
 			code: failure.standardErrorCode?.rawValue ?? "DESKTOP_ACTION_FAILED",
-			message: failure.message, hint: failure.hint
+			message: failure.message, hint: failure.hint, cause: failure.causeDescription
 		)
 		if let lease {
 			do {
@@ -499,6 +556,55 @@ private func exposes(_ point: CGPoint, in window: UIAutomationTarget.ExactWindow
 			&& abs(frame.width - bounds.width) < 1 && abs(frame.height - bounds.height) < 1
 	}
 	return false
+}
+
+/// Element actions and values act only on what the snapshot observed the element to support.
+private func checkElementRequest(_ request: ActionRequest, _ observed: DetectedElement) throws {
+	let role = observed.attributes["role"] ?? ""
+	switch request.op {
+	case .elementAction:
+		let action = request.action!
+		guard let listed = observed.attributes["actions"] else {
+			throw ActionError("This snapshot did not record the element's advertised actions. Inspect the window again.")
+		}
+		let advertised = listed.split(separator: ",").map(String.init)
+		guard advertised.contains(action) else {
+			let offered = advertised.filter(elementActions.contains)
+			throw ActionError("The observed \(role.isEmpty ? "element" : role) does not advertise \(action). "
+				+ (offered.isEmpty ? "It advertises none of the supported element actions." : "It advertises \(offered.joined(separator: ", ")).")
+				+ (action == "AXShowMenu" ? " A right click with desktop_click may still open a menu." : ""))
+		}
+	case .setValue:
+		if textValueRoles.contains(role) {
+			throw ActionError("Use desktop_type to replace a text control's value.")
+		}
+		let boolean = booleanValueRoles.contains(role)
+		guard boolean || numericValueRoles.contains(role) else {
+			throw ActionError("Set values only on sliders, steppers, level indicators, checkboxes, switches, and disclosure triangles; this element is \(role.isEmpty ? "unknown" : role). Choose a pop-up button's item by clicking the button and then the item.")
+		}
+		if case .bool = request.value!, !boolean {
+			throw ActionError("A \(role) takes a number, not true or false.")
+		}
+		if boolean {
+			guard case .bool = request.value! else {
+				throw ActionError("A \(role) takes true or false.")
+			}
+			guard ["0", "1", "true", "false"].contains(observed.value ?? "") else {
+				throw ActionError("This \(role) was observed in a mixed or unreadable state, so on/off cannot be verified. Use desktop_click.")
+			}
+		}
+		// Native set-value reports an unsettable target as possibly dispatched, so refuse it here first.
+		if observed.attributes["isValueSettable"] == "false" {
+			let pressable = observed.attributes["actions"]?.split(separator: ",").contains("AXPress") == true
+			guard boolean, pressable else {
+				throw ActionError(boolean
+					? "This \(role) has no settable value and does not advertise AXPress. Inspect it again, or use desktop_click."
+					: "This \(role) has no settable value. Use desktop_element_action with AXIncrement or AXDecrement if it advertises them.")
+			}
+		}
+	default:
+		break
+	}
 }
 
 func snapshotWindow(
