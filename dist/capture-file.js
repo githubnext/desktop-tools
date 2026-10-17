@@ -1,8 +1,14 @@
 import { constants } from "node:fs";
 import { copyFile, lstat, open, stat } from "node:fs/promises";
 import { dirname, isAbsolute, normalize } from "node:path";
+/** File extensions a clipboard image may be saved with, by its type. */
+const CLIPBOARD_EXTENSIONS = {
+    "public.png": ["png"],
+    "public.jpeg": ["jpg", "jpeg"],
+    "public.tiff": ["tif", "tiff"],
+};
 /** Checks save_path, overwrite and region before anything is captured. */
-export async function validateSave(request) {
+export async function validateSave(request, extensions = ["png"]) {
     const { save_path: path, overwrite, region } = request;
     if (overwrite !== undefined && typeof overwrite !== "boolean")
         throw new Error("Choose overwrite true or false.");
@@ -13,8 +19,9 @@ export async function validateSave(request) {
         return undefined;
     }
     if (typeof path !== "string" || !isAbsolute(path) || normalize(path) !== path || path.length > 1024
-        || path.includes("\0") || !/\.png$/i.test(path)) {
-        throw new Error("save_path must be a normalized absolute path ending in .png.");
+        || path.includes("\0") || !extensions.includes(path.split(".").at(-1).toLowerCase())) {
+        const names = extensions.map((extension) => "." + extension);
+        throw new Error(`save_path must be a normalized absolute path ending in ${names.length > 1 ? names.slice(0, -1).join(", ") + " or " + names.at(-1) : names[0]}.`);
     }
     if (region !== undefined)
         regionOf(region);
@@ -85,6 +92,27 @@ export async function saveCapture(capture, scratch, path, request, area, tools, 
     // Exclusive unless overwrite was asked for, so a file created since validation is never replaced.
     await copyFile(source, path, request.overwrite === true ? 0 : constants.COPYFILE_EXCL);
     return { path, width: saved.width, height: saved.height, region };
+}
+export const CLIPBOARD_SAVE_EXTENSIONS = Object.values(CLIPBOARD_EXTENSIONS).flat();
+/**
+ * Saves the clipboard image's original bytes, exported to a private file, at path. The bytes are copied
+ * unchanged, so path's extension must name the image's own type.
+ */
+export async function saveClipboardImage(exported, path, overwrite, source, signal) {
+    const extensions = CLIPBOARD_EXTENSIONS[source.uti];
+    if (!extensions)
+        throw new Error(`The clipboard image type ${source.uti} can't be saved.`);
+    if (!extensions.includes(path.split(".").at(-1).toLowerCase())) {
+        throw new Error(`The clipboard holds a ${source.mimeType} image; save it with a .${extensions.join(" or .")} path. Nothing was written.`);
+    }
+    const exportedFile = await lstat(exported);
+    if (!exportedFile.isFile() || exportedFile.size !== source.bytes) {
+        throw new Error("The exported clipboard image is incomplete. Nothing was written.");
+    }
+    signal.throwIfAborted();
+    // Exclusive unless overwrite was asked for, so a file created since validation is never replaced.
+    await copyFile(exported, path, overwrite ? 0 : constants.COPYFILE_EXCL);
+    return { path, uti: source.uti, mime_type: source.mimeType, bytes: source.bytes, width: source.width, height: source.height };
 }
 async function isPng(path) {
     const file = await open(path, "r");

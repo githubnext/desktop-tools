@@ -509,6 +509,13 @@ change only when the selection reads back to the same range; otherwise the outco
 the stepping fallback, the step cap refused with nothing selected, an existing selection kept, and a
 readback elsewhere reported as unknown.
 
+`peekaboo-clipboard-image-export.patch` adds the read-only `clipboardImageExport` Bridge operation. It runs
+the same `readImage` as `clipboardImageRead`, with its silent read access check, one-item and generation
+checks, and complete PNG/JPEG/TIFF validation within 10 MiB. It then also returns the validated source bytes
+in `ClipboardImageContents.original`, which stays nil for an ordinary read. The Bridge client refuses an
+export whose original doesn't match the source's byte count. The new operation shares the clipboard image
+response, descriptor and semantics with the read; the operation inventory tests count it.
+
 When updating Peekaboo, review the upstream fixes and these patches together. Update the revision
 guard and patches deliberately, or remove each patch when the dependency includes its fix.
 Revalidate real button clicks, changed-focus refusal, literal multiline insertion, clipboard

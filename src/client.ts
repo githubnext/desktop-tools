@@ -6,7 +6,13 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { failureAvailability, windowAvailability } from "./availability.js";
 import { canonicalDate } from "./date-value.js";
-import { type DesktopRegion, saveCapture, validateSave } from "./capture-file.js";
+import {
+	CLIPBOARD_SAVE_EXTENSIONS,
+	type DesktopRegion,
+	saveCapture,
+	saveClipboardImage,
+	validateSave,
+} from "./capture-file.js";
 
 import {
 	DESKTOP_BUTTONS,
@@ -1144,6 +1150,37 @@ function actionResult(data: Record<string, unknown>, outcome: DesktopOutcome): D
 	return { text, outcome, isError: outcome !== "completed" };
 }
 
+/** Reads the clipboard image with its original bytes, written to a private file, and saves them at save_path. */
+async function exportClipboardImage(
+	native: Native,
+	request: Extract<DesktopRequest, { op: "clipboard-read" }>,
+	signal: AbortSignal,
+): Promise<DesktopResult> {
+	if ("region" in request) throw new Error("A clipboard image is saved whole; region applies to captures.");
+	const savePath = (await validateSave(request, CLIPBOARD_SAVE_EXTENSIONS))!;
+	const directory = await mkdtemp(join(tmpdir(), "desktop-tools-clipboard-"));
+	try {
+		const exported = join(directory, "original");
+		const data = await native(["clipboard"], signal, {
+			input: JSON.stringify({ op: "clipboard-read", format: "image", export_path: exported }),
+		});
+		const result = clipboardImage(data);
+		if (!data.present) {
+			return { text: JSON.stringify({ ...data, saved: null, note: "The clipboard holds no image; nothing was written." }) };
+		}
+		const saved = await saveClipboardImage(
+			exported,
+			savePath,
+			request.overwrite === true,
+			data.source as Parameters<typeof saveClipboardImage>[3],
+			signal,
+		);
+		return { ...result, text: JSON.stringify({ ...JSON.parse(result.text), saved }) };
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+}
+
 async function clipboardImageInput(path: string, signal: AbortSignal): Promise<string> {
 	signal.throwIfAborted();
 	// Nonblocking open prevents a named pipe from waiting before its regular-file check.
@@ -1771,6 +1808,12 @@ async function execute(
 				&& request.format !== "files"
 			) {
 				throw new Error("Choose text, image, or files clipboard format.");
+			}
+			if (request.format === "image" && request.save_path !== undefined) {
+				return await exportClipboardImage(native, request, signal);
+			}
+			if (request.save_path !== undefined || request.overwrite !== undefined) {
+				throw new Error("save_path and overwrite apply to format image only.");
 			}
 			const data = await native(["clipboard"], signal, { input: JSON.stringify(request) });
 			if (request.format === "image") return clipboardImage(data);

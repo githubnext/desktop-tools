@@ -87,7 +87,7 @@ export type DesktopRequest =
 	| DesktopOpen
 	| DesktopDialogAnswer
 	| { op: "dialog"; target: DesktopAppTarget | DesktopWindowTarget }
-	| { op: "clipboard-read"; format?: "text" | "image" | "files" }
+	| { op: "clipboard-read"; format?: "text" | "image" | "files"; save_path?: string; overwrite?: boolean }
 	| { op: "clipboard-write"; text: string }
 	| { op: "clipboard-write"; format: "image"; path: string }
 	| { op: "clipboard-write"; format: "files"; paths: string[] }
