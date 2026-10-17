@@ -60,7 +60,7 @@ test("an incomplete Accessibility read of a visible window is a sparse tree", ()
 	for (const name of ["visible", "no_accessibility"]) {
 		const availability = failureAvailability(message, rows[name], session);
 		assert.equal(availability.reason, "sparse_accessibility", name);
-		assert.match(availability.hint, /inspect again once/);
+		assert.match(availability.hint, /mode pixels/);
 	}
 	// An unavailable window keeps its own cause rather than blaming the tree.
 	assert.equal(failureAvailability(message, rows.other_space, session).reason, "other_space");

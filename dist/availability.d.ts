@@ -32,6 +32,8 @@ type SessionFacts = {
 };
 /** Classifies one window from its desktop_windows row, most fundamental cause first. */
 export declare function windowAvailability(window: WindowFacts, session: SessionFacts): WindowAvailability;
+/** Whether a failure is an incomplete Accessibility read, which inspect and read retry once. */
+export declare function incompleteAccessibility(message: string): boolean;
 /**
  * Classifies a failed inspection, read or action from the window's row read afterwards. A window that looks
  * available but failed with an incomplete Accessibility read has a sparse tree, as on a web view's first load.

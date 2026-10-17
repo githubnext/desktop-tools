@@ -3,8 +3,9 @@ import { constants, existsSync } from "node:fs";
 import { lstat, mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { failureAvailability, windowAvailability } from "./availability.js";
+import { failureAvailability, incompleteAccessibility, windowAvailability } from "./availability.js";
 import { canonicalDate } from "./date-value.js";
 import {
 	CLIPBOARD_SAVE_EXTENSIONS,
@@ -98,8 +99,36 @@ type Reply = {
 };
 
 class NativeError extends Error {
+	/** Set when this is the second failure of a read retried after an incomplete Accessibility tree. */
+	retried = false;
 	constructor(readonly code: string, message: string) {
 		super(message);
+	}
+}
+
+/** How long a read waits before its one retry after an incomplete Accessibility tree, as a web view fills in. */
+const INCOMPLETE_RETRY_MS = 1000;
+
+/**
+ * Reads once more after an incomplete Accessibility tree, within the caller's budget. A second failure is
+ * thrown with retried set; when the budget ends during the wait, the first failure is thrown as it was.
+ */
+async function retryIncomplete<T>(read: () => Promise<T>, signal: AbortSignal): Promise<T> {
+	try {
+		return await read();
+	} catch (error) {
+		if (!(error instanceof NativeError) || !incompleteAccessibility(error.message)) throw error;
+		try {
+			await delay(INCOMPLETE_RETRY_MS, undefined, { signal });
+		} catch {
+			throw error;
+		}
+		try {
+			return await read();
+		} catch (second) {
+			if (second instanceof NativeError) second.retried = true;
+			throw second;
+		}
 	}
 }
 
@@ -392,7 +421,9 @@ async function inspect(
 		if (request.ocr) args.push("ocr");
 		if (request.scope) args.push("scope", request.scope.snapshot, request.scope.element);
 		if (request.web_accessibility === false) args.push(KEEP_WEB_ACCESSIBILITY);
-		const data = await native(args, signal, { target: request });
+		const data = mode === "accessibility"
+			? await retryIncomplete(() => native(args, signal, { target: request }), signal)
+			: await native(args, signal, { target: request });
 		if (request.scope && (data.scope as { from_element?: unknown } | undefined)?.from_element !== request.scope.element) {
 			throw new Error("Native inspection did not honor the requested scope.");
 		}
@@ -419,6 +450,7 @@ async function inspect(
 			isError: true,
 			text: JSON.stringify({
 				inspection_error: { code: error.code, message: error.message.slice(0, 4000) },
+				...(error.retried ? { retried: true } : {}),
 				requested_target: {
 					pid: request.pid,
 					window_id: request.window,
@@ -427,7 +459,7 @@ async function inspect(
 				},
 				target_availability: await availability(native, request, error.message, signal),
 				guidance:
-					"This inspection dispatched no input and returned no observation snapshot. target_availability.availability classifies the likely cause from a window listing read after the failure; follow its hint, but it can't prove the cause. Refresh desktop_apps and desktop_windows if the target changed. Retry an incomplete Accessibility read once; pixels mode can inspect the same exact window without Accessibility, with point-only action authority. Native capture already retries a changed capture receipt once. Neither mode activates a window. Do not loop on an unavailable target or repeat an earlier action to recover an observation.",
+					"This inspection dispatched no input and returned no observation snapshot. target_availability.availability classifies the likely cause from a window listing read after the failure; follow its hint, but it can't prove the cause. Refresh desktop_apps and desktop_windows if the target changed. An incomplete Accessibility read was already retried once after a second when retried is true, so don't retry it at once; pixels mode can inspect the same exact window without Accessibility, with point-only action authority. Native capture already retries a changed capture receipt once. Neither mode activates a window. Do not loop on an unavailable target or repeat an earlier action to recover an observation.",
 			}),
 		};
 	} finally {
@@ -501,23 +533,25 @@ async function read(
 	}
 	let data: Record<string, unknown>;
 	try {
-		data = request.table
-			? await native(["table"], signal, {
-				input: JSON.stringify({
-					pid: request.pid,
-					window: request.window,
-					snapshot: request.scope!.snapshot,
-					element: request.scope!.element,
-				}),
-				target: request,
-			})
-			: await native(args, signal, { target: request });
+		data = await retryIncomplete(() =>
+			request.table
+				? native(["table"], signal, {
+					input: JSON.stringify({
+						pid: request.pid,
+						window: request.window,
+						snapshot: request.scope!.snapshot,
+						element: request.scope!.element,
+					}),
+					target: request,
+				})
+				: native(args, signal, { target: request }), signal);
 	} catch (error) {
 		if (!(error instanceof NativeError)) throw error;
 		return {
 			isError: true,
 			text: JSON.stringify({
 				read_error: { code: error.code, message: error.message.slice(0, 4000) },
+				...(error.retried ? { retried: true } : {}),
 				requested_target: {
 					pid: request.pid,
 					window_id: request.window,
@@ -525,7 +559,7 @@ async function read(
 				},
 				target_availability: await availability(native, request, error.message, signal),
 				guidance:
-					"This read sent no input. target_availability.availability classifies the likely cause from a window listing read after the failure. Refresh desktop_windows if the target changed, and retry once if Accessibility was incomplete. A window without Accessibility, such as a canvas, game or remote desktop, has no text to read; use desktop_inspect with mode pixels and ocr true to recognize its text from pixels.",
+					"This read sent no input. target_availability.availability classifies the likely cause from a window listing read after the failure. Refresh desktop_windows if the target changed. An incomplete Accessibility read was already retried once after a second when retried is true, so don't retry it at once. A window without Accessibility, such as a canvas, game or remote desktop, has no text to read; use desktop_inspect with mode pixels and ocr true to recognize its text from pixels.",
 			}),
 		};
 	}
