@@ -126,10 +126,10 @@ index 22c078eac..76763522c 100644
              socketPath: configuration.socketPath,
              server: server,
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift
-index 1ed6bb825..2a3ecb031 100644
+index 841caecc0..4997b2435 100644
 --- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift
-@@ -332,6 +332,23 @@ extension PeekabooBridgeClient {
+@@ -334,6 +334,23 @@ extension PeekabooBridgeClient {
          }
      }
  
@@ -178,7 +178,7 @@ index 943448ed0..2144852cc 100644
          .listWindows,
          .focusWindow,
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
-index c3a4fa9dc..1dabd0d8a 100644
+index e24a322ff..bd2be357e 100644
 --- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
 @@ -301,6 +301,13 @@ extension PeekabooBridgeOperationResultSemantics {
@@ -272,7 +272,7 @@ index faf9a766a..5ee74c4c5 100644
          case .listWindows, .listWindowMutationInventory: .listWindows
          case .focusWindow: .focusWindow
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
-index c52518256..4397945e7 100644
+index f4f2550d5..3e22df3c0 100644
 --- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
 @@ -11,7 +11,13 @@ extension PeekabooBridgeServer {
@@ -289,7 +289,7 @@ index c52518256..4397945e7 100644
          case .clipboardFilesRead:
              return try await self.handleClipboardFilesRead()
          case .clipboardFilesWrite:
-@@ -496,7 +502,7 @@ extension PeekabooBridgeServer {
+@@ -497,7 +503,7 @@ extension PeekabooBridgeServer {
          }
      }
  
