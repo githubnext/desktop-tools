@@ -220,3 +220,21 @@ There is no pinch or rotate gesture. Use the app's own command: it acts on an ex
 - A long element can be refused when the host can't find the range within its step limit. Select within a smaller element.
 - `unknown` means the page's selection didn't read back as the requested range, for example because a script changed it. Inspect before retrying.
 - Some pages block copying, or put other text on the clipboard. Check the clipboard.
+
+## Edit a spreadsheet cell
+
+`desktop_set_cell` writes cells that hold a field or a checkbox. Spreadsheet cells such as Numbers' and Excel's usually show only text and are refused, so edit them in place *(unverified: which apps expose cell controls)*.
+
+1. inspect the window with `scope` set to the table, then `desktop_read` with `table: true` and that scope. Find the row and column.
+2. `desktop_click` the cell's `AXCell` element from that inspection, a child of the row. A single click selects the cell; typing replaces its content.
+3. `desktop_insert` with the value and `route: "type"`. Expect `unknown`, since nothing reads the cell during editing.
+4. `desktop_key` with `key: "enter"` to commit. In Numbers and Excel, Return moves to the cell below.
+
+**Verify:** inspect with `scope` set to the table again and `desktop_read` it. The cell shows the value as the app formats it, such as `1,000` for `1000`.
+
+**Goes wrong:**
+
+- A double click edits the existing content instead of replacing it.
+- Typing `=` starts a formula. The app reformats values it reads as dates or numbers.
+- `escape` cancels an edit that hasn't been committed.
+

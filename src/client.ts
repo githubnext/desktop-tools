@@ -39,6 +39,7 @@ import {
 	readNotifications,
 	validateNotificationAction,
 } from "./notifications.js";
+import { setCell } from "./cell.js";
 import { buildTable, TABLE_ROWS_MAX, type TableElement, TableError } from "./table.js";
 import { waitFor } from "./wait.js";
 
@@ -928,6 +929,8 @@ function validateAction(request: DesktopAction) {
 		}
 		return;
 	}
+	// The cell edit validates itself and sends its own type or set-value action.
+	if (request.op === "set-cell") throw new Error("A cell edit is not one native action.");
 	if (typeof request.element !== "string" || !request.element || request.element.length > 256) {
 		throw new Error("Choose an element ID from the inspected snapshot.");
 	}
@@ -1573,6 +1576,7 @@ async function execute(
 			"select",
 			"element-action",
 			"set-value",
+			"set-cell",
 			"scroll",
 			"drag",
 			"hover",
@@ -1635,6 +1639,17 @@ async function execute(
 				message: "No input was sent.",
 			}, "refused");
 		}
+	}
+	// A cell edit composes a table read, one action with its observation, and a second table read.
+	if (request.op === "set-cell") {
+		return await setCell({
+			table: (input, signal) =>
+				native(["table"], AbortSignal.any([signal, AbortSignal.timeout(30_000)]), {
+					input: JSON.stringify(input),
+					target: { pid: input.pid, window: input.window },
+				}),
+			act: (action, signal) => execute(native, action, signal),
+		}, request, abort ?? new AbortController().signal);
 	}
 	const deadline = new AbortController();
 	const timer = setTimeout(

@@ -107,6 +107,7 @@ A status item is pressed through Accessibility in its owner process without movi
 | `desktop_press` | Press and hold an element or point for up to 10 seconds, then release in place |
 | `desktop_type` | Replace an editable field's whole value; a web text field is typed into with key events so the page sees the input |
 | `desktop_select` | Select literal text in a field or a web page, or put the caret before or after it |
+| `desktop_set_cell` | Write one cell of a table from `desktop_read`, by row and column, and confirm it by reading the table again |
 | `desktop_set_value` | Set a slider, stepper or level indicator to a number, a checkbox, switch or disclosure triangle on or off, or a date or time picker to an ISO 8601 date, and read it back |
 | `desktop_element_action` | Perform one Accessibility action an element lists, such as `AXShowMenu`, `AXIncrement`, `AXDecrement`, `AXPick` or `AXCancel` |
 | `desktop_insert` | Insert text at the caret or over the selection with one temporary paste, then restore the clipboard; where no text control can be observed, type it into the window's keyboard focus |
@@ -137,6 +138,13 @@ A `desktop_click` with `modifiers` (any of `command`, `option` and `shift`), suc
 - `row_count`, every row the table exposed, and `row_offset`, where this page starts.
 
 Row IDs belong to the scope snapshot: a row gets one only when that snapshot stored it unchanged, found again by role, depth, bounds and text. A whole-window inspection stores only its first 200 elements, so for a long table inspect again with `scope` set to the table, then read the table with that snapshot. A row scrolled out of view has an ID but must be scrolled into view before a click. Pages hold `max_rows` rows, 100 by default and 500 at most; pass `row_offset` for the next page. Cells are cut to 256 characters, rows to 64 cells, and a page to 96 KB of cell text, each reported in `truncation` with the traversal's own limits. Tables that load rows as they scroll, such as long web grids, expose only the loaded rows.
+
+`desktop_set_cell` writes one cell of a table that `desktop_read` read. Pass the read's `pid`, `window`, scope snapshot as `snapshot` and scope element as `table`, the row's element ID as `row`, and `column` as an exact column title or a 0-based index. The host reads the table again and writes the cell's first editable control:
+
+- A text field, text area or combo box goes through `desktop_type`. In a web grid, that means the field must have keyboard focus, as for any web field: click the cell, inspect, read the table with that snapshot, then write.
+- A checkbox, slider, stepper or date picker goes through `desktop_set_value`.
+
+It then reads the table once more with the same snapshot, which a write consumes for input but not for reading, and compares the cell at the same row position and column. The result is `completed` only when the control reads back the value and the row's other cells are unchanged. Otherwise it is `unknown`, and `cell.readback` says why: `differs` when the app reformatted or rejected the value, `row_changed` when another row now sits there, as when Finder re-sorts after a rename, and `unreadable`. A cell that shows only text has no control and is refused before any input; spreadsheets edit cells in place instead (see [recipes](recipes.md#edit-a-spreadsheet-cell)). Not yet checked on a live system: Finder renames, a web grid, and whether Numbers or Excel cells expose controls.
 
 With `ocr: true`, `desktop_inspect` (in either mode) and `desktop_screen` also run Apple Vision text recognition, at its accurate level and on this Mac, on the screenshot they captured. `recognized_text` lists up to 300 lines in reading order, top to bottom and left to right, with confidence and a box as fractions of the screenshot from its top-left corner; `desktop_screen` adds bounds in global desktop points. A box's center is a pointer point for that inspection's snapshot. Recognition is limited to 8 seconds; the first one after a restart can take longer while Vision loads its model. Recognized text comes from pixels, so it can misread or miss text, and is labeled as such.
 

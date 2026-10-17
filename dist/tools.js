@@ -743,6 +743,25 @@ Optional modifiers (command, control, option and shift, each at most once) are h
             },
         },
         {
+            name: "desktop_set_cell",
+            op: "set-cell",
+            description: `Write one cell of a table read by desktop_read with table true, and confirm it by reading the table again. Pass the same pid, window and scope snapshot as snapshot, the scope element as table, the row's element ID from that read as row, and column as an exact column title or a 0-based index. The cell's first editable control is written: a text field, text area or combo box through desktop_type, which reads it back and, in a web page, types into the field only when it has keyboard focus (otherwise it is refused with a hint to click it first); or a checkbox, slider, stepper or date picker through desktop_set_value. The table is then read again with the same snapshot, and the cell at the same row position and column is compared: completed only when its control reads back the value and the row's other cells are unchanged, otherwise unknown with cell.readback differs, row_changed (the table may have re-sorted) or unreadable. A cell that shows only text, as in Numbers and Excel, has no control and is refused before any input: click the cell, type with desktop_insert and press enter with desktop_key, then read the table again. The snapshot is consumed by the write, so inspect again before the next one. Never repeat a write blindly; read the table first.`,
+            parameters: {
+                type: "object",
+                required: ["pid", "window", "snapshot", "table", "row", "column", "value"],
+                properties: {
+                    pid: { type: "integer", minimum: 1 },
+                    window: { type: "integer", minimum: 1 },
+                    snapshot: id,
+                    table: id,
+                    row: id,
+                    column: { anyOf: [{ type: "string", minLength: 1, maxLength: 256 }, { type: "integer", minimum: 0, maximum: 63 }] },
+                    value: { anyOf: [{ type: "string", maxLength: 8192 }, { type: "number" }, { type: "boolean" }] },
+                },
+                additionalProperties: false,
+            },
+        },
+        {
             name: "desktop_element_action",
             op: "element-action",
             description: `Perform one named Accessibility action on one element from a fresh desktop_inspect result, without pointer or keyboard input. The element must list the action in its attributes.actions; others are refused before any input. AXShowMenu opens the element's context menu without a right click; AXIncrement and AXDecrement step a slider or stepper by its own increment; AXConfirm and AXCancel accept or dismiss, such as AXCancel on an open menu; AXPick chooses an open menu's item; AXRaise brings a window forward within its app; AXScrollToVisible scrolls the element into view. Use desktop_click to press a button. Pass snapshot_id as snapshot and the literal element ID as element. The snapshot binds the exact process, window, and element and is single-use. Accepted delivery does not prove the effect; inspect again before acting further, and never blindly repeat an action, because each repetition can step, toggle, or open again.`,

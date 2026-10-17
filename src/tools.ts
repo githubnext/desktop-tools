@@ -797,6 +797,26 @@ Optional modifiers (command, control, option and shift, each at most once) are h
 			},
 		},
 		{
+			name: "desktop_set_cell",
+			op: "set-cell",
+			description:
+				`Write one cell of a table read by desktop_read with table true, and confirm it by reading the table again. Pass the same pid, window and scope snapshot as snapshot, the scope element as table, the row's element ID from that read as row, and column as an exact column title or a 0-based index. The cell's first editable control is written: a text field, text area or combo box through desktop_type, which reads it back and, in a web page, types into the field only when it has keyboard focus (otherwise it is refused with a hint to click it first); or a checkbox, slider, stepper or date picker through desktop_set_value. The table is then read again with the same snapshot, and the cell at the same row position and column is compared: completed only when its control reads back the value and the row's other cells are unchanged, otherwise unknown with cell.readback differs, row_changed (the table may have re-sorted) or unreadable. A cell that shows only text, as in Numbers and Excel, has no control and is refused before any input: click the cell, type with desktop_insert and press enter with desktop_key, then read the table again. The snapshot is consumed by the write, so inspect again before the next one. Never repeat a write blindly; read the table first.`,
+			parameters: {
+				type: "object",
+				required: ["pid", "window", "snapshot", "table", "row", "column", "value"],
+				properties: {
+					pid: { type: "integer", minimum: 1 },
+					window: { type: "integer", minimum: 1 },
+					snapshot: id,
+					table: id,
+					row: id,
+					column: { anyOf: [{ type: "string", minLength: 1, maxLength: 256 }, { type: "integer", minimum: 0, maximum: 63 }] },
+					value: { anyOf: [{ type: "string", maxLength: 8192 }, { type: "number" }, { type: "boolean" }] },
+				},
+				additionalProperties: false,
+			},
+		},
+		{
 			name: "desktop_element_action",
 			op: "element-action",
 			description:

@@ -18,10 +18,10 @@ function text(element) {
     return "";
 }
 /**
- * Builds a table from the scope element's subtree, whose first element is the scope.
+ * Finds the table in the scope element's subtree, whose first element is the scope, and its rows and columns.
  * The table is the scope itself, or the first table, outline or grid inside it.
  */
-export function buildTable(elements, { rowOffset = 0, maxRows = TABLE_ROWS_DEFAULT } = {}) {
+function tableLayout(elements) {
     const parents = [];
     const stack = [];
     for (const [index, element] of elements.entries()) {
@@ -77,13 +77,14 @@ export function buildTable(elements, { rowOffset = 0, maxRows = TABLE_ROWS_DEFAU
         }
         return cell;
     };
+    /** The row's cells in column order; a row without children is its own single cell. */
     const cellsOf = (row) => {
         const children = inside.filter((index) => parents[index] === row);
         if (!children.length)
-            return [cellText(row)];
+            return [row];
         if (children.length > MAX_COLUMNS && !truncation.includes("column_limit"))
             truncation.push("column_limit");
-        return children.slice(0, MAX_COLUMNS).map(cellText);
+        return children.slice(0, MAX_COLUMNS);
     };
     let columns = null;
     const columnTitles = inside
@@ -121,6 +122,11 @@ export function buildTable(elements, { rowOffset = 0, maxRows = TABLE_ROWS_DEFAU
             truncation.push("column_limit");
     }
     columns = columns?.map((column) => column.slice(0, MAX_CELL)) ?? null;
+    return { table, tables, owner, rows, columns, cellsOf, cellText, end, truncation };
+}
+/** Builds a table from the scope element's subtree, whose first element is the scope. */
+export function buildTable(elements, { rowOffset = 0, maxRows = TABLE_ROWS_DEFAULT } = {}) {
+    const { table, tables, owner, rows, columns, cellsOf, cellText, truncation } = tableLayout(elements);
     const page = rows.slice(rowOffset, rowOffset + maxRows);
     if (rowOffset + maxRows < rows.length)
         truncation.push("row_limit");
@@ -129,7 +135,7 @@ export function buildTable(elements, { rowOffset = 0, maxRows = TABLE_ROWS_DEFAU
     let bytes = 0;
     for (const [position, index] of page.entries()) {
         const element = elements[index];
-        const row = { index: rowOffset + position, element: element.id, cells: cellsOf(index) };
+        const row = { index: rowOffset + position, element: element.id, cells: cellsOf(index).map(cellText) };
         if (outline && typeof element.disclosure_level === "number")
             row.depth = element.disclosure_level;
         if (outline && typeof element.disclosing === "boolean")
@@ -155,5 +161,64 @@ export function buildTable(elements, { rowOffset = 0, maxRows = TABLE_ROWS_DEFAU
         row_count: rows.length,
         row_offset: rowOffset,
         truncation,
+    };
+}
+/** Controls whose text a cell edit types; set_value writes the other editable roles. */
+const CELL_TEXT_ROLES = ["AXTextField", "AXTextArea", "AXComboBox"];
+const CELL_VALUE_ROLES = ["AXCheckBox", "AXSlider", "AXIncrementor", "AXDateTimeArea"];
+/**
+ * Finds one cell of the table in a scope subtree: by the row's element ID, or by its position for a readback,
+ * and by a column title or 0-based index.
+ */
+export function locateCell(elements, row, column) {
+    const { rows, columns, cellsOf, cellText, end } = tableLayout(elements);
+    const position = "element" in row ? rows.findIndex((index) => elements[index].id === row.element) : row.index;
+    if (position < 0 || position >= rows.length) {
+        throw new TableError("element" in row
+            ? "The row ID is not a row of this table in the scope snapshot. Read the table again and choose a row ID from it."
+            : "The table no longer has that row.");
+    }
+    let index;
+    if (typeof column === "number") {
+        index = column;
+    }
+    else {
+        const matches = columns?.flatMap((title, at) => title === column ? [at] : []) ?? [];
+        if (matches.length !== 1) {
+            throw new TableError(!columns
+                ? "This table has no column titles. Pass the column's 0-based index instead."
+                : matches.length
+                    ? "Several columns have that title. Pass the column's 0-based index instead."
+                    : `No column is titled exactly that. The columns are: ${JSON.stringify(columns)}.`);
+        }
+        index = matches[0];
+    }
+    const cells = cellsOf(rows[position]);
+    if (!Number.isSafeInteger(index) || index < 0 || index >= cells.length) {
+        throw new TableError(`That row has ${cells.length} cells; pass a column from 0 to ${cells.length - 1}.`);
+    }
+    const cell = cells[index];
+    let control = null;
+    for (let next = cell; next < end(cell); next++) {
+        const element = elements[next];
+        if (next > cell && TABLE_ROLES.includes(element.role))
+            break;
+        const kind = CELL_TEXT_ROLES.includes(element.role)
+            ? "text"
+            : CELL_VALUE_ROLES.includes(element.role)
+                ? "value"
+                : null;
+        if (kind) {
+            control = { element: element.id, role: element.role, kind, value: element.value ?? "" };
+            break;
+        }
+    }
+    return {
+        row: position,
+        column: index,
+        column_title: columns?.[index] ?? null,
+        text: cellText(cell),
+        others: cells.filter((other) => other !== cell).map(cellText),
+        control,
     };
 }
