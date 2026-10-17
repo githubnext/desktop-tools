@@ -29,6 +29,7 @@ export function assemble(out, scratch, dev = false) {
     chmodSync(join(bin, "desktop-tools-app"), 0o755);
     chmodSync(join(bin, "desktop-tools-client"), 0o755);
     cpSync(join(build, "Licenses"), join(app, "Contents", "Resources", "Licenses"), { recursive: true });
+    copyFileSync(join(root, "native", "resources", "AppIcon.icns"), join(app, "Contents", "Resources", "AppIcon.icns"));
     const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
     writeFileSync(join(app, "Contents", "Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -38,6 +39,7 @@ export function assemble(out, scratch, dev = false) {
 	<key>CFBundleName</key><string>${name}</string>
 	<key>CFBundleDisplayName</key><string>${name}</string>
 	<key>CFBundleExecutable</key><string>desktop-tools-app</string>
+	<key>CFBundleIconFile</key><string>AppIcon</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>${version}</string>
 	<key>CFBundleVersion</key><string>${version}</string>

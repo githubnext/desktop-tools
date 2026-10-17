@@ -13,7 +13,7 @@
 		"./package.json": "./package.json"
 	},
 	"bin": { "desktop-tools-build": "dist/build.js", "desktop-tools-app": "dist/app.js", "desktop-tools-mcp": "dist/mcp.js" },
-	"files": ["dist", "native/Package.swift", "native/Package.resolved", "native/sources", "native/patches", "LICENSE", "README.md"],
+	"files": ["dist", "native/Package.swift", "native/Package.resolved", "native/sources", "native/patches", "native/resources", "LICENSE", "README.md"],
 	"scripts": {
 		"build:js": "tsc",
 		"test": "node --test 'test/*.test.mjs'",
