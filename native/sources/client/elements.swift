@@ -9,6 +9,8 @@ private struct ElementsRequest: Decodable {
 	let scope: Scope?
 	let match: Match?
 	let text: Bool?
+	/// False leaves a Chromium or Electron app's web accessibility as it is.
+	let web_accessibility: Bool?
 
 	struct Scope: Decodable {
 		let snapshot: String
@@ -45,6 +47,7 @@ private struct Found: Encodable {
 	let traversed_element_count: Int
 	let truncated: Bool
 	let truncation: [String]
+	let web_accessibility: WebAccessibility?
 }
 
 private struct FoundReply: Encodable {
@@ -74,7 +77,7 @@ private func readableValue(_ element: DetectedElement) -> String? {
 
 /// Reads one exact window through Accessibility alone, with the large read budget: no screenshot, no
 /// stored snapshot and no input. Each call is one observation, so a wait holds nothing between polls.
-func nativeElements(_ client: PeekabooBridgeClient) async throws -> Data {
+func nativeElements(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHandshakeResponse) async throws -> Data {
 	var data = Data()
 	while let chunk = try FileHandle.standardInput.read(upToCount: 4096), !chunk.isEmpty {
 		guard data.count + chunk.count <= 65_536 else { throw ReadError("The elements request exceeds 64 KiB.") }
@@ -94,14 +97,24 @@ func nativeElements(_ client: PeekabooBridgeClient) async throws -> Data {
 	if let scope = request.scope {
 		source = try await scopeSource(client, ScopeRequest(snapshot: scope.snapshot, element: scope.element), pid: pid, window: window)
 	}
-	let detection = try await client.inspectAccessibilityTree(windowContext: WindowContext(
-		applicationProcessId: pid,
-		windowID: Int(window),
-		shouldFocusWebContent: false,
-		includeMenuBarElements: false,
-		traversalBudget: wideTraversal,
-		requiresFreshAccessibilityTree: true
-	))
+	func observe() async throws -> ElementDetectionResult {
+		try await client.inspectAccessibilityTree(windowContext: WindowContext(
+			applicationProcessId: pid,
+			windowID: Int(window),
+			shouldFocusWebContent: false,
+			includeMenuBarElements: false,
+			traversalBudget: wideTraversal,
+			requiresFreshAccessibilityTree: true
+		))
+	}
+	let web = WebAccessibilityPolicy(allowed: request.web_accessibility != false, handshake: handshake)
+	let before = await web.beforeRead(client, pid: pid)
+	var detection = try await observe()
+	let after = await web.afterRead(
+		client, pid: pid, elements: detection.elements.all,
+		truncated: !traversalTruncation(detection.metadata.truncationInfo).isEmpty, before: before
+	)
+	if after.readAgain { detection = try await observe() }
 	guard let context = detection.metadata.windowContext,
 		context.applicationProcessId == pid, context.windowID == Int(window),
 		let generation = context.applicationProcessStartIdentity
@@ -140,7 +153,8 @@ func nativeElements(_ client: PeekabooBridgeClient) async throws -> Data {
 		element_count: selected.count,
 		traversed_element_count: elements.count,
 		truncated: !truncation.isEmpty,
-		truncation: truncation
+		truncation: truncation,
+		web_accessibility: after.state
 	)
 	return try JSONEncoder().encode(FoundReply(data: reply, target_receipt: .init(
 		pid: pid,

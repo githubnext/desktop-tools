@@ -81,6 +81,12 @@ function validateWait(request, maxTimeout = WAIT_MAX_MS) {
         if (request.element !== undefined)
             validateMatch(request.element, TEXT.includes(until));
     }
+    if (ELEMENT.includes(until) || TEXT.includes(until)) {
+        allowed.add("web_accessibility");
+        if (request.web_accessibility !== undefined && typeof request.web_accessibility !== "boolean") {
+            throw new Error("Choose web_accessibility true or false.");
+        }
+    }
     if (until === "text_equals" || until === "text_contains") {
         allowed.add("text");
         if (typeof request.text !== "string" || request.text.length > MAX_TEXT || (until === "text_contains" && !request.text)) {
@@ -282,6 +288,7 @@ function elementsInput(request, read) {
         pid: request.pid,
         window: request.window,
         ...(request.scope ? { scope: request.scope } : {}),
+        ...(request.web_accessibility === false ? { web_accessibility: false } : {}),
         ...read,
     };
 }
@@ -319,8 +326,8 @@ async function readText(reads, request, signal) {
         const text = (element.value ?? element.label ?? null);
         return { text, observation: { element, text } };
     }
-    const { text, truncated, truncation, window_title } = await reads.elements(elementsInput(request, { text: true }), signal);
-    return { text: text, observation: { window_title, text, truncated, truncation } };
+    const { text, truncated, truncation, window_title, web_accessibility } = await reads.elements(elementsInput(request, { text: true }), signal);
+    return { text: text, observation: { window_title, text, truncated, truncation, web_accessibility } };
 }
 function pollText(reads, request) {
     let baseline;
@@ -402,6 +409,7 @@ async function confirm(reads, request, abort) {
             pid: request.pid,
             window: request.window,
             ...(request.scope ? { scope: request.scope } : {}),
+            ...(request.web_accessibility === false ? { web_accessibility: false } : {}),
         }, signal);
         const data = parseResult(result);
         if (result.isError)

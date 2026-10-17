@@ -66,6 +66,8 @@ export type DesktopWait = {
 	element?: DesktopElementMatch;
 	scope?: DesktopScope;
 	text?: string;
+	/** false leaves a Chromium or Electron app's web accessibility as it is during element and text polls. */
+	web_accessibility?: boolean;
 	timeout_ms?: number;
 };
 

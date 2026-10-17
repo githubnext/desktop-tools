@@ -632,12 +632,13 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 			name: "desktop_wait",
 			op: "wait",
 			description:
-				`Wait until one condition holds and return what matched, or timed_out with the last observation; use it instead of polling after a launch, page load, export or dialog. Read-only; it polls every 200 ms to 2 s for timeout_ms (default ${WAIT_DEFAULT_MS}, at most ${WAIT_MAX_MS}). until is window_appears (bundle_id or pid, optional title or title_contains) or window_gone (pid, window); dialog_appears or dialog_gone (pid, optional window); element_appears or element_gone (pid, window, element: a role and a title, value or identifier); text_changes, text_equals or text_contains (pid, window, optional scope or element, text); app_running, app_frontmost or app_quit (bundle_id or pid). A matched element comes with inspection.snapshot_id and its IDs for action tools; if that is null, inspect first. Uncertain absence never counts as gone.`,
+				`Wait until one condition holds and return what matched, or timed_out with the last observation; use it instead of polling after a launch, page load, export or dialog. Read-only; it polls every 200 ms to 2 s for timeout_ms (default ${WAIT_DEFAULT_MS}, at most ${WAIT_MAX_MS}). until is window_appears (bundle_id or pid, optional title or title_contains) or window_gone (pid, window); dialog_appears or dialog_gone (pid, optional window); element_appears or element_gone (pid, window, element: a role and a title, value or identifier); text_changes, text_equals or text_contains (pid, window, optional scope or element, text); app_running, app_frontmost or app_quit (bundle_id or pid). A matched element comes with inspection.snapshot_id and its IDs for action tools; if that is null, inspect first. Element and text polls read as desktop_inspect does: ${webAccessibilityNote} Uncertain absence never counts as gone.`,
 			parameters: {
 				type: "object",
 				required: ["until"],
 				properties: {
 					...waitCondition,
+					web_accessibility: webAccessibility,
 					timeout_ms: { type: "integer", minimum: 100, maximum: WAIT_MAX_MS },
 				},
 				additionalProperties: false,

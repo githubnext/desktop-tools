@@ -96,6 +96,12 @@ function validateWait(request: DesktopWait, maxTimeout = WAIT_MAX_MS) {
 		if (ELEMENT.includes(until) && request.element === undefined) throw new Error(`${until} needs element.`);
 		if (request.element !== undefined) validateMatch(request.element, TEXT.includes(until));
 	}
+	if (ELEMENT.includes(until) || TEXT.includes(until)) {
+		allowed.add("web_accessibility");
+		if (request.web_accessibility !== undefined && typeof request.web_accessibility !== "boolean") {
+			throw new Error("Choose web_accessibility true or false.");
+		}
+	}
 	if (until === "text_equals" || until === "text_contains") {
 		allowed.add("text");
 		if (typeof request.text !== "string" || request.text.length > MAX_TEXT || (until === "text_contains" && !request.text)) {
@@ -292,6 +298,7 @@ function elementsInput(request: DesktopWait, read: { match: DesktopElementMatch 
 		pid: request.pid,
 		window: request.window,
 		...(request.scope ? { scope: request.scope } : {}),
+		...(request.web_accessibility === false ? { web_accessibility: false } : {}),
 		...read,
 	};
 }
@@ -327,8 +334,11 @@ async function readText(reads: WaitReads, request: DesktopWait, signal: AbortSig
 		const text = (element.value ?? element.label ?? null) as string | null;
 		return { text, observation: { element, text } };
 	}
-	const { text, truncated, truncation, window_title } = await reads.elements(elementsInput(request, { text: true }), signal);
-	return { text: text as string, observation: { window_title, text, truncated, truncation } };
+	const { text, truncated, truncation, window_title, web_accessibility } = await reads.elements(
+		elementsInput(request, { text: true }),
+		signal,
+	);
+	return { text: text as string, observation: { window_title, text, truncated, truncation, web_accessibility } };
 }
 
 function pollText(reads: WaitReads, request: DesktopWait) {
@@ -406,6 +416,7 @@ async function confirm(reads: WaitReads, request: DesktopWait, abort?: AbortSign
 			pid: request.pid!,
 			window: request.window!,
 			...(request.scope ? { scope: request.scope } : {}),
+			...(request.web_accessibility === false ? { web_accessibility: false } : {}),
 		}, signal);
 		const data = parseResult(result);
 		if (result.isError) return { inspection: { snapshot_id: null, error: data.inspection_error } };

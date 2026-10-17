@@ -456,6 +456,21 @@ check(107, "desktop_inspect turns on a fresh Chrome's web accessibility once, an
 	);
 }, "Launches Chrome on the fixture page and quits it after; it may restore the user's last Chrome session meanwhile.");
 
+check(110, "desktop_wait text_contains on a fresh Chrome turns on web accessibility and finds the page's text", async (s, m) => {
+	if (!m.tools.get("desktop_wait")?.inputSchema?.properties?.web_accessibility) skip("this build's desktop_wait has no web_accessibility (#110 not in it)");
+	const win = await s.chrome();
+	const wait = { until: "text_contains", pid: win.pid, window: win.window, text: "riverbank link", timeout_ms: 5000 };
+	const result = await m.call("desktop_wait", wait);
+	const state = result.data.match?.web_accessibility;
+	const kept = await m.call("desktop_wait", { ...wait, web_accessibility: false });
+	// An earlier Chrome check in this run may have turned it on already.
+	return expect(
+		result.data.status === "matched" && (state === "enabled" || state === "already_on")
+			&& kept.data.status === "matched" && kept.data.match?.web_accessibility === undefined,
+		`${result.data.status}, web_accessibility ${state}; opted out ${kept.data.status}, ${kept.data.match?.web_accessibility}`,
+	);
+}, "Launches Chrome on the fixture page and quits it after, like the #107 Chrome check.");
+
 check(107, "desktop_read leaves Safari's web accessibility alone and reports nothing", async (s, m) => {
 	if (!m.tools.get("desktop_read")?.inputSchema?.properties?.web_accessibility) skip("this build's desktop_read has no web_accessibility (#107 not in it)");
 	const win = await s.web();
