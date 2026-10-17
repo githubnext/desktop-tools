@@ -849,10 +849,13 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 		result.selected_leaf_evidence = failure.selectedLeafEvidence
 		let dispatched = failure.outcome.dispatchState.mutationDispatched
 		result.requires_fresh_observation = dispatched || failure.outcome.escalation == .refreshTarget
-		result.error = ActionMessage(
-			code: failure.standardErrorCode?.rawValue ?? "DESKTOP_ACTION_FAILED",
-			message: failure.message, hint: failure.hint, cause: failure.causeDescription
-		)
+		// The host checks the live focus before sending characters or pasting, so nothing reached the field.
+		result.error = !dispatched && failure.message == SecureTextFillRefusal.secureFocus
+			? ActionMessage(code: secureFieldRequiresFill.code, message: failure.message, hint: secureFieldRequiresFill.hint)
+			: ActionMessage(
+				code: failure.standardErrorCode?.rawValue ?? "DESKTOP_ACTION_FAILED",
+				message: failure.message, hint: failure.hint, cause: failure.causeDescription
+			)
 		if let lease {
 			do {
 				try await client.finishSnapshotMutation(lease, requiresFreshObservation: dispatched)
@@ -860,13 +863,6 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 				result.requires_fresh_observation = true
 			}
 		}
-	} catch let error where refusalMessage(error) == SecureTextFillRefusal.secureFocus {
-		// The host checks the live focus before sending characters or pasting, so nothing reached the field.
-		result.outcome = "refused"
-		result.error = ActionMessage(
-			code: secureFieldRequiresFill.code, message: SecureTextFillRefusal.secureFocus, hint: secureFieldRequiresFill.hint
-		)
-		if let lease { try? await client.finishSnapshotMutation(lease, requiresFreshObservation: false) }
 	} catch {
 		result.outcome = invoked ? "unknown" : "refused"
 		if invoked { result.requires_fresh_observation = true }

@@ -131,19 +131,12 @@ func nativeFill(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHandsha
 		let dispatched = failure.outcome.dispatchState.mutationDispatched
 		result.outcome = dispatched ? "unknown" : "refused"
 		result.requires_fresh_observation = dispatched || failure.outcome.escalation == .refreshTarget
+		// The host refuses before typing when the user or the Keychain declined, or the field or focus didn't qualify.
 		result.error = FillMessage(
-			code: failure.standardErrorCode?.rawValue ?? "DESKTOP_ACTION_FAILED", message: failure.message,
-			hint: failure.hint
+			code: failure.standardErrorCode?.rawValue ?? (dispatched ? "DESKTOP_ACTION_FAILED" : "FILL_REFUSED"),
+			message: failure.message, hint: failure.hint
 		)
 		if let lease { try? await client.finishSnapshotMutation(lease, requiresFreshObservation: dispatched) }
-	} catch let envelope as PeekabooBridgeErrorEnvelope
-		where !envelope.operationMayHaveCompleted
-			&& [.permissionDenied, .invalidRequest, .operationNotSupported, .notFound].contains(envelope.code)
-	{
-		// The host refuses before typing: the user or the Keychain declined, or the field or focus didn't qualify.
-		result.outcome = "refused"
-		result.error = FillMessage(code: envelope.code.rawValue, message: envelope.message)
-		if let lease { try? await client.finishSnapshotMutation(lease, requiresFreshObservation: false) }
 	} catch {
 		result.outcome = invoked ? "unknown" : "refused"
 		result.error = FillMessage(

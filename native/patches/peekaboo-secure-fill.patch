@@ -339,10 +339,10 @@ index 2d719b134..a610483d9 100644
  
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/SecureTextFill.swift b/Core/PeekabooCore/Sources/PeekabooBridge/SecureTextFill.swift
 new file mode 100644
-index 000000000..7597315f1
+index 000000000..6914b1e87
 --- /dev/null
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/SecureTextFill.swift
-@@ -0,0 +1,285 @@
+@@ -0,0 +1,292 @@
 +import AppKit
 +import ApplicationServices
 +import Foundation
@@ -482,7 +482,8 @@ index 000000000..7597315f1
 +        }
 +        // A targeted request checks its app's focus; a global one, and one whose app is unknown, the system's.
 +        if TypeService.focusedElementIsSecureField(processIdentifier: process) {
-+            throw PeekabooBridgeErrorEnvelope(code: .permissionDenied, message: SecureTextFillRefusal.secureFocus)
++            throw DesktopActionFailure.preDispatchRefusal(
++                route: .bridge, reason: .operationUnsupported, message: SecureTextFillRefusal.secureFocus)
 +        }
 +    }
 +
@@ -495,23 +496,27 @@ index 000000000..7597315f1
 +        peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeHandledResponse
 +    {
 +        guard let authorize = self.secureTextFill else {
-+            throw PeekabooBridgeErrorEnvelope(
-+                code: .operationNotSupported, message: "This host does not fill secure text fields.")
++            throw DesktopActionFailure.preDispatchRefusal(
++                route: .bridge, reason: .operationUnsupported, message: "This host does not fill secure text fields.")
 +        }
 +        guard let peer else {
-+            throw PeekabooBridgeErrorEnvelope(code: .permissionDenied, message: "The request has no verified client.")
++            throw DesktopActionFailure.preDispatchRefusal(
++                route: .bridge, reason: .permissionDenied, message: "The request has no verified client.")
 +        }
 +        guard let service = try self.automationOutcomeService() else {
-+            throw PeekabooBridgeErrorEnvelope(
-+                code: .operationNotSupported, message: "This host cannot confirm secure text field fills.")
++            throw DesktopActionFailure.preDispatchRefusal(
++                route: .bridge, reason: .operationUnsupported,
++                message: "This host cannot confirm secure text field fills.")
 +        }
 +        let pid = pid_t(payload.expectedWindowIdentity.ownerProcessIdentifier)
 +        let app = NSRunningApplication(processIdentifier: pid)
 +        if let bundle = app?.bundleIdentifier, Self.systemPromptBundles.contains(bundle) {
-+            throw PeekabooBridgeErrorEnvelope(code: .permissionDenied, message: SecureTextFillRefusal.systemPrompt)
++            throw DesktopActionFailure.preDispatchRefusal(
++                route: .bridge, reason: .invalidRequest, message: SecureTextFillRefusal.systemPrompt)
 +        }
 +        guard let field = Self.focusedElement(of: pid), Self.isSecure(field) else {
-+            throw PeekabooBridgeErrorEnvelope(code: .permissionDenied, message: SecureTextFillRefusal.notSecure)
++            throw DesktopActionFailure.preDispatchRefusal(
++                route: .bridge, reason: .invalidRequest, message: SecureTextFillRefusal.notSecure)
 +        }
 +        let context = PeekabooBridgeSecureTextFillContext(
 +            clientProcessIdentifier: peer.processIdentifier,
@@ -523,20 +528,21 @@ index 000000000..7597315f1
 +        let secret: String
 +        switch await authorize(context) {
 +        case let .refuse(message):
-+            throw PeekabooBridgeErrorEnvelope(code: .permissionDenied, message: message)
++            throw DesktopActionFailure.preDispatchRefusal(
++                route: .bridge, reason: .permissionDenied, message: message)
 +        case let .fill(value):
 +            secret = value
 +        }
 +        guard !secret.isEmpty, !secret.unicodeScalars.contains(where: { $0.properties.generalCategory == .control })
 +        else {
-+            throw PeekabooBridgeErrorEnvelope(
-+                code: .invalidRequest,
++            throw DesktopActionFailure.preDispatchRefusal(
++                route: .bridge, reason: .invalidRequest,
 +                message: "The password is empty or has control characters, such as newlines or tabs, which key events can't type. Nothing was typed.")
 +        }
 +        // A prompt or a Keychain read may have taken long enough for focus to move.
 +        guard let current = Self.focusedElement(of: pid), CFEqual(current, field) else {
-+            throw PeekabooBridgeErrorEnvelope(
-+                code: .permissionDenied,
++            throw DesktopActionFailure.preDispatchRefusal(
++                route: .bridge, reason: .targetUnavailable,
 +                message: "The secure field lost keyboard focus while the password was being prepared. Nothing was typed.")
 +        }
 +
@@ -553,8 +559,8 @@ index 000000000..7597315f1
 +        } catch let failure as DesktopActionFailure {
 +            // Failure messages can count the characters sent so far, which would reveal part of the length.
 +            guard failure.outcome.dispatchState.mutationDispatched else {
-+                throw PeekabooBridgeErrorEnvelope(
-+                    code: .permissionDenied,
++                throw DesktopActionFailure.preDispatchRefusal(
++                    route: .bridge, reason: .operationUnsupported,
 +                    message: "The secure field could not take typed input. Nothing was typed.")
 +            }
 +            throw DesktopActionFailure.indeterminate(
@@ -564,8 +570,9 @@ index 000000000..7597315f1
 +                hint: "Inspect the window; clear the field before filling it again.")
 +        }
 +        guard typed.outcome?.dispatchState.mutationDispatched ?? true else {
-+            throw PeekabooBridgeErrorEnvelope(
-+                code: .permissionDenied, message: "The secure field refused typed input. Nothing was typed.")
++            throw DesktopActionFailure.preDispatchRefusal(
++                route: .bridge, reason: .operationUnsupported,
++                message: "The secure field refused typed input. Nothing was typed.")
 +        }
 +        let matched = await Self.masksMatch(field, length: secret.count)
 +        let outcome: DesktopActionOutcome = matched
