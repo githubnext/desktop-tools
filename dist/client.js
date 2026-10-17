@@ -4,7 +4,7 @@ import { lstat, mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { DESKTOP_BUTTONS, DESKTOP_CLICKS, DESKTOP_DIRECTIONS, DESKTOP_KEYS, DESKTOP_MODIFIERS, DESKTOP_SELECTIONS, isDesktopAction, isDesktopManagement, } from "./protocol.js";
+import { DESKTOP_BUTTONS, DESKTOP_CLICKS, DESKTOP_DIRECTIONS, DESKTOP_MODIFIERS, DESKTOP_SELECTIONS, isDesktopAction, isDesktopKey, isDesktopManagement, } from "./protocol.js";
 const exec = promisify(execFile);
 const MAX_TEXT = 32_000;
 const MAX_IMAGE = 900_000;
@@ -506,8 +506,8 @@ function validateAction(request) {
         return;
     }
     if (request.op === "key") {
-        if (!DESKTOP_KEYS.includes(request.key))
-            throw new Error("Choose one supported key.");
+        if (!isDesktopKey(request.key))
+            throw new Error("Choose a named key or one printable character.");
         const modifiers = request.modifiers;
         if (modifiers !== undefined && (!Array.isArray(modifiers) || modifiers.length > 4
             || new Set(modifiers).size !== modifiers.length

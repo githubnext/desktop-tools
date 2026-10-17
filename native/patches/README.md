@@ -274,6 +274,19 @@ show the button coming up. A disconnect that finds no active hold sends nothing.
 lifecycle internally and are unchanged. Holds, receipts, cleanup and outcomes are unchanged, and the
 test checks the feedback order and points.
 
+`peekaboo-layout-keys.patch` lets a hotkey name the key that types a character on the current keyboard
+layout, so `desktop_key` can send punctuation and every other printable key. Named
+keys use fixed ANSI key codes, which type other characters on other layouts, and the hotkey string
+cannot carry `,` or `+` literally. A `char:<hex scalar>` name is resolved on the GUI's main thread through
+Text Input Sources and `UCKeyTranslate`, after every modifier is parsed: the key must type exactly that
+printable character with no modifier but Command, which participates because layouts such as
+"Dvorak - QWERTY ⌘" switch keys while it is held. Dead keys and keypad keys never match. A character that
+needs Shift or Option, or that the layout lacks, is a typed pre-dispatch refusal whose message names the
+unmodified key; Shift is never added implicitly, so the chord holds only the modifiers it names, and
+the needed modifier differs between layouts. The resolved key keeps the character as its name, so the
+paste, select-all and background shortcut policies still apply. Named keys, their codes and every other
+caller are unchanged. The patch also names F13–F20 and the keypad keys, whose codes are layout-independent.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.

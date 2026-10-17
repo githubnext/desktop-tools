@@ -9,7 +9,6 @@ import {
 	DESKTOP_BUTTONS,
 	DESKTOP_CLICKS,
 	DESKTOP_DIRECTIONS,
-	DESKTOP_KEYS,
 	DESKTOP_MODIFIERS,
 	DESKTOP_SELECTIONS,
 	type DesktopAction,
@@ -25,6 +24,7 @@ import {
 	type DesktopWindowTarget,
 	type DesktopStatusItemTarget,
 	isDesktopAction,
+	isDesktopKey,
 	isDesktopManagement,
 } from "./protocol.js";
 
@@ -618,7 +618,7 @@ function validateAction(request: DesktopAction) {
 		return;
 	}
 	if (request.op === "key") {
-		if (!DESKTOP_KEYS.includes(request.key)) throw new Error("Choose one supported key.");
+		if (!isDesktopKey(request.key)) throw new Error("Choose a named key or one printable character.");
 		const modifiers = request.modifiers;
 		if (
 			modifiers !== undefined && (

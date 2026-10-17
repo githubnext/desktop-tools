@@ -1,0 +1,319 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+LayoutCharacter.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+LayoutCharacter.swift
+new file mode 100644
+index 000000000..135f593b7
+--- /dev/null
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+LayoutCharacter.swift
+@@ -0,0 +1,114 @@
++import Carbon.HIToolbox
++import CoreGraphics
++import Foundation
++import PeekabooFoundation
++
++extension HotkeyService {
++    /// A `char:<hex scalar>` hotkey name: the key that types one character on the current keyboard layout.
++    ///
++    /// Named keys keep their fixed ANSI key codes, which type other characters on other layouts.
++    struct LayoutCharacter: Equatable {
++        static let prefix = "char:"
++
++        let character: String
++
++        init?(_ name: String) {
++            let digits = name.dropFirst(Self.prefix.count)
++            guard name.hasPrefix(Self.prefix), (1...6).contains(digits.count),
++                  digits.allSatisfy(\.isHexDigit),
++                  let value = UInt32(digits, radix: 16), let scalar = Unicode.Scalar(value),
++                  Self.isPrintable(scalar)
++            else { return nil }
++            self.character = String(scalar)
++        }
++
++        static func isPrintable(_ scalar: Unicode.Scalar) -> Bool {
++            switch scalar.properties.generalCategory {
++            case .control, .format, .surrogate, .privateUse, .unassigned, .lineSeparator, .paragraphSeparator:
++                false
++            default:
++                !scalar.properties.isWhitespace
++            }
++        }
++
++        /// Finds the key that types this character with no modifier but Command.
++        ///
++        /// Command participates because layouts such as "Dvorak - QWERTY ⌘" switch keys while it is held.
++        /// A character that needs Shift or Option is refused: adding a modifier the chord did not name would
++        /// send different input, and the needed modifier differs between layouts.
++        func resolve(flags: CGEventFlags, layout: KeyboardLayoutTranslator?) throws -> HotkeyPrimaryKey {
++            guard let layout else {
++                throw Self.refusal(
++                    "The current keyboard layout has no key map, so no key can be found for \(self.quoted).",
++                    hint: "Select a keyboard layout input source, then retry.")
++            }
++            let base: UInt32 = flags.contains(.maskCommand) ? UInt32(cmdKey) : 0
++            if let keyCode = layout.keyCode(typing: self.character, modifiers: base) {
++                return HotkeyPrimaryKey(name: self.character, keyCode: keyCode)
++            }
++            let states: [(UInt32, String)] = [
++                (UInt32(shiftKey), "Shift"), (UInt32(optionKey), "Option"),
++                (UInt32(shiftKey | optionKey), "Shift and Option"),
++            ]
++            for (state, modifiers) in states {
++                guard let keyCode = layout.keyCode(typing: self.character, modifiers: base | state) else { continue }
++                if let unmodified = layout.text(keyCode, base), unmodified.unicodeScalars.allSatisfy(Self.isPrintable) {
++                    throw Self.refusal(
++                        "On the current keyboard layout, \(self.quoted) needs \(modifiers) with the key that types \"\(unmodified)\".",
++                        hint: "Send the key that types \"\(unmodified)\" with \(modifiers) held instead.")
++                }
++                throw Self.refusal(
++                    "On the current keyboard layout, \(self.quoted) needs \(modifiers) with a key that has no character of its own.",
++                    hint: "Use text insertion for this character.")
++            }
++            throw Self.refusal(
++                "No key types \(self.quoted) on the current keyboard layout.",
++                hint: "Use text insertion for this character, or select a layout that has it.")
++        }
++
++        private var quoted: String {
++            "\"\(self.character)\""
++        }
++
++        private static func refusal(_ message: String, hint: String) -> DesktopActionFailure {
++            .preDispatchRefusal(reason: .invalidRequest, message: message, hint: hint)
++        }
++    }
++
++    /// Reads what keys type from one keyboard layout.
++    struct KeyboardLayoutTranslator {
++        /// What one key types under a Carbon modifier state; nil when it types nothing or starts a dead key.
++        let text: (CGKeyCode, UInt32) -> String?
++
++        func keyCode(typing character: String, modifiers: UInt32) -> CGKeyCode? {
++            (0..<128).lazy.map(CGKeyCode.init).first { keyCode in
++                !HotkeyPrimaryKey.keypadKeyCodes.contains(keyCode) && self.text(keyCode, modifiers) == character
++            }
++        }
++
++        /// The current keyboard layout; Text Input Sources is read only on the main thread.
++        static func current() -> Self? {
++            guard Thread.isMainThread,
++                  let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
++                  let property = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
++            else { return nil }
++            let data = Unmanaged<CFData>.fromOpaque(property).takeUnretainedValue() as Data
++            let keyboardType = UInt32(LMGetKbdType())
++            return Self { keyCode, modifiers in
++                data.withUnsafeBytes { bytes in
++                    guard let layout = bytes.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else {
++                        return nil
++                    }
++                    var deadKeyState: UInt32 = 0
++                    var length = 0
++                    var characters = [UniChar](repeating: 0, count: 8)
++                    let status = UCKeyTranslate(
++                        layout, keyCode, UInt16(kUCKeyActionDown), (modifiers >> 8) & 0xFF, keyboardType,
++                        0, &deadKeyState, characters.count, &length, &characters)
++                    guard status == noErr, deadKeyState == 0, length > 0 else { return nil }
++                    return String(utf16CodeUnits: characters, count: length)
++                }
++            }
++        }
++    }
++}
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+Planning.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+Planning.swift
+index fdfd9bf65..7c3d80eb8 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+Planning.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+Planning.swift
+@@ -43,9 +43,9 @@ extension HotkeyService {
+     struct HotkeyChord {
+         let plan: HotkeyPlan
+ 
+-        init(keys: [String]) throws {
++        init(keys: [String], layout: @autoclosure () -> KeyboardLayoutTranslator? = .current()) throws {
+             var modifierFlags: CGEventFlags = []
+-            var primaryKey: HotkeyPrimaryKey?
++            var primaryName: String?
+ 
+             for rawKey in keys {
+                 let key = HotkeyKey.normalizedName(for: rawKey)
+@@ -54,20 +54,23 @@ extension HotkeyService {
+                     continue
+                 }
+ 
+-                guard let resolvedKey = HotkeyPrimaryKey(key) else {
++                guard HotkeyPrimaryKey(key) != nil || LayoutCharacter(key) != nil else {
+                     throw PeekabooError.invalidInput("Invalid hotkey: \(keys.joined(separator: "+"))")
+                 }
+ 
+-                if let existing = primaryKey {
+-                    throw PeekabooError.invalidInput("Invalid hotkey: \(existing.name)+\(resolvedKey.name)")
++                if let existing = primaryName {
++                    throw PeekabooError.invalidInput("Invalid hotkey: \(existing)+\(key)")
+                 }
+ 
+-                primaryKey = resolvedKey
++                primaryName = key
+             }
+ 
+-            guard let primaryKey else {
++            guard let primaryName else {
+                 throw PeekabooError.invalidInput("Invalid hotkey: \(keys.joined(separator: "+"))")
+             }
++            // Layout characters resolve after every modifier is known; Command can select another layout.
++            let primaryKey = try HotkeyPrimaryKey(primaryName) ?? LayoutCharacter(primaryName)!.resolve(
++                flags: modifierFlags, layout: layout())
+ 
+             self.plan = HotkeyPlan(
+                 primaryKey: primaryKey.name,
+@@ -152,6 +155,14 @@ extension HotkeyService {
+             self.keyCode = keyCode
+         }
+ 
++        init(name: String, keyCode: CGKeyCode) {
++            self.name = name
++            self.keyCode = keyCode
++        }
++
++        /// Keypad keys type digits and operators too, but only their own names select them.
++        static let keypadKeyCodes = Set(keyCodes.filter { $0.key.hasPrefix("keypad") }.values)
++
+         private static let keyCodes: [String: CGKeyCode] = [
+             "a": 0x00,
+             "s": 0x01,
+@@ -229,6 +240,32 @@ extension HotkeyService {
+             "f10": 0x6D,
+             "f11": 0x67,
+             "f12": 0x6F,
++            "f13": 0x69,
++            "f14": 0x6B,
++            "f15": 0x71,
++            "f16": 0x6A,
++            "f17": 0x40,
++            "f18": 0x4F,
++            "f19": 0x50,
++            "f20": 0x5A,
++            "keypad0": 0x52,
++            "keypad1": 0x53,
++            "keypad2": 0x54,
++            "keypad3": 0x55,
++            "keypad4": 0x56,
++            "keypad5": 0x57,
++            "keypad6": 0x58,
++            "keypad7": 0x59,
++            "keypad8": 0x5B,
++            "keypad9": 0x5C,
++            "keypaddecimal": 0x41,
++            "keypadmultiply": 0x43,
++            "keypadplus": 0x45,
++            "keypadclear": 0x47,
++            "keypaddivide": 0x4B,
++            "keypadenter": 0x4C,
++            "keypadminus": 0x4E,
++            "keypadequals": 0x51,
+         ]
+     }
+ }
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/HotkeyServiceTargetingTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/HotkeyServiceTargetingTests.swift
+index 4789dcd7e..9d3476c3b 100644
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/HotkeyServiceTargetingTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/HotkeyServiceTargetingTests.swift
+@@ -1,4 +1,5 @@
+ import AppKit
++import Carbon.HIToolbox
+ import CoreGraphics
+ import Darwin
+ import os
+@@ -188,6 +189,95 @@ struct HotkeyServiceTargetingTests {
+         #expect(slashPlan.keyCode == 0x2C)
+     }
+ 
++    @Test func `layout characters resolve through the current layout`() throws {
++        // AZERTY puts "a" on the ANSI Q key and "," on the ANSI M key.
++        let azerty = Self.layout([0x0C: "a", 0x2E: ",", 0x2B: ";"], shifted: [0x2B: "."])
++
++        let a = try HotkeyService.HotkeyChord(keys: ["cmd", "char:61"], layout: azerty).plan
++        let comma = try HotkeyService.HotkeyChord(keys: ["char:2c"], layout: azerty).plan
++
++        #expect(a.primaryKey == "a")
++        #expect(a.keyCode == 0x0C)
++        #expect(a.modifierFlags == .maskCommand)
++        #expect(comma.primaryKey == ",")
++        #expect(comma.keyCode == 0x2E)
++    }
++
++    @Test func `layout characters keep named-key policies`() throws {
++        let qwerty = Self.layout([0x0D: "w", 0x09: "v"])
++
++        let plan = try HotkeyService.HotkeyChord(keys: ["cmd", "char:76"], layout: qwerty).plan
++
++        #expect(HotkeyService.isPasteShortcut(primaryKey: plan.primaryKey, flags: plan.modifierFlags))
++    }
++
++    @Test func `layout characters use the command layout while command is held`() throws {
++        // "Dvorak - QWERTY ⌘" types Dvorak keys until Command selects QWERTY positions.
++        let layout = HotkeyService.KeyboardLayoutTranslator { keyCode, modifiers in
++            switch (keyCode, modifiers & UInt32(cmdKey) != 0) {
++            case (0x2F, false): "v"
++            case (0x09, true): "v"
++            default: nil
++            }
++        }
++
++        let plain = try HotkeyService.HotkeyChord(keys: ["char:76"], layout: layout).plan
++        let command = try HotkeyService.HotkeyChord(keys: ["cmd", "char:76"], layout: layout).plan
++
++        #expect(plain.keyCode == 0x2F)
++        #expect(command.keyCode == 0x09)
++    }
++
++    @Test func `layout characters that need shift refuse with the unmodified key`() throws {
++        let qwerty = Self.layout([0x2C: "/"], shifted: [0x2C: "?"])
++
++        do {
++            _ = try HotkeyService.HotkeyChord(keys: ["cmd", "char:3f"], layout: qwerty)
++            Issue.record("A shifted character must not add Shift implicitly")
++        } catch let failure as DesktopActionFailure {
++            #expect(!failure.outcome.dispatchState.mutationDispatched)
++            #expect(failure.message.contains("needs Shift with the key that types \"/\""))
++        }
++    }
++
++    @Test func `layout characters refuse missing keys and skip the keypad`() throws {
++        let layout = Self.layout([0x41: ".", 0x52: "0"])
++
++        #expect(throws: DesktopActionFailure.self) {
++            _ = try HotkeyService.HotkeyChord(keys: ["char:2e"], layout: layout)
++        }
++        #expect(throws: DesktopActionFailure.self) {
++            _ = try HotkeyService.HotkeyChord(keys: ["char:2e"], layout: nil)
++        }
++        let decimal = try HotkeyService.HotkeyChord(keys: ["keypaddecimal"], layout: layout).plan
++        #expect(decimal.keyCode == 0x41)
++    }
++
++    @Test func `layout character names accept one printable scalar`() {
++        #expect(HotkeyService.LayoutCharacter("char:2c")?.character == ",")
++        #expect(HotkeyService.LayoutCharacter("char:e9")?.character == "é")
++        for name in ["char:", "char:a", "char:20", "char:7f", "char:+2c", "char:1234567", "char:zz", "comma"] {
++            #expect(HotkeyService.LayoutCharacter(name) == nil, "\(name)")
++        }
++    }
++
++    @Test func `targeted hotkey planner accepts extended function and keypad keys`() throws {
++        let service = HotkeyService()
++
++        #expect(try service.targetedHotkeyPlanForTesting(["f13"]).keyCode == 0x69)
++        #expect(try service.targetedHotkeyPlanForTesting(["f20"]).keyCode == 0x5A)
++        #expect(try service.targetedHotkeyPlanForTesting(["keypadenter"]).keyCode == 0x4C)
++        #expect(try service.targetedHotkeyPlanForTesting(["keypad9"]).keyCode == 0x5C)
++    }
++
++    private static func layout(
++        _ plain: [CGKeyCode: String], shifted: [CGKeyCode: String] = [:]) -> HotkeyService.KeyboardLayoutTranslator
++    {
++        HotkeyService.KeyboardLayoutTranslator { keyCode, modifiers in
++            modifiers & UInt32(shiftKey) != 0 ? shifted[keyCode] : plain[keyCode]
++        }
++    }
++
+     @Test func `targeted hotkey planner normalizes foreground key aliases`() throws {
+         let service = HotkeyService()
+ 

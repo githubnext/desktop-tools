@@ -104,6 +104,7 @@ export type DesktopClick = (typeof DESKTOP_CLICKS)[number];
 export type DesktopDirection = (typeof DESKTOP_DIRECTIONS)[number];
 export type DesktopButton = (typeof DESKTOP_BUTTONS)[number];
 
+/** Keys that type no character, named; every other key is given as the character it types. */
 export const DESKTOP_KEYS = [
 	"enter",
 	"tab",
@@ -119,42 +120,7 @@ export const DESKTOP_KEYS = [
 	"end",
 	"pageup",
 	"pagedown",
-	"a",
-	"b",
-	"c",
-	"d",
-	"e",
-	"f",
-	"g",
-	"h",
-	"i",
-	"j",
-	"k",
-	"l",
-	"m",
-	"n",
-	"o",
-	"p",
-	"q",
-	"r",
-	"s",
-	"t",
-	"u",
-	"v",
-	"w",
-	"x",
-	"y",
-	"z",
-	"0",
-	"1",
-	"2",
-	"3",
-	"4",
-	"5",
-	"6",
-	"7",
-	"8",
-	"9",
+	"help",
 	"f1",
 	"f2",
 	"f3",
@@ -167,10 +133,38 @@ export const DESKTOP_KEYS = [
 	"f10",
 	"f11",
 	"f12",
+	"f13",
+	"f14",
+	"f15",
+	"f16",
+	"f17",
+	"f18",
+	"f19",
+	"f20",
+	"keypad0",
+	"keypad1",
+	"keypad2",
+	"keypad3",
+	"keypad4",
+	"keypad5",
+	"keypad6",
+	"keypad7",
+	"keypad8",
+	"keypad9",
+	"keypaddecimal",
+	"keypadmultiply",
+	"keypadplus",
+	"keypadminus",
+	"keypaddivide",
+	"keypadequals",
+	"keypadenter",
+	"keypadclear",
 ] as const;
 export const DESKTOP_MODIFIERS = ["command", "control", "option", "shift"] as const;
 export const DESKTOP_SELECTIONS = ["text", "cursor_before", "cursor_after"] as const;
-export type DesktopKey = (typeof DESKTOP_KEYS)[number];
+export type DesktopNamedKey = (typeof DESKTOP_KEYS)[number];
+/** A named key, or the one printable character a key types without Shift or Option, such as `,` or `a`. */
+export type DesktopKey = DesktopNamedKey | (string & {});
 export type DesktopModifier = (typeof DESKTOP_MODIFIERS)[number];
 export type DesktopSelection = (typeof DESKTOP_SELECTIONS)[number];
 export type DesktopAction = Extract<
@@ -231,4 +225,12 @@ export function isDesktopManagement(request: DesktopRequest): request is Desktop
 		|| request.op === "unhide" || request.op === "focus" || request.op === "minimize"
 		|| request.op === "restore" || request.op === "maximize" || request.op === "close"
 		|| request.op === "move" || request.op === "resize";
+}
+
+/** Whether a key is named or is one printable, non-space character; native checks the current layout has it. */
+export function isDesktopKey(key: unknown): key is DesktopKey {
+	if (typeof key !== "string") return false;
+	if ((DESKTOP_KEYS as readonly string[]).includes(key)) return true;
+	const characters = [...key];
+	return characters.length === 1 && !/[\p{C}\p{Z}]/u.test(key);
 }

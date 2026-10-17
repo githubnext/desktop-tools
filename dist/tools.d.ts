@@ -1,4 +1,4 @@
-import type { DesktopRequest } from "./protocol.js";
+import { type DesktopRequest } from "./protocol.js";
 export type JsonSchema = {
     [key: string]: unknown;
 };

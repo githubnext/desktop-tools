@@ -115,12 +115,12 @@ private struct ActionRequest: Decodable {
 				throw ActionError("Insert nonempty text of at most 8,192 UTF-16 code units into the observed focused control.")
 			}
 		case .key:
-			guard element == nil, text == nil, let key, keyboardKeys.contains(key) else {
-				throw ActionError("Choose a supported navigation key, letter, digit, or f1 through f12.")
+			guard element == nil, text == nil, let key, serviceKey(key) != nil else {
+				throw ActionError("Choose a named key or the one printable character a key types, such as , or a.")
 			}
 			let modifiers = modifiers ?? []
 			guard modifiers.count <= 4, Set(modifiers).count == modifiers.count,
-				modifiers.allSatisfy({ keyboardModifiers.contains($0) })
+				modifiers.allSatisfy({ keyboardModifiers[$0] != nil })
 			else {
 				throw ActionError("Use each of command, control, option, and shift at most once.")
 			}
@@ -150,16 +150,36 @@ private struct PointerPoint: Decodable, Equatable {
 }
 
 private let pointerClicks: Set<String> = ["single", "double", "right", "middle", "triple"]
-private let keyboardModifiers: Set<String> = ["command", "control", "option", "shift"]
-private let keyboardKeys: Set<String> = {
-	var keys: Set<String> = [
-		"enter", "tab", "escape", "backspace", "delete", "up", "down", "left", "right",
-		"space", "home", "end", "pageup", "pagedown",
+private let keyboardModifiers: [String: String] = [
+	"command": "cmd", "control": "ctrl", "option": "alt", "shift": "shift",
+]
+// This contract keeps delete as forward delete; Peekaboo's unqualified delete means backspace.
+private let keyboardKeys: [String: String] = {
+	var keys = [
+		"enter": "return", "tab": "tab", "escape": "escape", "backspace": "delete", "delete": "forwarddelete",
+		"up": "up", "down": "down", "left": "left", "right": "right", "space": "space", "home": "home",
+		"end": "end", "pageup": "pageup", "pagedown": "pagedown", "help": "help",
 	]
-	keys.formUnion("abcdefghijklmnopqrstuvwxyz0123456789".map(String.init))
-	keys.formUnion((1...12).map { "f\($0)" })
+	let keypad = (0...9).map { "keypad\($0)" } + [
+		"keypaddecimal", "keypadmultiply", "keypadplus", "keypadminus", "keypaddivide", "keypadequals",
+		"keypadenter", "keypadclear",
+	]
+	for name in (1...20).map({ "f\($0)" }) + keypad { keys[name] = name }
 	return keys
 }()
+
+/// Peekaboo's name for a key. A character names the key that types it on the host's current layout.
+private func serviceKey(_ key: String) -> String? {
+	if let name = keyboardKeys[key] { return name }
+	guard key.unicodeScalars.count == 1, let scalar = key.unicodeScalars.first, !scalar.properties.isWhitespace
+	else { return nil }
+	switch scalar.properties.generalCategory {
+	case .control, .format, .surrogate, .privateUse, .unassigned, .lineSeparator, .paragraphSeparator:
+		return nil
+	default:
+		return "char:" + String(scalar.value, radix: 16)
+	}
+}
 
 private struct ActionError: LocalizedError {
 	let message: String
@@ -223,10 +243,8 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 	var invoked = false
 	do {
 		try request.validate()
-		let chord = try request.key.map { key in
-			// This contract keeps delete as forward delete; Peekaboo's unqualified delete means backspace.
-			let primary = key == "delete" ? "forwarddelete" : key
-			return try KeyboardChord(parsing: ((request.modifiers ?? []) + [primary]).joined(separator: "+"))
+		let chord = request.key.map { key in
+			((request.modifiers ?? []).map { keyboardModifiers[$0]! } + [serviceKey(key)!]).joined(separator: ",")
 		}
 		result.requires_fresh_observation = true
 		guard try await client.ownsSnapshot(snapshotId: request.snapshot) else {
@@ -359,7 +377,7 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 		case .key:
 			// Text-action emulation rejects WKWebView's focused receiver; deliver the exact-window key instead.
 			evidence = try await ActionEvidence(client.hotkeyWithOutcome(
-				keys: chord!.serviceKeys,
+				keys: chord!,
 				holdDuration: 0,
 				target: .init(
 					windowIdentity: identity,

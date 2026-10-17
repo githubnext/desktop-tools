@@ -2,6 +2,7 @@
 export const DESKTOP_CLICKS = ["single", "double", "right", "middle", "triple"];
 export const DESKTOP_DIRECTIONS = ["up", "down", "left", "right"];
 export const DESKTOP_BUTTONS = ["left", "right"];
+/** Keys that type no character, named; every other key is given as the character it types. */
 export const DESKTOP_KEYS = [
     "enter",
     "tab",
@@ -17,42 +18,7 @@ export const DESKTOP_KEYS = [
     "end",
     "pageup",
     "pagedown",
-    "a",
-    "b",
-    "c",
-    "d",
-    "e",
-    "f",
-    "g",
-    "h",
-    "i",
-    "j",
-    "k",
-    "l",
-    "m",
-    "n",
-    "o",
-    "p",
-    "q",
-    "r",
-    "s",
-    "t",
-    "u",
-    "v",
-    "w",
-    "x",
-    "y",
-    "z",
-    "0",
-    "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
+    "help",
     "f1",
     "f2",
     "f3",
@@ -65,6 +31,32 @@ export const DESKTOP_KEYS = [
     "f10",
     "f11",
     "f12",
+    "f13",
+    "f14",
+    "f15",
+    "f16",
+    "f17",
+    "f18",
+    "f19",
+    "f20",
+    "keypad0",
+    "keypad1",
+    "keypad2",
+    "keypad3",
+    "keypad4",
+    "keypad5",
+    "keypad6",
+    "keypad7",
+    "keypad8",
+    "keypad9",
+    "keypaddecimal",
+    "keypadmultiply",
+    "keypadplus",
+    "keypadminus",
+    "keypaddivide",
+    "keypadequals",
+    "keypadenter",
+    "keypadclear",
 ];
 export const DESKTOP_MODIFIERS = ["command", "control", "option", "shift"];
 export const DESKTOP_SELECTIONS = ["text", "cursor_before", "cursor_after"];
@@ -82,4 +74,13 @@ export function isDesktopManagement(request) {
         || request.op === "unhide" || request.op === "focus" || request.op === "minimize"
         || request.op === "restore" || request.op === "maximize" || request.op === "close"
         || request.op === "move" || request.op === "resize";
+}
+/** Whether a key is named or is one printable, non-space character; native checks the current layout has it. */
+export function isDesktopKey(key) {
+    if (typeof key !== "string")
+        return false;
+    if (DESKTOP_KEYS.includes(key))
+        return true;
+    const characters = [...key];
+    return characters.length === 1 && !/[\p{C}\p{Z}]/u.test(key);
 }
