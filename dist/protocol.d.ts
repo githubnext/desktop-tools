@@ -183,10 +183,13 @@ export declare const DESKTOP_BUTTONS: readonly ["left", "right"];
 export type DesktopClick = (typeof DESKTOP_CLICKS)[number];
 export type DesktopDirection = (typeof DESKTOP_DIRECTIONS)[number];
 export type DesktopButton = (typeof DESKTOP_BUTTONS)[number];
-export declare const DESKTOP_KEYS: readonly ["enter", "tab", "escape", "backspace", "delete", "up", "down", "left", "right", "space", "home", "end", "pageup", "pagedown", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"];
+/** Keys that type no character, named; every other key is given as the character it types. */
+export declare const DESKTOP_KEYS: readonly ["enter", "tab", "escape", "backspace", "delete", "up", "down", "left", "right", "space", "home", "end", "pageup", "pagedown", "help", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "keypad0", "keypad1", "keypad2", "keypad3", "keypad4", "keypad5", "keypad6", "keypad7", "keypad8", "keypad9", "keypaddecimal", "keypadmultiply", "keypadplus", "keypadminus", "keypaddivide", "keypadequals", "keypadenter", "keypadclear"];
 export declare const DESKTOP_MODIFIERS: readonly ["command", "control", "option", "shift"];
 export declare const DESKTOP_SELECTIONS: readonly ["text", "cursor_before", "cursor_after"];
-export type DesktopKey = (typeof DESKTOP_KEYS)[number];
+export type DesktopNamedKey = (typeof DESKTOP_KEYS)[number];
+/** A named key, or the one printable character a key types without Shift or Option, such as `,` or `a`. */
+export type DesktopKey = DesktopNamedKey | (string & {});
 export type DesktopModifier = (typeof DESKTOP_MODIFIERS)[number];
 export type DesktopSelection = (typeof DESKTOP_SELECTIONS)[number];
 export type DesktopAction = Extract<DesktopRequest, {
@@ -206,3 +209,5 @@ export type DesktopResult = {
 };
 export declare function isDesktopAction(request: DesktopRequest): request is DesktopAction;
 export declare function isDesktopManagement(request: DesktopRequest): request is DesktopManagement;
+/** Whether a key is named or is one printable, non-space character; native checks the current layout has it. */
+export declare function isDesktopKey(key: unknown): key is DesktopKey;
