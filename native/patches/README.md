@@ -287,6 +287,25 @@ the needed modifier differs between layouts. The resolved key keeps the characte
 paste, select-all and background shortcut policies still apply. Named keys, their codes and every other
 caller are unchanged. The patch also names F13–F20 and the keypad keys, whose codes are layout-independent.
 
+`peekaboo-element-action.patch` binds named Accessibility actions and value writes to the exact observed
+element, for element actions and non-text values. Both resolved a target string by snapshot ID, then fell back
+to a fuzzy label query, and re-found the live element by a score in which a matching label or frame alone
+could select a neighbor; the only element check afterwards compared that live element with itself. With the
+patch, `performAction` and `setValue` take only a literal element ID from the snapshot, and before input the
+live element must match the observed element's receipt: process, owning window, role, frame, and identifier
+or title. An observed `group-` identifier prefix that observation strips is compared in its native form. A
+mismatch is a typed pre-dispatch `SNAPSHOT_STALE` refusal; the same receipt is checked again immediately
+before the action. Named actions run off MainActor like `AXPress`: `AXShowMenu` reports delivery after the
+existing show-menu grace period while its menu tracks, and every other action keeps the operation lane until
+the native call returns. A failure that may follow delivery stays indeterminate, with no fallback route.
+A checkbox, switch, or disclosure triangle whose value is read-only but which advertises `AXPress` (as
+SwiftUI checkboxes do) is set by at most one press: a state already matching the request sends nothing, a
+mixed or unreadable state refuses, and only a readback of the requested state on the same element confirms
+the change. The `setValue` result contract accepts that press's Accessibility-action delivery. Observation
+also records each element's advertised standard action names, at most 16 of up to 48 ASCII letters, in an
+`actions` attribute; custom actions, which carry app text, are omitted. Tests whose resolver returns a stand-in AX element inject a
+matcher that accepts it; two new tests cover a mismatched live element and a label in place of an element ID.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.

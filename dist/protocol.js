@@ -60,11 +60,23 @@ export const DESKTOP_KEYS = [
 ];
 export const DESKTOP_MODIFIERS = ["command", "control", "option", "shift"];
 export const DESKTOP_SELECTIONS = ["text", "cursor_before", "cursor_after"];
+/** Named Accessibility actions; AXPress is desktop_click's route and is not listed separately. */
+export const DESKTOP_ELEMENT_ACTIONS = [
+    "AXShowMenu",
+    "AXIncrement",
+    "AXDecrement",
+    "AXConfirm",
+    "AXCancel",
+    "AXPick",
+    "AXRaise",
+    "AXScrollToVisible",
+];
 export function isDesktopAction(request) {
     return request.op === "click" || request.op === "type" || request.op === "key"
         || request.op === "insert" || request.op === "select" || request.op === "scroll"
         || request.op === "drag" || request.op === "hover" || request.op === "press"
         || request.op === "clipboard-write" || request.op === "launch"
+        || request.op === "element-action" || request.op === "set-value"
         || request.op === "open" || request.op === "menu" || request.op === "dialog-answer"
         || request.op === "menubar-click" || request.op === "dock"
         || isDesktopManagement(request);
