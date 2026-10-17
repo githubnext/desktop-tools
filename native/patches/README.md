@@ -324,12 +324,23 @@ scratch: it is restored to the pinned revision and receives the complete stack. 
 index is unchanged, and the build never compiles unexpected source. Patch files are excluded from
 formatting.
 
-Each patch carries the upstream test updates its behavior requires. With the complete stack,
-`swift test` in `Core/PeekabooAutomationKit` builds without local edits. Two upstream tests also
+Each patch carries the upstream test updates its behavior requires. A patch that adds a Bridge
+operation also updates upstream's operation inventory in `Core/PeekabooCore/Tests/PeekabooTests`: the
+wire count in `PeekabooBridgeRequestPlanTests` and `PeekabooBridgeOperationSemanticPlanTests`, the
+permission partition in `PeekabooBridgeRequestPlanTests`, and the mutating operations in
+`PeekabooBridgeOperationResultSemanticsTests`. With the complete stack, `swift test` in
+`Core/PeekabooAutomationKit` and `Core/PeekabooCore` builds without local edits.
+
+Peekaboo's tests take the real per-user `~/.peekaboo` locks, whatever `HOME` is. Run them in the
+foreground with a narrow `--filter` and a hard time limit, and never leave a run in the background:
+a stuck run blocks every desktop operation on the Mac, including the installed app. Run
+`PeekabooAutomationKitTests`, `PeekabooBridgeTests`, and the `PeekabooTests` Bridge suites (files
+named `*Bridge*`) in a few batches. Two upstream tests also
 fail on unpatched Peekaboo 4.8.0 on some hosts:
 `DesktopObservationServiceTests.testGenerationlessRemoteExactObservationStaysReadOnly` when a real
 WindowServer window 42 exists, and the PeekabooBridge test "Cancellation reaps the exact child
-without a zombie".
+without a zombie". With the stack, "minimized identity may dispatch when WindowServer omits its
+entry" also fails ([#50](https://github.com/githubnext/desktop-tools/issues/50)).
 
 When updating Peekaboo, review the upstream fixes and these patches together. Update the revision
 guard and patches deliberately, or remove each patch when the dependency includes its fix.
