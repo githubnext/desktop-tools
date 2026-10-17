@@ -12,7 +12,7 @@ const { values } = parseArgs({
     strict: true,
 });
 // Desktop Tools.app links its client and serves its socket here; pass all three to use another host app.
-const state = join(homedir(), ".local", "state", "desktop-tools");
+const state = process.env.DESKTOP_TOOLS_STATE || join(homedir(), ".local", "state", "desktop-tools");
 const { client = join(state, "desktop-client"), socket = join(state, "desktop.sock"), name: host = "Desktop Tools", } = values;
 const desktop = createDesktop({ client, socket, name: host });
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
