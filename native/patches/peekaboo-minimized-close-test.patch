@@ -1,0 +1,12 @@
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeWindowMutationIdentityTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeWindowMutationIdentityTests.swift
+index c034bf38f..9534061ca 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeWindowMutationIdentityTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeWindowMutationIdentityTests.swift
+@@ -235,6 +235,7 @@ struct PeekabooBridgeWindowMutationIdentityTests {
+             allowlistedBundles: [],
+             allowedOperations: [.backgroundCloseWindow],
+             windowOwnerProcessIdentifierProvider: { _ in nil },
++            windowBoundsProvider: { _ in nil },
+             processStartIdentityProvider: { _ in 9001 })
+         let request = PeekabooBridgeRequest.backgroundCloseWindow(.init(
+             target: .windowId(77),
