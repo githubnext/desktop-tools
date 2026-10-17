@@ -95,6 +95,8 @@ export type DesktopRequest =
 	| { op: "dock"; title?: string; menu_item?: string }
 	| { op: "spaces" }
 	| { op: "switch-space"; space_id: number }
+	/** Lists the enabled keyboard input sources, or selects one by its ID. */
+	| { op: "input-source"; select?: string }
 	| {
 		op: "inspect";
 		pid: number;
@@ -295,6 +297,7 @@ export type DesktopAction = Extract<
 			| "key"
 			| "system-key"
 			| "switch-space"
+			| "input-source"
 			| "insert"
 			| "select"
 			| "element-action"
@@ -338,7 +341,7 @@ export type DesktopResult = {
 
 export function isDesktopAction(request: DesktopRequest): request is DesktopAction {
 	return request.op === "click" || request.op === "type" || request.op === "key"
-		|| request.op === "system-key" || request.op === "switch-space"
+		|| request.op === "system-key" || request.op === "switch-space" || request.op === "input-source"
 		|| request.op === "insert" || request.op === "select" || request.op === "scroll"
 		|| request.op === "drag" || request.op === "hover" || request.op === "press"
 		|| request.op === "clipboard-write" || request.op === "launch"

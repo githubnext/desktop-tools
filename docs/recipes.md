@@ -126,17 +126,18 @@ To copy files picked in Finder instead, `desktop_click` the first one and the re
 
 ## Switch the input source
 
-1. `desktop_apps`, and note `system.input.keyboard_layout.id`.
-2. `desktop_system_key` with `key: "space"` and `modifiers: ["control"]` for the previous source, with `option` added for the next. The result is `unknown`.
-3. `desktop_apps` again. Repeat step 2 until the wanted ID shows, at most once per installed source.
+1. `desktop_input_source` with no arguments lists the enabled sources by `id`, `name` and `kind`, with `current`.
+2. `desktop_input_source` with `select` set to the wanted `id`, such as `com.apple.keylayout.French`. It reads the source back.
+3. Type, then select the `before` source again; the switch affects every app.
 
-**Verify:** `system.input.keyboard_layout.id` equals the wanted ID, such as `com.apple.keylayout.US`.
+**Verify:** the result is `completed`, and `current` equals the requested ID.
 
 **Goes wrong:**
 
-- An input method such as Pinyin types through an underlying layout, so the ID may not change. Pick the source by name from the input menu instead: `desktop_menubar_click` the `TextInputMenuAgent` item *(unverified owner)*, then inspect the menu.
-- The shortcut can be off, rebound, or taken by Spotlight.
-- `desktop_key` maps characters through the current layout, so switch before typing with it.
+- An unlisted source isn't enabled; the user adds it in System Settings > Keyboard > Text Input.
+- An input method's mode may reach the app only after its next focus change. Inspect before typing.
+- `unknown` means no readback within a second. List again rather than selecting again.
+- `desktop_key` maps characters through `keyboard_layout`, so switch before typing with it.
 
 ## Use the share sheet
 

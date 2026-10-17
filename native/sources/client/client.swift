@@ -51,6 +51,7 @@ private enum Client {
 			|| (operation == "system-key" && args.count == 2)
 			|| (operation == "spaces" && args.count == 2)
 			|| (operation == "switch-space" && args.count == 2)
+			|| (operation == "input-source" && args.count == 2)
 		else { throw ClientError.usage }
 		let identity = try SigningIdentity.current()
 		let client = PeekabooBridgeClient(
@@ -94,6 +95,8 @@ private enum Client {
 			return try nativeSpaces()
 		case "switch-space":
 			return try await nativeSwitchSpace(client, handshake: handshake)
+		case "input-source":
+			return try await nativeInputSource()
 		case "management":
 			return try await nativeManagement(client, handshake: handshake)
 		case "launch":
