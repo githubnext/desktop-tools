@@ -654,6 +654,7 @@ function actionResult(data, outcome) {
                 clipboard_cleanup: data.clipboard_cleanup,
                 clipboard_ownership: data.clipboard_ownership,
                 consumption: data.consumption,
+                created_windows: data.created_windows,
             },
             warning: "Native action metadata exceeded the result limit. Inspect the current state.",
         });

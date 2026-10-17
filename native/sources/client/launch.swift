@@ -29,6 +29,7 @@ private struct LaunchResult: Encodable {
 	var native_outcome: DesktopActionOutcome?
 	var application: LaunchedApplication?
 	var requires_fresh_observation = false
+	var created_windows: CreatedWindows?
 	var message: String?
 	var error: LaunchMessage?
 }
@@ -65,6 +66,7 @@ func nativeLaunch(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 			throw LaunchError("The native runtime cannot attest application targets. Update the desktop runtime before acting.")
 		}
 		try Task.checkCancellation()
+		let before = existingWindowIDs()
 		invoked = true
 		let action = try await client.launchApplicationResult(request: request)
 		result.native_outcome = action.outcome
@@ -90,6 +92,10 @@ func nativeLaunch(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 			case .refused: result.outcome = "refused"
 			default: result.outcome = "unknown"
 			}
+		}
+		if outcome.dispatchState.mutationDispatched {
+			// Launch waits for the app, not a window; a slow app's window can arrive after this.
+			result.created_windows = await createdWindows(client, process: process, before: before, waitingUpTo: 2)
 		}
 	} catch let failure as DesktopActionFailure {
 		let dispatched = failure.outcome.dispatchState.mutationDispatched
