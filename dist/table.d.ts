@@ -45,11 +45,33 @@ export type Table = {
 };
 export declare class TableError extends Error {
 }
-/**
- * Builds a table from the scope element's subtree, whose first element is the scope.
- * The table is the scope itself, or the first table, outline or grid inside it.
- */
+/** Builds a table from the scope element's subtree, whose first element is the scope. */
 export declare function buildTable(elements: TableElement[], { rowOffset, maxRows }?: {
     rowOffset?: number;
     maxRows?: number;
 }): Table;
+export type TableCell = {
+    /** The row's position among the table's rows, as `index` in a table read. */
+    row: number;
+    column: number;
+    column_title: string | null;
+    text: string;
+    /** The other cells of the row, which a readback compares to tell the row hasn't moved. */
+    others: string[];
+    /** The cell's first editable element, or null when it shows only text. */
+    control: {
+        element: string | null;
+        role: string;
+        kind: "text" | "value";
+        value: string;
+    } | null;
+};
+/**
+ * Finds one cell of the table in a scope subtree: by the row's element ID, or by its position for a readback,
+ * and by a column title or 0-based index.
+ */
+export declare function locateCell(elements: TableElement[], row: {
+    element: string;
+} | {
+    index: number;
+}, column: string | number): TableCell;

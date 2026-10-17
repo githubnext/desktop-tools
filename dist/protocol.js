@@ -105,7 +105,7 @@ export function isDesktopAction(request) {
         || request.op === "insert" || request.op === "select" || request.op === "scroll"
         || request.op === "drag" || request.op === "hover" || request.op === "press"
         || request.op === "clipboard-write" || request.op === "launch"
-        || request.op === "element-action" || request.op === "set-value"
+        || request.op === "element-action" || request.op === "set-value" || request.op === "set-cell"
         || request.op === "open" || request.op === "menu" || request.op === "dialog-answer"
         || request.op === "menubar-click" || request.op === "dock"
         || request.op === "notification-action" || isDesktopManagement(request);

@@ -158,6 +158,17 @@ export type DesktopRequest =
 	| { op: "element-action"; snapshot: string; element: string; action: DesktopElementAction }
 	| { op: "set-value"; snapshot: string; element: string; value: number | boolean | string }
 	| {
+		op: "set-cell";
+		pid: number;
+		window: number;
+		snapshot: string;
+		/** The table, or the area that holds it, in the snapshot, as a table read's scope. */
+		table: string;
+		row: string;
+		column: string | number;
+		value: number | boolean | string;
+	}
+	| {
 		op: "select";
 		snapshot: string;
 		element: string;
@@ -288,6 +299,7 @@ export type DesktopAction = Extract<
 			| "select"
 			| "element-action"
 			| "set-value"
+			| "set-cell"
 			| "scroll"
 			| "drag"
 			| "hover"
@@ -330,7 +342,7 @@ export function isDesktopAction(request: DesktopRequest): request is DesktopActi
 		|| request.op === "insert" || request.op === "select" || request.op === "scroll"
 		|| request.op === "drag" || request.op === "hover" || request.op === "press"
 		|| request.op === "clipboard-write" || request.op === "launch"
-		|| request.op === "element-action" || request.op === "set-value"
+		|| request.op === "element-action" || request.op === "set-value" || request.op === "set-cell"
 		|| request.op === "open" || request.op === "menu" || request.op === "dialog-answer"
 		|| request.op === "menubar-click" || request.op === "dock"
 		|| request.op === "notification-action" || isDesktopManagement(request);
