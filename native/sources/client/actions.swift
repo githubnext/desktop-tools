@@ -860,6 +860,13 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 				result.requires_fresh_observation = true
 			}
 		}
+	} catch let error where refusalMessage(error) == SecureTextFillRefusal.secureFocus {
+		// The host checks the live focus before sending characters or pasting, so nothing reached the field.
+		result.outcome = "refused"
+		result.error = ActionMessage(
+			code: secureFieldRequiresFill.code, message: SecureTextFillRefusal.secureFocus, hint: secureFieldRequiresFill.hint
+		)
+		if let lease { try? await client.finishSnapshotMutation(lease, requiresFreshObservation: false) }
 	} catch {
 		result.outcome = invoked ? "unknown" : "refused"
 		if invoked { result.requires_fresh_observation = true }
@@ -1125,7 +1132,10 @@ private func isFinderFileName(_ observed: DetectedElement, detection: ElementDet
 private func checkElementRequest(_ request: ActionRequest, _ observed: DetectedElement) throws {
 	let role = observed.attributes["role"] ?? ""
 	if [.type, .setValue, .select].contains(request.op), isSecure(observed) {
-		throw ActionError("This is a secure text field, such as a password field, and text is never typed, set or selected in it. Nothing was sent.")
+		throw ActionError(
+			"This is a secure text field, such as a password field, and text is never typed, set or selected in it. Nothing was sent.",
+			hint: secureFieldRequiresFill.hint, code: secureFieldRequiresFill.code
+		)
 	}
 	switch request.op {
 	case .elementAction:

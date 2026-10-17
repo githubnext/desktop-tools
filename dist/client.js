@@ -929,6 +929,17 @@ function validateAction(request) {
             ? "Set a date as ISO 8601: 2026-10-17, 2026-10-17T15:30 (local time) or 2026-10-17T15:30:00Z. Use desktop_type for text."
             : "Set a finite number, true/false or an ISO 8601 date; use desktop_type for text.");
     }
+    if (request.op === "fill-password") {
+        const named = ["service", "server", "text"].filter((key) => key in request);
+        const strings = ["service", "server", "account"].every((key) => request[key] === undefined || (typeof request[key] === "string" && request[key].length >= 1 && request[key].length <= 1024));
+        if (named.length !== 1 || !strings || (request.text !== undefined && request.account !== undefined)) {
+            throw new Error("Name one Keychain item by service or server, with an optional account, or supply text; not more than one.");
+        }
+        // The secret is never quoted back, so its problems are described without it.
+        if (request.text !== undefined && (typeof request.text !== "string" || !request.text || request.text.length > 1024)) {
+            throw new Error("The password text must contain 1 to 1024 UTF-16 code units.");
+        }
+    }
     if (request.op === "type" && (typeof request.text !== "string" || request.text.length > 8192)) {
         throw new Error("Replacement text must contain at most 8192 UTF-16 code units.");
     }
@@ -1171,25 +1182,27 @@ async function act(native, request, signal) {
                     : request;
         const operation = request.op === "menu"
             ? "menu"
-            : request.op === "dialog-answer"
-                ? "dialog"
-                : request.op === "dock"
-                    ? "dock"
-                    : request.op === "clipboard-write"
-                        ? "clipboard"
-                        : request.op === "launch"
-                            ? "launch"
-                            : request.op === "open"
-                                ? "open"
-                                : request.op === "system-key"
-                                    ? "system-key"
-                                    : request.op === "switch-space"
-                                        ? "switch-space"
-                                        : request.op === "input-source"
-                                            ? "input-source"
-                                            : isDesktopManagement(request)
-                                                ? "management"
-                                                : "action";
+            : request.op === "fill-password"
+                ? "fill"
+                : request.op === "dialog-answer"
+                    ? "dialog"
+                    : request.op === "dock"
+                        ? "dock"
+                        : request.op === "clipboard-write"
+                            ? "clipboard"
+                            : request.op === "launch"
+                                ? "launch"
+                                : request.op === "open"
+                                    ? "open"
+                                    : request.op === "system-key"
+                                        ? "system-key"
+                                        : request.op === "switch-space"
+                                            ? "switch-space"
+                                            : request.op === "input-source"
+                                                ? "input-source"
+                                                : isDesktopManagement(request)
+                                                    ? "management"
+                                                    : "action";
         data = await native([operation], signal, {
             input: JSON.stringify(input),
             onDispatch() {
@@ -1507,6 +1520,7 @@ async function execute(native, request, abort) {
             "screen",
             "click",
             "type",
+            "fill-password",
             "key",
             "system-key",
             "spaces",
@@ -1607,8 +1621,10 @@ async function execute(native, request, abort) {
             act: (action, signal) => execute(native, action, signal),
         }, request, abort ?? new AbortController().signal);
     }
+    // A password fill may wait a minute for the user to answer a Keychain prompt or a confirmation.
+    const limit = request.op === "fill-password" ? 95 : 30;
     const deadline = new AbortController();
-    const timer = setTimeout(() => deadline.abort(new Error("Native desktop operation timed out after 30 seconds.")), 30_000);
+    const timer = setTimeout(() => deadline.abort(new Error(`Native desktop operation timed out after ${limit} seconds.`)), limit * 1000);
     const signal = abort ? AbortSignal.any([abort, deadline.signal]) : deadline.signal;
     try {
         if (request.op === "menubar-items") {

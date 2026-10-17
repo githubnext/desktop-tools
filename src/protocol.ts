@@ -171,6 +171,16 @@ export type DesktopRequest =
 		duration_ms?: number;
 	}
 	| { op: "type"; snapshot: string; element: string; text: string }
+	/** Fills the focused password field from a Keychain item named by service or server, or with text after approval. */
+	| {
+		op: "fill-password";
+		snapshot: string;
+		element: string;
+		service?: string;
+		server?: string;
+		account?: string;
+		text?: string;
+	}
 	| { op: "insert"; snapshot: string; text: string; route?: "paste" | "type"; expect?: DesktopExpect }
 	| {
 		op: "insert";
@@ -326,6 +336,7 @@ export type DesktopAction = Extract<
 		op:
 			| "click"
 			| "type"
+			| "fill-password"
 			| "key"
 			| "system-key"
 			| "switch-space"
@@ -372,7 +383,7 @@ export type DesktopResult = {
 };
 
 export function isDesktopAction(request: DesktopRequest): request is DesktopAction {
-	return request.op === "click" || request.op === "type" || request.op === "key"
+	return request.op === "click" || request.op === "type" || request.op === "fill-password" || request.op === "key"
 		|| request.op === "system-key" || request.op === "switch-space" || request.op === "input-source"
 		|| request.op === "insert" || request.op === "select" || request.op === "scroll"
 		|| request.op === "drag" || request.op === "hover" || request.op === "press"

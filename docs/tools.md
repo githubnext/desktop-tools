@@ -115,6 +115,7 @@ A status item is pressed through Accessibility in its owner process without movi
 | `desktop_hover` | Move the real pointer over an element or point, to show tooltips and hover states |
 | `desktop_press` | Press and hold an element or point for up to 10 seconds, then release in place |
 | `desktop_type` | Replace an editable field's whole value; a web text field is typed into with key events so the page sees the input |
+| `desktop_fill_password` | Fill the focused password field from a Keychain item, or with agent-supplied text the user approves; the password never appears in results |
 | `desktop_select` | Select literal text in a field or a web page, or put the caret before or after it |
 | `desktop_set_cell` | Write one cell of a table from `desktop_read`, by row and column, and confirm it by reading the table again |
 | `desktop_set_value` | Set a slider, stepper or level indicator to a number, a checkbox, switch or disclosure triangle on or off, or a date or time picker to an ISO 8601 date, and read it back |
@@ -178,7 +179,15 @@ With `ocr: true`, `desktop_inspect` (in either mode) and `desktop_screen` also r
 
 `desktop_type` sets a native field's value through Accessibility. Browsers accept that write for a field in a web page without firing the page's `input` and `change` events, so React and similar forms keep their old state. The host checks each text field's ancestry before writing, and a field inside a web area, or one whose ancestry it can't read, is never written that way. Instead, when that field is the snapshot's keyboard focus, `desktop_type` selects its text and types the replacement with key events sent to the app in the background, then reads the field back: the result is `completed` when the text matches and `unknown` otherwise. A web field without focus is refused before any input, with a hint to click it and inspect again; a click is a page action, so it is never done implicitly. Typed text is limited as for typed insertion, 1000 UTF-16 code units with no control characters.
 
-A secure text field, such as a password field, reports the role `AXTextField` with `attributes.subrole: "AXSecureTextField"`. Its value is never read: Accessibility gives only one mask character per typed character, and even that is left out of inspections, reads and waits. `desktop_type`, `desktop_set_value` and `desktop_select` refuse a secure field before any input.
+A secure text field, such as a password field, reports the role `AXTextField` with `attributes.subrole: "AXSecureTextField"`. Its value is never read: Accessibility gives only one mask character per typed character, and even that is left out of inspections, reads and waits. `desktop_type`, `desktop_set_value` and `desktop_select` refuse a secure field before any input, with `SECURE_FIELD_REQUIRES_FILL`. While a secure field has keyboard focus, `desktop_key` refuses keys that type characters and Command-V, and `desktop_insert` refuses every route, with the same code and nothing sent. Return, Tab, Escape, arrows, Delete and other shortcuts still work.
+
+`desktop_fill_password` is the only way to put characters into a secure field. Pass the snapshot and the field's element ID; the field must be the snapshot's keyboard focus, so click it and inspect again first if it isn't. Then name the password in one of two ways:
+- **A Keychain item (preferred).** `service` names a generic password and `server` an internet password, with `account` when more than one matches. Desktop Tools reads the item itself, so macOS asks the user before each read and the agent never sees the password. An internet password fills only a field in a web page whose URL host is its server.
+- **Text.** The user approves each fill in a Desktop Tools prompt naming the agent, the app and the site, unless they turned on Always Allow Agent-Supplied Passwords in the menu. While that prompt is open, agent input is refused with `SELF_TARGET_REFUSED`.
+
+The host replaces the field's contents with key events. The fill is completed when the field then shows only mask characters, exactly as many as the password has; otherwise it is `unknown`. Results and Recent Activity record that a fill happened and where, never the password or its length. A fill refused by the user, by the Keychain, or after a minute without an answer sends nothing. System password prompts, such as the administrator prompt (SecurityAgent), are refused. Touch ID isn't supported.
+
+Some ways to paste remain outside these checks: choosing Paste from a menu with `desktop_menu`, clicking Paste in a context menu, and dragging text onto the field.
 
 `desktop_insert` also pastes an image or files into a native text area, such as TextEdit's rich text, Mail or Notes, in place of text; see [the details](#details-by-tool) for how it confirms the paste and when it refuses.
 
