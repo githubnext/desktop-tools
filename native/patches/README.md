@@ -341,6 +341,14 @@ activation request, and suggests activating the app and retrying, or asking the 
 Activation is still requested once, and the 3-second budget is unchanged. Two tests cover the message and a
 process that doesn't exist.
 
+`peekaboo-preparation-message.patch` says what a failed background keyboard preparation did and didn't send.
+Preparation activates the target window and clicks its blank title bar before any key or paste. When it
+stops partway, for example because the window ID read keeps failing while the app is busy (#18), the
+outcome stays indeterminate, since the activation or click may have reached the app. The old message,
+"Background keyboard preparation did not finish", read as if text might have been typed. It now says that
+no keys or paste were sent. The caller sends keys only after preparation returns. The existing preparation
+test checks the new wording.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.
