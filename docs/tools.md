@@ -1,6 +1,6 @@
 # Tools
 
-The [MCP server](mcp.md) and `desktopTools()` expose 39 tools, one per protocol operation. Each tool's description and argument schema in `src/tools.ts` is the full contract; this page is the map.
+The [MCP server](mcp.md) and `desktopTools()` expose 41 tools, one per protocol operation. Each tool's description and argument schema in `src/tools.ts` is the full contract; this page is the map.
 
 Targets are exact: an app target binds a process generation, and a window target binds its window ID and bounds. Input acts on a single-use snapshot from the latest `desktop_inspect`. A stale or changed target is refused rather than redirected. Action results report `completed`, `refused`, or `unknown`, and nothing is retried automatically.
 
@@ -37,6 +37,19 @@ Captures go through ScreenCaptureKit, which every Peekaboo process for the user 
 Window operations other than focus use background Accessibility and don't activate the app. `desktop_unhide` activates the app, because macOS has no exact background unhide.
 
 `desktop_launch`, `desktop_open` and `desktop_menu` report `created_windows`: the app's windows that weren't there just before the request was sent, each with its target for `desktop_inspect`. They wait up to about one second for a menu command and two for a launch or open. `attribution` is `exclusive` when exactly one window appeared, `ambiguous` when several did, and `none` when none did in time. When two agents work in the same app at once, `exclusive` is very likely but not certain to be the agent's own window, since the other agent's window can appear in the same interval; `ambiguous` means nothing tells them apart.
+
+## Spaces
+
+| Tool | Does |
+| --- | --- |
+| `desktop_spaces` | List each display's Spaces left to right, with the current one, each Space's kind (desktop or full-screen app) and the windows assigned to it |
+| `desktop_switch_space` | Switch one display to a listed Space with Mission Control's keyboard shortcuts, and read the Spaces back |
+
+`desktop_spaces` reads WindowServer and sends no input. Its windows carry pid, window ID and app name but no title; `desktop_windows` rows have the same `space_ids`, plus titles and targets. A window assigned to all desktops is listed on each Space.
+
+`desktop_switch_space` is foreground input. It presses Move left a space or Move right a space (Control-Left and Control-Right by default) once per step, reading the Spaces back after each, and reports `completed` only when WindowServer shows the target Space as current. Otherwise the result is `unknown` and names the Space that is current now. macOS applies those shortcuts to the display that holds the pointer or the key window, so with separate Spaces per display the switch is refused before any key unless both are on the target Space's display. `focus` in `desktop_spaces` shows where they are; use `desktop_hover` to move the pointer and `desktop_focus` to bring a window there forward. It is also refused when either shortcut is turned off or rebound to something other than an arrow key with modifiers in Keyboard Shortcuts > Mission Control.
+
+Mission Control and App Exposé are `desktop_system_key` with `control` and `up` or `down`.
 
 ## Menu bar and Dock
 
@@ -92,6 +105,7 @@ An action refused because its window was minimized after inspection reports `WIN
 
 - **Insertion outside text fields.** `desktop_insert` needs an observed focused text control with a readable selection.
 - **Confirmed drops between windows.** A drag into another window or app, or any drag with modifier keys, is always reported as `unknown`, because nothing can confirm the drop. A path can't cross into another window: a drag between windows is one straight line.
+- **Moving a window to another Space.** Since macOS 14.5 only the Dock can move windows between Spaces, so there is no tool for it. To do it by hand, open Mission Control with `desktop_system_key` (`control`, `up`), inspect it, and drag the window onto the other Space with a foreground `desktop_drag`. The result is `unknown`; check with `desktop_spaces`.
 - **Automatic retries.** By design, nothing is retried. After a `refused` or `unknown` result, observe again before deciding whether to act.
 - **Remote Macs.** The tools act on the Mac running the host app, on macOS 15 or later.
 

@@ -46,6 +46,8 @@ private enum Client {
 			|| (operation == "menubar-click" && args.count == 3)
 			|| (operation == "dock" && args.count == 2)
 			|| (operation == "system-key" && args.count == 2)
+			|| (operation == "spaces" && args.count == 2)
+			|| (operation == "switch-space" && args.count == 2)
 		else { throw ClientError.usage }
 		let identity = try SigningIdentity.current()
 		let client = PeekabooBridgeClient(
@@ -85,6 +87,10 @@ private enum Client {
 			return try await nativeDock(client, handshake: handshake)
 		case "system-key":
 			return try await nativeSystemKey(client, handshake: handshake)
+		case "spaces":
+			return try nativeSpaces()
+		case "switch-space":
+			return try await nativeSwitchSpace(client, handshake: handshake)
 		case "management":
 			return try await nativeManagement(client, handshake: handshake)
 		case "launch":
@@ -367,6 +373,8 @@ struct Window: Encodable {
 	let is_on_screen: Bool
 	let is_minimized: Bool
 	let is_key: Bool?
+	/// WindowServer's Spaces for this window, as desktop_spaces lists them; empty when it reports none.
+	let space_ids: [UInt64]
 	let observation_capability: String?
 	let observation_reason: String?
 	let process_start_identity_decimal: String?
@@ -379,6 +387,7 @@ struct Window: Encodable {
 		is_on_screen = window.isOnScreen
 		is_minimized = window.isMinimized
 		is_key = window.isKeyWindow
+		space_ids = spaceIDs(window: window.windowID)
 		observation_capability = window.observationCapability?.mode.rawValue
 		observation_reason = window.observationCapability?.reason?.rawValue
 		process_start_identity_decimal = window.mutationIdentity.map { String($0.processIdentity.processStartIdentity) }

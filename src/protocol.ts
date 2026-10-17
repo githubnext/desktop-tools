@@ -52,6 +52,8 @@ export type DesktopRequest =
 	| { op: "menubar-items" }
 	| { op: "menubar-click"; target: DesktopStatusItemTarget }
 	| { op: "dock"; title?: string; menu_item?: string }
+	| { op: "spaces" }
+	| { op: "switch-space"; space_id: number }
 	| {
 		op: "inspect";
 		pid: number;
@@ -204,6 +206,7 @@ export type DesktopAction = Extract<
 			| "type"
 			| "key"
 			| "system-key"
+			| "switch-space"
 			| "insert"
 			| "select"
 			| "element-action"
@@ -244,7 +247,7 @@ export type DesktopResult = {
 
 export function isDesktopAction(request: DesktopRequest): request is DesktopAction {
 	return request.op === "click" || request.op === "type" || request.op === "key"
-		|| request.op === "system-key"
+		|| request.op === "system-key" || request.op === "switch-space"
 		|| request.op === "insert" || request.op === "select" || request.op === "scroll"
 		|| request.op === "drag" || request.op === "hover" || request.op === "press"
 		|| request.op === "clipboard-write" || request.op === "launch"

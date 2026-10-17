@@ -4,7 +4,7 @@ import Foundation
 import PeekabooAutomationKit
 import PeekabooBridge
 
-private struct Display: Encodable {
+struct Display: Encodable {
 	let index: Int
 	let display_id: UInt32
 	let name: String?
@@ -45,13 +45,13 @@ private struct ScreenReply: Encodable {
 	let data: Screen
 }
 
-private struct ScreenError: LocalizedError {
+struct ScreenError: LocalizedError {
 	let message: String
 	init(_ message: String) { self.message = message }
 	var errorDescription: String? { message }
 }
 
-private func activeDisplays() throws -> [Display] {
+func activeDisplays() throws -> [Display] {
 	var count: UInt32 = 0
 	guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else {
 		throw ScreenError("No active displays are available.")
