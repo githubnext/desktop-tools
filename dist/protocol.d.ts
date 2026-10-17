@@ -154,6 +154,8 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     to_snapshot?: string;
     button?: DesktopButton;
     duration_ms?: number;
+    modifiers?: DesktopModifier[];
+    path?: DesktopPoint[];
 } | {
     op: "hover";
     snapshot: string;

@@ -386,6 +386,16 @@ reads back the name; otherwise it is `dispatchedUnverified`. Details report the 
 permission set, semantic policy and result contract are listed in the upstream inventory tests, and new
 tests cover path resolution and request validation.
 
+`peekaboo-drag-path.patch` lets a drag follow a path. `ExactWindowDragRequest` and `DragOperationRequest`
+take up to 16 `waypoints`, visited in order between `from` and `to`. `DragPolyline` samples the path in
+straight segments with at least one sample per segment, shares the rest by segment length, and lands
+exactly on every waypoint, so a straight drag samples the same points as before. The exact-window drag
+keeps its sample count and dispatched unit count, and refuses waypoints outside its window or more
+segments than samples. The foreground drag follows the same samples instead of its movement profile
+when waypoints are given; its modifier keys were already supported. The bridge payload and the
+exact-window request decode a missing `waypoints` as empty. Tests in
+`ExactWindowHeldPointerLifecycleTests.swift` cover the samples, the refusals and decoding.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.
