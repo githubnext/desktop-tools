@@ -85,6 +85,8 @@ export type DesktopRequest =
 		to_snapshot?: string;
 		button?: DesktopButton;
 		duration_ms?: number;
+		modifiers?: DesktopModifier[];
+		path?: DesktopPoint[];
 	}
 	| { op: "hover"; snapshot: string; element?: string; point?: DesktopPoint }
 	| {

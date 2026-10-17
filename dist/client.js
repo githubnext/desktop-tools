@@ -440,7 +440,9 @@ function validateApplication(application) {
 function validateKey(request) {
     if (!isDesktopKey(request.key))
         throw new Error("Choose a named key or one printable character.");
-    const modifiers = request.modifiers;
+    validateModifiers(request.modifiers);
+}
+function validateModifiers(modifiers) {
     if (modifiers !== undefined && (!Array.isArray(modifiers) || modifiers.length > 4
         || new Set(modifiers).size !== modifiers.length
         || modifiers.some((modifier) => !DESKTOP_MODIFIERS.includes(modifier)))) {
@@ -560,10 +562,20 @@ function validateAction(request) {
                 || request.to_snapshot.length > 256 || request.to_snapshot === request.snapshot)) {
             throw new Error("Use another window's snapshot_id as to_snapshot, or omit it to drag within one window.");
         }
-        if (request.to_snapshot === undefined
+        if (request.path !== undefined) {
+            if (!Array.isArray(request.path) || request.path.length < 1 || request.path.length > 16) {
+                throw new Error("Give a drag path of 1 to 16 normalized screenshot points.");
+            }
+            if (request.to_snapshot !== undefined) {
+                throw new Error("A drag path stays in one window; omit path to drag into another window.");
+            }
+            request.path.forEach(validatePoint);
+        }
+        if (request.to_snapshot === undefined && request.path === undefined
             && request.from.x === request.to.x && request.from.y === request.to.y) {
             throw new Error("Choose distinct start and end points for a drag.");
         }
+        validateModifiers(request.modifiers);
         if (request.button !== undefined && !DESKTOP_BUTTONS.includes(request.button)) {
             throw new Error("Choose the left or right mouse button for a drag.");
         }
