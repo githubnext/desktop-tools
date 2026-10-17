@@ -77,6 +77,8 @@ When the host turns on the window highlight, the window an inspection or action 
 
 `desktop_system_key` is for shortcuts that belong to macOS rather than a window: Spotlight (Command-Space), the app switcher (Command-Tab), Mission Control (Control-Up), the screenshot tools (Command-Shift-4 and 5) and the next input source (Control-Space). It takes the same keys and modifiers as `desktop_key`, but no snapshot. The keys are posted as ordinary keyboard input, so they reach whatever is frontmost, and they often move focus, activate an app or open system UI. Nothing reads back what a shortcut did, so the result is `unknown` even after delivery; observe with `desktop_screen`, `desktop_apps` or `desktop_windows`. Any chord with Command and W, Q, H or M is refused before anything is sent, including Command-Shift-Q (log out).
 
+An action refused because its window was minimized after inspection reports `WINDOW_MINIMIZED`, with the low-level reason as its `cause`. Restore the window with `desktop_restore`, then inspect it again.
+
 ## Not supported
 
 - **Insertion outside text fields.** `desktop_insert` needs an observed focused text control with a readable selection.

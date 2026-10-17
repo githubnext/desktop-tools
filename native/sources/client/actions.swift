@@ -359,6 +359,7 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 			else {
 				throw ActionError("Literal insertion returned without its expected exact-window receipt. Inspect before retrying.")
 			}
+			await explainMinimized(client, &result, receipt: receipt)
 			return try JSONEncoder().encode(ActionReply(data: result, target_receipt: receipt))
 		}
 		let window = try UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
@@ -549,7 +550,28 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 		)
 		// Unknown completion leaves the host's pending lease in place, including client death or response loss.
 	}
+	await explainMinimized(client, &result, receipt: receipt)
 	return try JSONEncoder().encode(ActionReply(data: result, target_receipt: receipt))
+}
+
+/// Replaces a refusal's low-level cause when the target window turns out to be minimized.
+///
+/// A minimized window can't take input, and Accessibility reads of it fail with raw errors; the check
+/// runs only after a refusal, so actions that succeed pay nothing for it.
+private func explainMinimized(_ client: PeekabooBridgeClient, _ result: inout ActionResult, receipt: Receipt?) async {
+	guard result.outcome == "refused", let receipt, let windowID = receipt.window_id,
+		let inventory = try? await client.listWindowMutationInventory(target: .application("PID:\(receipt.pid)")),
+		let window = inventory.items.first(where: { $0.windowID == windowID }),
+		window.mutationIdentity.map({ String($0.ownerProcessStartIdentity) }) == receipt.process_start_identity_decimal,
+		window.isMinimized
+	else { return }
+	result.error = ActionMessage(
+		code: "WINDOW_MINIMIZED",
+		message: "The target window is minimized, so nothing was sent to it.",
+		hint: "Restore it with desktop_restore, using its target from desktop_windows, then inspect it again before acting.",
+		cause: result.error?.message
+	)
+	result.requires_fresh_observation = true
 }
 
 /// Drags from one window into another, in the same app or another one.
