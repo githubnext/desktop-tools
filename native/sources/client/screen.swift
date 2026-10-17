@@ -33,6 +33,7 @@ private struct Screen: Encodable {
 	let window_order = "front_to_back"
 	let windows_note = "Windows on the normal, floating and panel levels that intersect this display when the screenshot was taken, front to back. Bounds are global desktop points. Pass pid and window_id to desktop_inspect to act on one; target is the desktop_windows target object when native inventory matched it."
 	let warnings: [String]
+	let recognized_text: RecognizedText?
 	let coordinate_context: CaptureCoordinateContext
 	let capture_warning: String?
 	let diagnostics: DesktopObservationDiagnostics
@@ -109,7 +110,7 @@ private func visibleWindows(on display: Display) -> [(pid: Int32, id: Int, app: 
 }
 
 /// Captures one whole display without element detection or an input snapshot.
-func nativeScreen(_ client: PeekabooBridgeClient, path: String, index requested: Int?) async throws -> Data {
+func nativeScreen(_ client: PeekabooBridgeClient, path: String, index requested: Int?, ocr: Bool) async throws -> Data {
 	let displays = try activeDisplays()
 	let wanted = requested ?? 0
 	guard displays.indices.contains(wanted) else {
@@ -145,6 +146,15 @@ func nativeScreen(_ client: PeekabooBridgeClient, path: String, index requested:
 		throw ScreenError("The native observation returned an empty or oversized screenshot.")
 	}
 	try image.write(to: URL(fileURLWithPath: path), options: [.atomic])
+	var recognized: RecognizedText?
+	if ocr {
+		let area = CGRect(
+			x: display.bounds.x, y: display.bounds.y, width: display.bounds.width, height: display.bounds.height
+		)
+		recognized = await recognizeText(at: path, display: area, seconds: recognitionSeconds())
+		recognized?.note =
+			"Recognized from pixels, not read from any app: text can be misread, merged or missed, and is not ground truth. box is a fraction of the screenshot from its top-left corner; bounds are global desktop points. This capture has no snapshot, so no input can target these; pass the window under the text to desktop_inspect."
+	}
 
 	let found = visibleWindows(on: display)
 	var warnings: [String] = []
@@ -187,6 +197,7 @@ func nativeScreen(_ client: PeekabooBridgeClient, path: String, index requested:
 		displays: displays,
 		windows: windows,
 		warnings: warnings,
+		recognized_text: recognized,
 		coordinate_context: CaptureCoordinateContext(metadata: result.capture.metadata),
 		capture_warning: result.capture.warning,
 		diagnostics: result.diagnostics,

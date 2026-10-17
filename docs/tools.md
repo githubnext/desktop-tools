@@ -1,6 +1,6 @@
 # Tools
 
-The [MCP server](mcp.md) and `desktopTools()` expose 35 tools, one per protocol operation. Each tool's description and argument schema in `src/tools.ts` is the full contract; this page is the map.
+The [MCP server](mcp.md) and `desktopTools()` expose 39 tools, one per protocol operation. Each tool's description and argument schema in `src/tools.ts` is the full contract; this page is the map.
 
 Targets are exact: an app target binds a process generation, and a window target binds its window ID and bounds. Input acts on a single-use snapshot from the latest `desktop_inspect`. A stale or changed target is refused rather than redirected. Action results report `completed`, `refused`, or `unknown`, and nothing is retried automatically.
 
@@ -10,8 +10,9 @@ Targets are exact: an app target binds a process generation, and a window target
 | --- | --- |
 | `desktop_apps` | List running apps, optionally filtered by name or bundle ID |
 | `desktop_windows` | List one app's windows |
-| `desktop_inspect` | Read one window's Accessibility elements and a screenshot, or only pixels when Accessibility is unavailable; returns the snapshot that input uses |
-| `desktop_screen` | Capture one whole display and list the displays and the windows on it, front to back; observation only, with no input snapshot |
+| `desktop_inspect` | Read one window's Accessibility elements and a screenshot, or only pixels when Accessibility is unavailable; returns the snapshot that input uses. `scope` lists one element's subtree from a much larger read, and `ocr` adds recognized text |
+| `desktop_read` | Read the text of one window, or of one inspected element's subtree, through Accessibility, up to 96 KB including content scrolled out of view; read only, with no snapshot |
+| `desktop_screen` | Capture one whole display and list the displays and the windows on it, front to back; observation only, with no input snapshot. `ocr` adds recognized text |
 | `desktop_menus` | Read an app's menu bar structure without opening it |
 | `desktop_dialog` | Read the open dialog or sheet in an app or window: its buttons, text fields and labels |
 | `desktop_clipboard_read` | Read the clipboard as text, an image, or file references |
@@ -72,6 +73,10 @@ When the host turns on the window highlight, the window an inspection or action 
 `desktop_key` goes to the control the snapshot reports as focused. When there is none, as in Finder lists, outlines, tables, canvases and many web areas, it goes to whatever has keyboard focus in that window; the result's `receiver` is `observed_control` or `window_focus`. Either way the key is sent in the background, and is refused unless the app's focused element is still inside the window, and the window is still the app's key window, before each event.
 
 `desktop_key` takes a character key as the character it types, and finds that key on the current keyboard layout, so `,` is the comma key on any layout. A character that needs Shift or Option, such as `?` or `A`, is refused with the key and modifier to send instead (`/` with `shift` on a US layout); the key press never holds a modifier that wasn't asked for. The named keys are `enter`, `tab`, `escape`, `space`, `backspace`, `delete` (forward delete), `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `help` (Insert on PC keyboards), `f1` to `f20`, and the keypad keys `keypad0` to `keypad9`, `keypaddecimal`, `keypadplus`, `keypadminus`, `keypadmultiply`, `keypaddivide`, `keypadequals`, `keypadenter` and `keypadclear`. Dead keys, such as `´` on some layouts, can't be pressed alone; use `desktop_insert` for text. Command-W, Command-Q, Command-H and Command-M are refused before anything is sent; `desktop_close`, `desktop_quit`, `desktop_hide` and `desktop_minimize` do the same and report the result.
+
+`desktop_inspect` reads at most 200 elements of a window, so a long web page, mail list or Finder folder is cut short and reports `truncated`. Two tools reach further without input. `desktop_read` reads the window's text with a budget of 4,000 elements, 64 levels deep and 1,000 children per element, within about 18 seconds; it returns the text in tree order, one line per visual line, and names each limit that cut it short. Pass `scope`, a `snapshot_id` and an element ID from an earlier inspection of the same window, to read only that element, such as the page's web area. `desktop_inspect` takes the same `scope`: it reads the window with that larger budget and lists only the scope element and its descendants, each with `attributes.depth`. The scope element is found again by its role, depth, bounds, label, title and identifier, so it must not have moved; listed IDs belong to the new snapshot, like any inspection.
+
+With `ocr: true`, `desktop_inspect` (in either mode) and `desktop_screen` also run Apple Vision text recognition, at its accurate level and on this Mac, on the screenshot they captured. `recognized_text` lists up to 300 lines in reading order, top to bottom and left to right, with confidence and a box as fractions of the screenshot from its top-left corner; `desktop_screen` adds bounds in global desktop points. A box's center is a pointer point for that inspection's snapshot. Recognition is limited to 8 seconds; the first one after a restart can take longer while Vision loads its model. Recognized text comes from pixels, so it can misread or miss text, and is labeled as such.
 
 `desktop_inspect` lists the actions each element offers in `attributes.actions`. A pop-up button has no settable value: click it, then pick the item from the next observation, which puts an open menu's items first.
 

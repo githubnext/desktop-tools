@@ -1,0 +1,12 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
+@@ -618,6 +618,8 @@
+         if let source = request.source {
+             attributes["source"] = source
+         }
++        // Pre-order IDs plus depth let a reader recover each element's subtree from the flat result.
++        attributes["depth"] = String(request.depth)
+ 
+         state.elements.append(DetectedElement(
+             id: elementID,

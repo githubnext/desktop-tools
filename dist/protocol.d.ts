@@ -70,6 +70,11 @@ export type DesktopOpen = {
     };
     application?: DesktopApplication;
 };
+/** One element ID from an earlier accessibility snapshot of the same window. */
+export type DesktopScope = {
+    snapshot: string;
+    element: string;
+};
 export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | DesktopDialogAnswer | {
     op: "dialog";
     target: DesktopAppTarget | DesktopWindowTarget;
@@ -115,9 +120,17 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     pid: number;
     window: number;
     mode?: "accessibility" | "pixels";
+    ocr?: boolean;
+    scope?: DesktopScope;
+} | {
+    op: "read";
+    pid: number;
+    window: number;
+    scope?: DesktopScope;
 } | {
     op: "screen";
     display?: number;
+    ocr?: boolean;
 } | {
     op: "click";
     snapshot: string;
