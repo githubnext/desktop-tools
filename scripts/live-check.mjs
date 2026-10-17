@@ -124,7 +124,8 @@ class Mcp {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const action = (result) => result.data.action ?? result.data;
 const brief = (value, max = 240) => {
-	const text = typeof value === "string" ? value : JSON.stringify(value);
+	// JSON.stringify(undefined) is undefined, not a string.
+	const text = typeof value === "string" ? value : String(JSON.stringify(value));
 	return text.length > max ? `${text.slice(0, max)}…` : text;
 };
 
@@ -485,12 +486,15 @@ const find = (els, role, pattern) =>
 	// role is inspect's normalized role, such as textField; the Accessibility role is attributes.role.
 	els.find((e) => (e.attributes?.role ?? e.role) === role && (!pattern || pattern.test(label(e)) || pattern.test(e.value ?? "")));
 const findOrSkip = (els, role, pattern, what) => find(els, role, pattern) ?? skip(`no ${what} (${role}) found in the inspection`);
-const tableOf = (result) => dig(result.data, "rows") ? result.data.table ?? result.data : null;
+// A table read gives columns and rows at the top level; its table field only names the table.
+const tableOf = (result) => Array.isArray(result.data.rows) ? result.data : null;
 
 async function finderTable(s) {
 	const win = await s.finder();
 	const { snap, els } = await s.inspect(win);
-	const outline = find(els, "AXOutline") ?? find(els, "AXTable") ?? skip("Finder window has no list outline; list view did not apply");
+	// The sidebar is an outline too, listed first.
+	const lists = els.filter((e) => ["AXOutline", "AXTable"].includes(e.attributes?.role) && !/sidebar/i.test(label(e)));
+	const outline = lists[0] ?? skip("Finder window has no list outline; list view did not apply");
 	const read = await s.read(win, { scope: { snapshot: snap, element: outline.id }, table: true });
 	return { win, snap, outline, read, table: tableOf(read) };
 }
@@ -765,7 +769,7 @@ check(89, "expect: Command-Space with window_appears for Spotlight completes (fo
 });
 
 // 0.9.0
-check(92, "desktop_set_cell renames a fixture file through Finder's Name column", async (s, m) => {
+check(92, "desktop_set_cell refuses Finder's Name column before input, since Finder wouldn't rename the file", async (s, m) => {
 	const { win, snap, outline, table } = await finderTable(s);
 	const row = (table?.rows ?? []).find((r) => r.cells?.[0] === "item-08.txt" && r.element) ?? skip("item-08.txt row has no ID");
 	const name = `renamed-${run}.txt`;
@@ -773,13 +777,12 @@ check(92, "desktop_set_cell renames a fixture file through Finder's Name column"
 		pid: win.pid, window: win.window, snapshot: snap, table: outline.id, row: row.element, column: "Name", value: name,
 	});
 	await sleep(500);
-	const renamed = existsSync(join(s.fixtures.folder, name));
-	const readback = dig(result.data, "readback");
+	const kept = existsSync(join(s.fixtures.folder, "item-08.txt")) && !existsSync(join(s.fixtures.folder, name));
 	return expect(
-		renamed && (result.outcome === "completed" || readback === "row_changed"),
-		`${evidence(result, "readback")}; file on disk ${renamed ? "renamed" : "unchanged"}`,
+		result.outcome === "refused" && /CELL_NOT_EDITABLE/.test(result.text) && kept,
+		`${evidence(result)}; file on disk ${kept ? "unchanged" : "changed"}`,
 	);
-});
+}, "Finder shows a name written through Accessibility but never renames the file, so the write is refused.");
 
 check(92, "desktop_set_cell writes a focused web grid input and refuses an unfocused one", async (s, m) => {
 	const win = await s.web();
@@ -1003,7 +1006,7 @@ check(77, "desktop_key repeat 5 of down moves the Finder selection five rows", a
 check(77, "desktop_key sequence sends every key: right, right, Command-A", async (s, m) => {
 	const win = await s.textedit("plain");
 	const { snap } = await s.inspect(win);
-	const result = await m.call("desktop_key", { snapshot: snap, keys: ["right", "right", { key: "a", modifiers: ["command"] }] });
+	const result = await m.call("desktop_key", { snapshot: snap, keys: [{ key: "right" }, { key: "right" }, { key: "a", modifiers: ["command"] }] });
 	const act = action(result);
 	return expect(
 		result.outcome === "completed" && dig(act, "keys_sent") === 3 && dig(act, "keys_requested") === 3,
@@ -1016,7 +1019,7 @@ check(77, "a key sequence stops with KEY_SEQUENCE_STOPPED when a key opens anoth
 	const beforeIds = new Set((await s.windows(win.pid)).map((w) => w.window_id));
 	const { snap } = await s.inspect(win);
 	try {
-		const result = await m.call("desktop_key", { snapshot: snap, keys: [{ key: "n", modifiers: ["command"] }, "x", "y"] });
+		const result = await m.call("desktop_key", { snapshot: snap, keys: [{ key: "n", modifiers: ["command"] }, { key: "x" }, { key: "y" }] });
 		await sleep(500);
 		const act = action(result);
 		return expect(

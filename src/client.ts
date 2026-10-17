@@ -250,14 +250,40 @@ const caller = (config: DesktopConfig): Native => async (args, signal, options =
 	};
 };
 
-function bounded(data: Record<string, unknown>, field: string, limit = MAX_TEXT): string {
+/**
+ * Containers an agent can pass as `scope` to list what a long result left out. A Finder window's long sidebar can
+ * fill the result before its file list, so trimming keeps these and drops other elements first.
+ */
+const SCOPE_ROLES = new Set([
+	"AXWindow", "AXSheet", "AXDrawer", "AXSplitGroup", "AXScrollArea", "AXOutline", "AXTable", "AXList", "AXBrowser",
+	"AXTabGroup", "AXWebArea",
+]);
+
+function scopeContainer(element: unknown): boolean {
+	const role = (element as { attributes?: { role?: unknown } } | null)?.attributes?.role;
+	return typeof role === "string" && SCOPE_ROLES.has(role);
+}
+
+/** An inspection's JSON within `limit`, keeping the containers an agent can scope into over other elements. */
+export function boundedElements(data: Record<string, unknown>, limit = MAX_TEXT): string {
+	return bounded(data, "ui_elements", limit, scopeContainer);
+}
+
+/** Fits `field` within `limit` by dropping its last values, those `keep` accepts only after all others. */
+function bounded(
+	data: Record<string, unknown>,
+	field: string,
+	limit = MAX_TEXT,
+	keep?: (value: unknown) => boolean,
+): string {
 	const source = data[field];
 	if (!Array.isArray(source)) throw new Error(`Native inspection returned no ${field} array.`);
 	const values = [...source];
 	const value = { ...data, [field]: values };
 	let text = JSON.stringify(value);
 	while (Buffer.byteLength(text) > limit && values.length) {
-		values.pop();
+		const index = keep ? values.findLastIndex((v) => !keep(v)) : -1;
+		values.splice(index >= 0 ? index : values.length - 1, 1);
 		text = JSON.stringify({
 			...value,
 			truncated: true,
@@ -465,7 +491,7 @@ async function inspect(
 			: undefined;
 		const { image, width, height } = await screenshot(path, join(directory, "image.jpg"), signal);
 		const { screenshot_raw: _raw, screenshot_annotated: _annotated, ...observation } = data;
-		const text = bounded({
+		const text = boundedElements({
 			...observation,
 			...(saved ? { saved } : {}),
 			image: {
@@ -474,7 +500,7 @@ async function inspect(
 				note:
 					"Screenshot, scaled down when large but never up; Accessibility bounds remain in their original coordinate system. Pointer points use fractions of this image: x from the left edge and y from the top, each >= 0 and < 1.",
 			},
-		}, "ui_elements", limit);
+		}, limit);
 		return { text, image };
 	} catch (error) {
 		if (!(error instanceof NativeError)) throw error;
@@ -1483,7 +1509,7 @@ async function act(
 			throw new Error("The target application changed after the action.");
 		}
 		return {
-			text: bounded({ ...fresh, action: data }, "ui_elements"),
+			text: boundedElements({ ...fresh, action: data }),
 			image: observation.image,
 			outcome,
 			isError: false,
@@ -1666,7 +1692,7 @@ async function observeManagement(
 			throw new Error("The application changed process generation before the later inspection.");
 		}
 		return {
-			text: bounded({ ...data, ...fresh }, "ui_elements"),
+			text: boundedElements({ ...data, ...fresh }),
 			image: observation.image,
 			outcome: "completed",
 			isError: false,

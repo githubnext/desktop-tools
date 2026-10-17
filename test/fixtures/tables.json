@@ -892,5 +892,590 @@
 			},
 			"value": "Prices exclude tax."
 		}
+	],
+	"finderRoleLabels": [
+		{
+			"role_description": "outline",
+			"depth": 4,
+			"label": "list view",
+			"role": "AXOutline",
+			"id": "elem_103",
+			"bounds": {
+				"width": 682,
+				"y": 154,
+				"x": 641,
+				"height": 358
+			},
+			"description": "list view"
+		},
+		{
+			"role_description": "outline row",
+			"depth": 5,
+			"label": "outline row",
+			"role": "AXRow",
+			"disclosing": false,
+			"id": "elem_104",
+			"disclosure_level": 0,
+			"bounds": {
+				"width": 680,
+				"y": 160,
+				"x": 642,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "cell",
+			"depth": 6,
+			"label": "cell",
+			"role": "AXCell",
+			"id": "elem_105",
+			"bounds": {
+				"width": 245,
+				"y": 160,
+				"x": 668,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "image",
+			"id": "elem_106",
+			"label": "image",
+			"depth": 7,
+			"role": "AXImage",
+			"bounds": {
+				"width": 16,
+				"y": 162,
+				"x": 668,
+				"height": 16
+			}
+		},
+		{
+			"role_description": "text field",
+			"value": "item-01.txt",
+			"depth": 7,
+			"label": "item-01.txt",
+			"role": "AXTextField",
+			"id": "elem_107",
+			"bounds": {
+				"width": 72,
+				"y": 161,
+				"x": 688,
+				"height": 18
+			},
+			"selected": false
+		},
+		{
+			"role_description": "cell",
+			"depth": 6,
+			"label": "cell",
+			"role": "AXCell",
+			"id": "elem_108",
+			"bounds": {
+				"width": 181,
+				"y": 160,
+				"x": 913,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "text",
+			"value": "Today at 10:19 AM",
+			"depth": 7,
+			"label": "Today at 10:19 AM",
+			"role": "AXStaticText",
+			"id": "elem_109",
+			"bounds": {
+				"width": 169,
+				"y": 161,
+				"x": 919,
+				"height": 18
+			}
+		},
+		{
+			"role_description": "cell",
+			"depth": 6,
+			"label": "cell",
+			"role": "AXCell",
+			"id": "elem_110",
+			"bounds": {
+				"width": 97,
+				"y": 160,
+				"x": 1094,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "text",
+			"value": "7 bytes",
+			"depth": 7,
+			"label": "7 bytes",
+			"role": "AXStaticText",
+			"id": "elem_111",
+			"bounds": {
+				"width": 47,
+				"y": 161,
+				"x": 1138,
+				"height": 18
+			}
+		},
+		{
+			"role_description": "cell",
+			"depth": 6,
+			"label": "cell",
+			"role": "AXCell",
+			"id": "elem_112",
+			"bounds": {
+				"width": 115,
+				"y": 160,
+				"x": 1191,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "text",
+			"value": "Plain Text",
+			"depth": 7,
+			"label": "Plain Text",
+			"role": "AXStaticText",
+			"id": "elem_113",
+			"bounds": {
+				"width": 103,
+				"y": 161,
+				"x": 1197,
+				"height": 18
+			}
+		},
+		{
+			"role_description": "outline row",
+			"depth": 5,
+			"label": "outline row",
+			"role": "AXRow",
+			"disclosing": false,
+			"id": "elem_114",
+			"disclosure_level": 0,
+			"bounds": {
+				"width": 680,
+				"y": 180,
+				"x": 642,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "cell",
+			"depth": 6,
+			"label": "cell",
+			"role": "AXCell",
+			"id": "elem_115",
+			"bounds": {
+				"width": 245,
+				"y": 180,
+				"x": 668,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "image",
+			"id": "elem_116",
+			"label": "image",
+			"depth": 7,
+			"role": "AXImage",
+			"bounds": {
+				"width": 16,
+				"y": 182,
+				"x": 668,
+				"height": 16
+			}
+		},
+		{
+			"role_description": "text field",
+			"value": "item-02.txt",
+			"depth": 7,
+			"label": "item-02.txt",
+			"role": "AXTextField",
+			"id": "elem_117",
+			"bounds": {
+				"width": 74,
+				"y": 181,
+				"x": 688,
+				"height": 18
+			},
+			"selected": false
+		},
+		{
+			"role_description": "cell",
+			"depth": 6,
+			"label": "cell",
+			"role": "AXCell",
+			"id": "elem_118",
+			"bounds": {
+				"width": 181,
+				"y": 180,
+				"x": 913,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "text",
+			"value": "Today at 10:19 AM",
+			"depth": 7,
+			"label": "Today at 10:19 AM",
+			"role": "AXStaticText",
+			"id": "elem_119",
+			"bounds": {
+				"width": 169,
+				"y": 181,
+				"x": 919,
+				"height": 18
+			}
+		},
+		{
+			"role_description": "cell",
+			"depth": 6,
+			"label": "cell",
+			"role": "AXCell",
+			"id": "elem_120",
+			"bounds": {
+				"width": 97,
+				"y": 180,
+				"x": 1094,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "text",
+			"value": "7 bytes",
+			"depth": 7,
+			"label": "7 bytes",
+			"role": "AXStaticText",
+			"id": "elem_121",
+			"bounds": {
+				"width": 47,
+				"y": 181,
+				"x": 1138,
+				"height": 18
+			}
+		},
+		{
+			"role_description": "cell",
+			"depth": 6,
+			"label": "cell",
+			"role": "AXCell",
+			"id": "elem_122",
+			"bounds": {
+				"width": 115,
+				"y": 180,
+				"x": 1191,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "text",
+			"value": "Plain Text",
+			"depth": 7,
+			"label": "Plain Text",
+			"role": "AXStaticText",
+			"id": "elem_123",
+			"bounds": {
+				"width": 103,
+				"y": 181,
+				"x": 1197,
+				"height": 18
+			}
+		},
+		{
+			"role_description": "outline row",
+			"depth": 5,
+			"label": "outline row",
+			"role": "AXRow",
+			"disclosing": false,
+			"id": "elem_184",
+			"disclosure_level": 0,
+			"bounds": {
+				"width": 680,
+				"y": 320,
+				"x": 642,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "cell",
+			"depth": 6,
+			"label": "cell",
+			"role": "AXCell",
+			"id": "elem_185",
+			"bounds": {
+				"width": 259,
+				"y": 320,
+				"x": 668,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "image",
+			"id": "elem_186",
+			"label": "image",
+			"depth": 7,
+			"role": "AXImage",
+			"bounds": {
+				"width": 16,
+				"y": 322,
+				"x": 668,
+				"height": 16
+			}
+		},
+		{
+			"role_description": "text field",
+			"value": "sub-folder",
+			"depth": 7,
+			"label": "sub-folder",
+			"role": "AXTextField",
+			"id": "elem_187",
+			"bounds": {
+				"width": 70,
+				"y": 321,
+				"x": 688,
+				"height": 18
+			},
+			"selected": false
+		},
+		{
+			"role_description": "disclosure triangle",
+			"value": "0",
+			"depth": 7,
+			"label": "0",
+			"role": "AXDisclosureTriangle",
+			"id": "elem_188",
+			"bounds": {
+				"width": 15,
+				"y": 319,
+				"x": 653,
+				"height": 22
+			}
+		},
+		{
+			"role_description": "cell",
+			"depth": 6,
+			"label": "cell",
+			"role": "AXCell",
+			"id": "elem_189",
+			"bounds": {
+				"width": 181,
+				"y": 320,
+				"x": 913,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "text",
+			"value": "Today at 10:19 AM",
+			"depth": 7,
+			"label": "Today at 10:19 AM",
+			"role": "AXStaticText",
+			"id": "elem_190",
+			"bounds": {
+				"width": 169,
+				"y": 321,
+				"x": 919,
+				"height": 18
+			}
+		},
+		{
+			"role_description": "cell",
+			"depth": 6,
+			"label": "cell",
+			"role": "AXCell",
+			"id": "elem_191",
+			"bounds": {
+				"width": 97,
+				"y": 320,
+				"x": 1094,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "text",
+			"value": "--",
+			"depth": 7,
+			"label": "--",
+			"role": "AXStaticText",
+			"id": "elem_192",
+			"bounds": {
+				"width": 15,
+				"y": 321,
+				"x": 1171,
+				"height": 18
+			}
+		},
+		{
+			"role_description": "cell",
+			"depth": 6,
+			"label": "cell",
+			"role": "AXCell",
+			"id": "elem_193",
+			"bounds": {
+				"width": 115,
+				"y": 320,
+				"x": 1191,
+				"height": 20
+			},
+			"selected": false
+		},
+		{
+			"role_description": "text",
+			"value": "Folder",
+			"depth": 7,
+			"label": "Folder",
+			"role": "AXStaticText",
+			"id": "elem_194",
+			"bounds": {
+				"width": 41,
+				"y": 321,
+				"x": 1197,
+				"height": 18
+			}
+		},
+		{
+			"role_description": "column",
+			"depth": 5,
+			"label": "column",
+			"role": "AXColumn",
+			"id": "elem_195",
+			"bounds": {
+				"width": 261,
+				"y": 155,
+				"x": 652,
+				"height": 356
+			},
+			"selected": false
+		},
+		{
+			"role_description": "column",
+			"depth": 5,
+			"label": "column",
+			"role": "AXColumn",
+			"id": "elem_196",
+			"bounds": {
+				"width": 181,
+				"y": 155,
+				"x": 913,
+				"height": 356
+			},
+			"selected": false
+		},
+		{
+			"role_description": "column",
+			"depth": 5,
+			"label": "column",
+			"role": "AXColumn",
+			"id": "elem_197",
+			"bounds": {
+				"width": 97,
+				"y": 155,
+				"x": 1094,
+				"height": 356
+			},
+			"selected": false
+		},
+		{
+			"role_description": "column",
+			"depth": 5,
+			"label": "column",
+			"role": "AXColumn",
+			"id": "elem_198",
+			"bounds": {
+				"width": 121,
+				"y": 155,
+				"x": 1191,
+				"height": 356
+			},
+			"selected": false
+		},
+		{
+			"role_description": "group",
+			"id": "elem_199",
+			"label": "group",
+			"depth": 5,
+			"role": "AXGroup",
+			"bounds": {
+				"width": 680,
+				"y": 127,
+				"x": 642,
+				"height": 28
+			}
+		},
+		{
+			"selected": false,
+			"role_description": "button",
+			"value": "AXAscendingSortDirection",
+			"depth": 6,
+			"label": "Name",
+			"role": "AXButton",
+			"bounds": {
+				"width": 261,
+				"y": 127,
+				"x": 652,
+				"height": 28
+			},
+			"description": "Name"
+		},
+		{
+			"selected": false,
+			"role_description": "button",
+			"value": "",
+			"depth": 6,
+			"label": "Date Modified",
+			"role": "AXButton",
+			"bounds": {
+				"width": 181,
+				"y": 127,
+				"x": 913,
+				"height": 28
+			},
+			"description": "Date Modified"
+		},
+		{
+			"selected": false,
+			"role_description": "button",
+			"value": "",
+			"depth": 6,
+			"label": "Size",
+			"role": "AXButton",
+			"bounds": {
+				"width": 97,
+				"y": 127,
+				"x": 1094,
+				"height": 28
+			},
+			"description": "Size"
+		},
+		{
+			"selected": false,
+			"role_description": "button",
+			"value": "",
+			"depth": 6,
+			"label": "Kind",
+			"role": "AXButton",
+			"bounds": {
+				"width": 121,
+				"y": 127,
+				"x": 1191,
+				"height": 28
+			},
+			"description": "Kind"
+		}
 	]
 }

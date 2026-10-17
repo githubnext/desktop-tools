@@ -24,5 +24,7 @@ export declare function hostRefusal<T extends {
     message: string;
     hint?: unknown;
 }>(error: T): T;
+/** An inspection's JSON within `limit`, keeping the containers an agent can scope into over other elements. */
+export declare function boundedElements(data: Record<string, unknown>, limit?: number): string;
 /** Creates a client bound to one host socket and signed client; calls are independent processes. */
 export declare function createDesktop(config: DesktopConfig): DesktopClient;

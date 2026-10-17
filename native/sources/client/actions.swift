@@ -382,9 +382,11 @@ func serviceKey(_ key: String) -> String? {
 struct ActionError: LocalizedError {
 	let message: String
 	var hint: String?
-	init(_ message: String, hint: String? = nil) {
+	var code: String?
+	init(_ message: String, hint: String? = nil, code: String? = nil) {
 		self.message = message
 		self.hint = hint
+		self.code = code
 	}
 	var errorDescription: String? { message }
 }
@@ -484,6 +486,9 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 				throw ActionError("The observed element is disabled.")
 			}
 			try checkElementRequest(request, observed)
+			if [.type, .setValue].contains(request.op), isFinderFileName(observed, detection: detection, context: context) {
+				throw ActionError(FinderNameRefusal.message, hint: FinderNameRefusal.hint, code: "CELL_NOT_EDITABLE")
+			}
 		}
 		if request.op == .insert, request.format != nil {
 			guard context.focusedElement != nil else {
@@ -712,10 +717,14 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 					}
 					last = sent
 					result.keys_sent! += 1
-				} catch let failure as DesktopActionFailure where !failure.outcome.dispatchState.mutationDispatched && index > 0 {
+				} catch let failure as DesktopActionFailure where index > 0 {
+					// A key that opens another window moves focus out of this one, so the next key's focus check
+					// fails at dispatch; the host can't say whether that key was posted, so neither can this.
+					let mayHaveSent = failure.outcome.dispatchState.mutationDispatched
 					result.error = ActionMessage(
-						code: failure.standardErrorCode?.rawValue ?? "DESKTOP_ACTION_FAILED",
-						message: "Stopped after \(index) of \(chords.count) keys: \(failure.message)",
+						code: "KEY_SEQUENCE_STOPPED",
+						message: "Stopped after \(index) of \(chords.count) keys"
+							+ (mayHaveSent ? ", and key \(index + 1) may have been sent" : "") + ": \(failure.message)",
 						hint: "Inspect the window to see what the keys sent so far did before sending the rest.",
 						cause: failure.causeDescription
 					)
@@ -856,7 +865,7 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 		if invoked { result.requires_fresh_observation = true }
 		let envelope = error as? PeekabooBridgeErrorEnvelope
 		result.error = ActionMessage(
-			code: envelope?.code.rawValue ?? "DESKTOP_ACTION_FAILED",
+			code: envelope?.code.rawValue ?? (error as? ActionError)?.code ?? "DESKTOP_ACTION_FAILED",
 			message: error.localizedDescription,
 			hint: invoked
 				? "Inspect the target before retrying; the action may already have happened."
@@ -1096,6 +1105,23 @@ private func exposes(_ point: CGPoint, in window: UIAutomationTarget.ExactWindow
 }
 
 /// Element actions and values act only on what the snapshot observed the element to support.
+/// Finder shows a name written through Accessibility in a file's name field but never renames the file.
+enum FinderNameRefusal {
+	static let message = "Finder shows a name written this way in a file's name field but doesn't rename the file, so nothing was sent."
+	static let hint = "Rename the file with a shell command such as mv, which can be checked. In Finder itself the rename is foreground input: desktop_focus the Finder window, select the row, press Return with desktop_key, type the name with desktop_insert, press Return, then check the file on disk."
+}
+
+/// A text field inside a Finder window's file list, in any view: its name field for one file.
+private func isFinderFileName(_ observed: DetectedElement, detection: ElementDetectionResult, context: WindowContext) -> Bool {
+	guard context.applicationBundleId == "com.apple.finder", observed.attributes["role"] == "AXTextField" else { return false }
+	// Observations keep no parents, so the field must lie within an element that lists files.
+	let lists: Set<String> = ["AXRow", "AXOutline", "AXTable", "AXList", "AXBrowser"]
+	return detection.elements.all.contains { element in
+		lists.contains(element.attributes["role"] ?? "") && element.attributes["description"] != "sidebar"
+			&& element.bounds.contains(observed.bounds)
+	}
+}
+
 private func checkElementRequest(_ request: ActionRequest, _ observed: DetectedElement) throws {
 	let role = observed.attributes["role"] ?? ""
 	if [.type, .setValue, .select].contains(request.op), isSecure(observed) {

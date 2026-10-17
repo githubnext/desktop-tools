@@ -29,6 +29,19 @@ test("a Finder list reads its header buttons, outline depth, expansion and selec
 	assert.deepEqual(table.truncation, []);
 });
 
+test("labels that only repeat the role description are not cell text or column titles", () => {
+	// Finder on macOS 27 labels unnamed cells, columns and icons with their role description.
+	const table = buildTable(fixtures.finderRoleLabels);
+	assert.deepEqual(table.columns, ["Name", "Date Modified", "Size", "Kind"]);
+	assert.deepEqual(table.rows.map((row) => row.cells), [
+		["item-01.txt", "Today at 10:19 AM", "7 bytes", "Plain Text"],
+		["item-02.txt", "Today at 10:19 AM", "7 bytes", "Plain Text"],
+		["sub-folder", "Today at 10:19 AM", "--", "Folder"],
+	]);
+	assert.equal(table.rows[2].expanded, false);
+	assert.equal(table.table.label, "list view");
+});
+
 test("a Numbers table without header titles keeps every row, and an empty cell is empty", () => {
 	const table = buildTable(fixtures.numbers);
 	assert.equal(table.columns, null);
