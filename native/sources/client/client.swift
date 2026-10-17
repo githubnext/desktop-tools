@@ -302,7 +302,7 @@ private struct Windows: Encodable {
 	let inventory_warnings: [String]
 }
 
-private struct Window: Encodable {
+struct Window: Encodable {
 	let window_id: Int
 	let window_title: String
 	let bounds: Bounds

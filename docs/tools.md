@@ -33,6 +33,8 @@ Targets are exact: an app target binds a process generation, and a window target
 
 Window operations other than focus use background Accessibility and don't activate the app. `desktop_unhide` activates the app, because macOS has no exact background unhide.
 
+`desktop_launch`, `desktop_open` and `desktop_menu` report `created_windows`: the app's windows that weren't there just before the request was sent, each with its target for `desktop_inspect`. They wait up to about one second for a menu command and two for a launch or open. `attribution` is `exclusive` when exactly one window appeared, `ambiguous` when several did, and `none` when none did in time. When two agents work in the same app at once, `exclusive` is very likely but not certain to be the agent's own window, since the other agent's window can appear in the same interval; `ambiguous` means nothing tells them apart.
+
 ## Menu bar and Dock
 
 | Tool | Does |

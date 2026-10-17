@@ -26,6 +26,7 @@ private struct MenuCommandResult: Encodable {
 	let action = "menu"
 	var native_outcome: DesktopActionOutcome?
 	var requires_fresh_observation = false
+	var created_windows: CreatedWindows?
 	var error: MenuCommandMessage?
 }
 
@@ -69,6 +70,7 @@ func nativeMenuCommand(_ client: PeekabooBridgeClient, handshake: PeekabooBridge
 			inventory.items.contains(where: { $0.processIdentity == identity })
 		else { throw MenuCommandError("The observed application generation could not be attested before the menu command.") }
 		try Task.checkCancellation()
+		let before = existingWindowIDs()
 		invoked = true
 		let action = try await client.menuCommand(request)
 		result.native_outcome = action.outcome
@@ -86,6 +88,9 @@ func nativeMenuCommand(_ client: PeekabooBridgeClient, handshake: PeekabooBridge
 			result.outcome = "completed"
 		default:
 			result.outcome = "unknown"
+		}
+		if outcome.dispatchState.mutationDispatched {
+			result.created_windows = await createdWindows(client, process: identity, before: before, waitingUpTo: 1)
 		}
 	} catch let failure as DesktopActionFailure {
 		result.native_outcome = failure.outcome
