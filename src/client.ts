@@ -661,6 +661,15 @@ function validateAction(request: DesktopAction) {
 		}
 		return;
 	}
+	if (request.op === "switch-space") {
+		if (
+			Object.keys(request).some((key) => !["op", "space_id"].includes(key))
+			|| !Number.isSafeInteger(request.space_id) || request.space_id < 1
+		) {
+			throw new Error("Pass one space_id from a fresh desktop_spaces result.");
+		}
+		return;
+	}
 	if (request.op === "system-key") {
 		if (Object.keys(request).some((key) => !["op", "key", "modifiers"].includes(key))) {
 			throw new Error("A system key accepts only key and modifiers.");
@@ -1006,6 +1015,8 @@ async function act(
 			? "open"
 			: request.op === "system-key"
 			? "system-key"
+			: request.op === "switch-space"
+			? "switch-space"
 			: isDesktopManagement(request)
 			? "management"
 			: "action";
@@ -1055,6 +1066,8 @@ async function act(
 
 	// The Dock receipt names the Dock process; desktop_apps shows what the press launched or activated.
 	if (request.op === "dock") return actionResult(data, outcome);
+	// The native client already read the Spaces back; desktop_spaces shows the rest.
+	if (request.op === "switch-space") return actionResult(data, outcome);
 
 	if (
 		outcome === "unknown"
@@ -1353,6 +1366,8 @@ async function execute(
 			"type",
 			"key",
 			"system-key",
+			"spaces",
+			"switch-space",
 			"insert",
 			"select",
 			"element-action",
@@ -1395,6 +1410,13 @@ async function execute(
 		if (request.op === "menubar-items") {
 			const data = await native(["menubar"], signal);
 			return { text: bounded(data, "items") };
+		}
+		if (request.op === "spaces") {
+			if (Object.keys(request).some((key) => key !== "op")) {
+				throw new Error("Listing Spaces takes no arguments.");
+			}
+			const data = await native(["spaces"], signal);
+			return { text: bounded(data, "displays") };
 		}
 		if (request.op === "dock" && request.title === undefined) {
 			validateDock(request);

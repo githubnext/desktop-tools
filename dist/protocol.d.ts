@@ -118,6 +118,11 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     title?: string;
     menu_item?: string;
 } | {
+    op: "spaces";
+} | {
+    op: "switch-space";
+    space_id: number;
+} | {
     op: "inspect";
     pid: number;
     window: number;
@@ -228,7 +233,7 @@ export type DesktopModifier = (typeof DESKTOP_MODIFIERS)[number];
 export type DesktopSelection = (typeof DESKTOP_SELECTIONS)[number];
 export type DesktopElementAction = (typeof DESKTOP_ELEMENT_ACTIONS)[number];
 export type DesktopAction = Extract<DesktopRequest, {
-    op: "click" | "type" | "key" | "system-key" | "insert" | "select" | "element-action" | "set-value" | "scroll" | "drag" | "hover" | "press" | "activate" | "launch" | "open" | "quit" | "close" | "focus" | "minimize" | "restore" | "move" | "resize" | "clipboard-write" | "menu" | "dialog-answer" | "hide" | "unhide" | "maximize" | "menubar-click" | "dock";
+    op: "click" | "type" | "key" | "system-key" | "switch-space" | "insert" | "select" | "element-action" | "set-value" | "scroll" | "drag" | "hover" | "press" | "activate" | "launch" | "open" | "quit" | "close" | "focus" | "minimize" | "restore" | "move" | "resize" | "clipboard-write" | "menu" | "dialog-answer" | "hide" | "unhide" | "maximize" | "menubar-click" | "dock";
 }>;
 export type DesktopOutcome = "completed" | "refused" | "unknown";
 export type DesktopImage = {
