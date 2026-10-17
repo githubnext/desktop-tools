@@ -16,7 +16,7 @@ You need macOS 15 or later and Node 22 or later. The MCP server runs from this r
    Claude Code:
 
    ```sh
-   claude mcp add desktop -- npx -y --package=github:githubnext/desktop-tools#v0.12.0 desktop-tools-mcp
+   claude mcp add desktop -- npx -y --package=github:githubnext/desktop-tools#v0.13.0 desktop-tools-mcp
    ```
 
    Codex, in `~/.codex/config.toml`:
@@ -24,7 +24,7 @@ You need macOS 15 or later and Node 22 or later. The MCP server runs from this r
    ```toml
    [mcp_servers.desktop]
    command = "npx"
-   args = ["-y", "--package=github:githubnext/desktop-tools#v0.12.0", "desktop-tools-mcp"]
+   args = ["-y", "--package=github:githubnext/desktop-tools#v0.13.0", "desktop-tools-mcp"]
    ```
 
    Other MCP clients that start stdio servers from JSON, such as Cursor or Claude Desktop:
@@ -34,7 +34,7 @@ You need macOS 15 or later and Node 22 or later. The MCP server runs from this r
      "mcpServers": {
        "desktop": {
          "command": "npx",
-         "args": ["-y", "--package=github:githubnext/desktop-tools#v0.12.0", "desktop-tools-mcp"]
+         "args": ["-y", "--package=github:githubnext/desktop-tools#v0.13.0", "desktop-tools-mcp"]
        }
      }
    }
