@@ -498,6 +498,17 @@ value route. `AutomationElementRepresenting` gains `textInputRoute`, `.nativeAX`
 elements. Tests cover web and unresolved ancestry refused with nothing written, a native field still set,
 and a slider in web content still set.
 
+`peekaboo-web-text-selection.patch` lets `selectText` select text in web content, where WebKit exposes no
+settable `AXSelectedTextRange`. The new `WebTextSelection.swift` finds the element's `AXWebArea`, reads
+the element's text marker range, and locates the requested UTF-16 range by `AXTextMarkerForIndex` from
+the element's start index. When the index route misses, it steps `AXNextTextMarkerForTextMarker`,
+capped at 2048 steps and 300 ms. Every candidate is accepted only when the strings before, inside and
+after it match the request's offsets. It sets `AXSelectedTextMarkerRange` on the web area and reports a
+change only when the selection reads back to the same range; otherwise the outcome is unknown.
+`AutomationElementRepresenting` gains `webTextMarkers`, nil by default. Tests cover the index route,
+the stepping fallback, the step cap refused with nothing selected, an existing selection kept, and a
+readback elsewhere reported as unknown.
+
 When updating Peekaboo, review the upstream fixes and these patches together. Update the revision
 guard and patches deliberately, or remove each patch when the dependency includes its fix.
 Revalidate real button clicks, changed-focus refusal, literal multiline insertion, clipboard

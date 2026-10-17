@@ -63,6 +63,7 @@ const patches = [
 	"peekaboo-web-text-value.patch",
 	"peekaboo-system-defined-key.patch",
 	"peekaboo-row-disclosure.patch",
+	"peekaboo-web-text-selection.patch",
 ].map((name) => join(native, "patches", name));
 
 function spawn(command: string[], env?: NodeJS.ProcessEnv) {

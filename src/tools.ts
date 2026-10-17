@@ -826,7 +826,7 @@ Optional modifiers (command, control, option and shift, each at most once) are h
 			name: "desktop_select",
 			op: "select",
 			description:
-				`Select literal text in one editable Accessibility element from a fresh desktop_inspect result, or place its caret before/after that text. Pass snapshot_id as snapshot and the literal element ID as element. Use immediately adjacent prefix/suffix text to disambiguate repeated matches; ambiguous or missing text is refused. Selection defaults to text. This does not activate the window. The snapshot is single-use; inspect again after the action and never blindly repeat interrupted input.`,
+				`Select literal text in one Accessibility element from a fresh desktop_inspect result, or place its caret before/after that text. The element is an editable field, or text in a web page, such as a paragraph or link, which is selected through the page's text markers and read back; then press Command-C with desktop_key to copy it. Pass snapshot_id as snapshot and the literal element ID as element. Use immediately adjacent prefix/suffix text to disambiguate repeated matches; ambiguous or missing text is refused. Selection defaults to text. This does not activate the window. The snapshot is single-use; inspect again after the action and never blindly repeat interrupted input.`,
 			parameters: {
 				type: "object",
 				required: ["snapshot", "element", "text"],
