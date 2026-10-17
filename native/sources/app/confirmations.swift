@@ -47,10 +47,19 @@ final class Confirmations: NSObject {
 		}
 	}
 
-	/// Drops a queued request, such as one the user already answered from the menu; its askers get nil.
+	/// Withdraws a request, queued or showing, such as one the user already answered from the menu or one its asker
+	/// stopped waiting for; its askers get nil, and the next request shows.
 	func cancel(key: String) {
-		guard let index = queue.firstIndex(where: { $0.request.key == key }) else { return }
-		for waiter in queue.remove(at: index).waiters { waiter.resume(returning: nil) }
+		if showing?.request.key == key {
+			alert?.window.orderOut(nil)
+			alert = nil
+			let waiters = showing!.waiters
+			showing = nil
+			for waiter in waiters { waiter.resume(returning: nil) }
+			showNext()
+		} else if let index = queue.firstIndex(where: { $0.request.key == key }) {
+			for waiter in queue.remove(at: index).waiters { waiter.resume(returning: nil) }
+		}
 	}
 
 	private func showNext() {
@@ -63,7 +72,8 @@ final class Confirmations: NSObject {
 	}
 
 	private func present() {
-		guard let current = showing else { return }
+		// A request cancelled before it appeared leaves its present() behind the next one's.
+		guard let current = showing, alert == nil else { return }
 		let alert = NSAlert()
 		alert.messageText = current.request.title
 		alert.informativeText = current.request.message
