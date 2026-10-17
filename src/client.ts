@@ -448,6 +448,20 @@ function validateApplication(application: DesktopApplication) {
 	) throw new Error("Use an exact application bundle ID for launch.");
 }
 
+function validateKey(request: { key: unknown; modifiers?: unknown }) {
+	if (!isDesktopKey(request.key)) throw new Error("Choose a named key or one printable character.");
+	const modifiers = request.modifiers;
+	if (
+		modifiers !== undefined && (
+			!Array.isArray(modifiers) || modifiers.length > 4
+			|| new Set(modifiers).size !== modifiers.length
+			|| modifiers.some((modifier) => !DESKTOP_MODIFIERS.includes(modifier))
+		)
+	) {
+		throw new Error("Use each of command, control, option, and shift at most once.");
+	}
+}
+
 function validateAction(request: DesktopAction) {
 	if (request.op === "launch") {
 		if (Object.keys(request).some((key) => !["op", "application"].includes(key))) {
@@ -551,6 +565,12 @@ function validateAction(request: DesktopAction) {
 		}
 		return;
 	}
+	if (request.op === "system-key") {
+		if (Object.keys(request).some((key) => !["op", "key", "modifiers"].includes(key))) {
+			throw new Error("A system key accepts only key and modifiers.");
+		}
+		return validateKey(request);
+	}
 	if (typeof request.snapshot !== "string" || !request.snapshot || request.snapshot.length > 256) {
 		throw new Error("Use the snapshot_id from a fresh desktop_inspect result.");
 	}
@@ -628,20 +648,7 @@ function validateAction(request: DesktopAction) {
 		}
 		return;
 	}
-	if (request.op === "key") {
-		if (!isDesktopKey(request.key)) throw new Error("Choose a named key or one printable character.");
-		const modifiers = request.modifiers;
-		if (
-			modifiers !== undefined && (
-				!Array.isArray(modifiers) || modifiers.length > 4
-				|| new Set(modifiers).size !== modifiers.length
-				|| modifiers.some((modifier) => !DESKTOP_MODIFIERS.includes(modifier))
-			)
-		) {
-			throw new Error("Use each of command, control, option, and shift at most once.");
-		}
-		return;
-	}
+	if (request.op === "key") return validateKey(request);
 	if (request.op === "insert") {
 		if (typeof request.text !== "string" || !request.text || request.text.length > 8192) {
 			throw new Error("Inserted text must contain 1 to 8192 UTF-16 code units.");
@@ -890,6 +897,8 @@ async function act(
 			? "launch"
 			: request.op === "open"
 			? "open"
+			: request.op === "system-key"
+			? "system-key"
 			: isDesktopManagement(request)
 			? "management"
 			: "action";
@@ -1235,6 +1244,7 @@ async function execute(
 			"click",
 			"type",
 			"key",
+			"system-key",
 			"insert",
 			"select",
 			"element-action",

@@ -43,6 +43,7 @@ private enum Client {
 			|| (operation == "menubar" && args.count == 2)
 			|| (operation == "menubar-click" && args.count == 3)
 			|| (operation == "dock" && args.count == 2)
+			|| (operation == "system-key" && args.count == 2)
 		else { throw ClientError.usage }
 		let identity = try SigningIdentity.current()
 		let client = PeekabooBridgeClient(
@@ -80,6 +81,8 @@ private enum Client {
 			return try await nativeMenuBarClick(client, handshake: handshake, path: args[2])
 		case "dock":
 			return try await nativeDock(client, handshake: handshake)
+		case "system-key":
+			return try await nativeSystemKey(client, handshake: handshake)
 		case "management":
 			return try await nativeManagement(client, handshake: handshake)
 		case "launch":

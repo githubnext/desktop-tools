@@ -183,6 +183,10 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     snapshot: string;
     key: DesktopKey;
     modifiers?: DesktopModifier[];
+} | {
+    op: "system-key";
+    key: DesktopKey;
+    modifiers?: DesktopModifier[];
 };
 export type DesktopPoint = {
     x: number;
@@ -207,7 +211,7 @@ export type DesktopModifier = (typeof DESKTOP_MODIFIERS)[number];
 export type DesktopSelection = (typeof DESKTOP_SELECTIONS)[number];
 export type DesktopElementAction = (typeof DESKTOP_ELEMENT_ACTIONS)[number];
 export type DesktopAction = Extract<DesktopRequest, {
-    op: "click" | "type" | "key" | "insert" | "select" | "element-action" | "set-value" | "scroll" | "drag" | "hover" | "press" | "activate" | "launch" | "open" | "quit" | "close" | "focus" | "minimize" | "restore" | "move" | "resize" | "clipboard-write" | "menu" | "dialog-answer" | "hide" | "unhide" | "maximize" | "menubar-click" | "dock";
+    op: "click" | "type" | "key" | "system-key" | "insert" | "select" | "element-action" | "set-value" | "scroll" | "drag" | "hover" | "press" | "activate" | "launch" | "open" | "quit" | "close" | "focus" | "minimize" | "restore" | "move" | "resize" | "clipboard-write" | "menu" | "dialog-answer" | "hide" | "unhide" | "maximize" | "menubar-click" | "dock";
 }>;
 export type DesktopOutcome = "completed" | "refused" | "unknown";
 export type DesktopImage = {

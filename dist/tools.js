@@ -77,6 +77,30 @@ const point = {
         y: { type: "number", minimum: 0, exclusiveMaximum: 1 },
     },
 };
+const key = {
+    anyOf: [
+        ...DESKTOP_KEYS.map((key) => ({ type: "string", const: key })),
+        {
+            type: "string",
+            minLength: 1,
+            maxLength: 2,
+            description: "One character, such as , . / ; ' [ ] or a, that a key types without Shift or Option.",
+        },
+    ],
+};
+const modifiers = {
+    type: "array",
+    items: {
+        anyOf: [
+            { type: "string", const: "command" },
+            { type: "string", const: "control" },
+            { type: "string", const: "option" },
+            { type: "string", const: "shift" },
+        ],
+    },
+    maxItems: 4,
+    uniqueItems: true,
+};
 /**
  * The desktop tools every host offers agents. `place` names where they act, as in "this Mac";
  * `app` names the signed app that holds the macOS permissions and runs the native service.
@@ -650,31 +674,19 @@ To drag into another window or app, such as a file from Finder into an app, insp
                 required: ["snapshot", "key"],
                 properties: {
                     snapshot: id,
-                    key: {
-                        anyOf: [
-                            ...DESKTOP_KEYS.map((key) => ({ type: "string", const: key })),
-                            {
-                                type: "string",
-                                minLength: 1,
-                                maxLength: 2,
-                                description: "One character, such as , . / ; ' [ ] or a, that a key types without Shift or Option.",
-                            },
-                        ],
-                    },
-                    modifiers: {
-                        type: "array",
-                        items: {
-                            anyOf: [
-                                { type: "string", const: "command" },
-                                { type: "string", const: "control" },
-                                { type: "string", const: "option" },
-                                { type: "string", const: "shift" },
-                            ],
-                        },
-                        maxItems: 4,
-                        uniqueItems: true,
-                    },
+                    key,
+                    modifiers,
                 },
+            },
+        },
+        {
+            name: "desktop_system_key",
+            op: "system-key",
+            description: `Press and release one system-wide shortcut on ${place}, such as Command-Space for Spotlight, Command-Tab to switch apps, Control-Up for Mission Control, Command-Shift-5 for the screenshot toolbar, or Control-Space to change input source. Use desktop_key for keys meant for a window. This needs no snapshot and has no target: the keys go to whatever is frontmost, as if typed on the keyboard, and they usually move focus, activate apps or open system UI. key and modifiers work as in desktop_key, including refusing characters that need Shift or Option. Any chord with Command and W, Q, H or M is refused, because it would close, quit, hide or minimize whatever is frontmost, or log out; use desktop_close, desktop_quit, desktop_hide or desktop_minimize. The result is unknown even when the keys were delivered, because nothing reads back what they did: observe with desktop_screen, desktop_apps or desktop_windows, close what opened (often desktop_system_key escape), and never blindly repeat the shortcut, since many shortcuts toggle. No keys remain held across calls.`,
+            parameters: {
+                type: "object",
+                required: ["key"],
+                properties: { key, modifiers },
             },
         },
     ];

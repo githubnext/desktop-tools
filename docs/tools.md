@@ -58,6 +58,7 @@ A status item is pressed through Accessibility in its owner process without movi
 | `desktop_element_action` | Perform one Accessibility action an element lists, such as `AXShowMenu`, `AXIncrement`, `AXDecrement`, `AXPick` or `AXCancel` |
 | `desktop_insert` | Insert text at the caret or over the selection with one temporary paste, then restore the clipboard |
 | `desktop_key` | Press one key with optional Command, Control, Option and Shift: any character key, such as `,` or `/`, or a named key |
+| `desktop_system_key` | Press one system-wide shortcut, such as Command-Space or Control-Up, on whatever is frontmost |
 | `desktop_menu` | Run one menu command by its exact title path |
 | `desktop_dialog_answer` | Press one dialog button by its exact title, or replace one dialog text field's value |
 | `desktop_clipboard_write` | Replace the clipboard with text, an image, or file references |
@@ -71,6 +72,8 @@ When the host turns on the window highlight, the window an inspection or action 
 `desktop_key` takes a character key as the character it types, and finds that key on the current keyboard layout, so `,` is the comma key on any layout. A character that needs Shift or Option, such as `?` or `A`, is refused with the key and modifier to send instead (`/` with `shift` on a US layout); the key press never holds a modifier that wasn't asked for. The named keys are `enter`, `tab`, `escape`, `space`, `backspace`, `delete` (forward delete), `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `help` (Insert on PC keyboards), `f1` to `f20`, and the keypad keys `keypad0` to `keypad9`, `keypaddecimal`, `keypadplus`, `keypadminus`, `keypadmultiply`, `keypaddivide`, `keypadequals`, `keypadenter` and `keypadclear`. Dead keys, such as `´` on some layouts, can't be pressed alone; use `desktop_insert` for text. Command-W, Command-Q, Command-H and Command-M are refused before anything is sent; `desktop_close`, `desktop_quit`, `desktop_hide` and `desktop_minimize` do the same and report the result.
 
 `desktop_inspect` lists the actions each element offers in `attributes.actions`. A pop-up button has no settable value: click it, then pick the item from the next observation, which puts an open menu's items first.
+
+`desktop_system_key` is for shortcuts that belong to macOS rather than a window: Spotlight (Command-Space), the app switcher (Command-Tab), Mission Control (Control-Up), the screenshot tools (Command-Shift-4 and 5) and the next input source (Control-Space). It takes the same keys and modifiers as `desktop_key`, but no snapshot. The keys are posted as ordinary keyboard input, so they reach whatever is frontmost, and they often move focus, activate an app or open system UI. Nothing reads back what a shortcut did, so the result is `unknown` even after delivery; observe with `desktop_screen`, `desktop_apps` or `desktop_windows`. Any chord with Command and W, Q, H or M is refused before anything is sent, including Command-Shift-Q (log out).
 
 ## Not supported
 
