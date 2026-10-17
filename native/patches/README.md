@@ -415,6 +415,14 @@ also refuses it before dispatch unless the target process is Notification Center
 exactly that name. It performs the matching descriptor and reports the requested name, which the Bridge
 receipt requires. No Bridge operation is added. Built against the macOS 11 to 15 structure; tests use fixtures.
 
+`peekaboo-system-defined-key.patch` adds `systemDefinedKey`, which presses one media, volume or brightness
+key. These keys have no key code: the keyboard sends them as `NX_SYSDEFINED` events with the
+`NX_SUBTYPE_AUX_CONTROL_BUTTONS` subtype, which upstream cannot post. The host builds the press and the
+release before posting either, then posts both to the HID tap, where the system rather than a window acts on
+them. Like `moveMouse`, it needs only event posting, has a global target, and reports one foreground
+dispatch whose effect is not verified. The keys are play/pause, next, previous, volume up and down, mute,
+display brightness up and down, and keyboard backlight up and down.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.

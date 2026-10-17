@@ -1,0 +1,268 @@
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift
+index 5787663f3..0ce0bf96c 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift
+@@ -297,6 +297,17 @@ extension PeekabooBridgeClient {
+         }
+     }
+ 
++    /// Presses one media, volume or brightness key; the system acts on it, so nothing confirms its effect.
++    public func systemDefinedKeyWithOutcome(_ key: SystemDefinedKey) async throws -> UIAutomationActionResult<Void> {
++        try await self.actionResult(
++            for: .systemDefinedKey(PeekabooBridgeSystemDefinedKeyRequest(key: key)),
++            expectedResponse: "system key")
++        { response in
++            guard case .ok = response else { return nil }
++            return ()
++        }
++    }
++
+     public func waitForElement(target: ClickTarget, timeout: TimeInterval, snapshotId: String?) async throws
+         -> WaitForElementResult
+     {
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
+index b6936d5ae..886094017 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
+@@ -93,6 +93,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
+     case swipe
+     case drag
+     case moveMouse
++    case systemDefinedKey
+     case waitForElement
+     // Windows
+     case listWindows
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
+index 2bbf03d55..0522ba9a0 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
+@@ -77,6 +77,7 @@ extension PeekabooBridgeOperation {
+         .swipe,
+         .drag,
+         .moveMouse,
++        .systemDefinedKey,
+         .waitForElement,
+         .listWindows,
+         .focusWindow,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
+index 0fe9c123f..12fd37ff5 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
+@@ -294,7 +294,7 @@ extension PeekabooBridgeOperationResultSemantics {
+                 completion: .dispatchedUnverified(globalForeground),
+                 targetPolicy: .global,
+                 responseFamilies: [.ok])
+-        case .swipe, .drag, .moveMouse:
++        case .swipe, .drag, .moveMouse, .systemDefinedKey:
+             descriptor(
+                 ownership: .service,
+                 requiredPermissions: [.postEvent],
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
+index a79755f10..2f3befbd3 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
+@@ -493,6 +493,7 @@ extension PeekabooBridgeOperationResultSemantics {
+              .swipe,
+              .drag,
+              .moveMouse,
++             .systemDefinedKey,
+              .waitForElement,
+              .listWindows,
+              .listWindowMutationInventory,
+@@ -608,7 +609,7 @@ extension PeekabooBridgeOperationResultSemantics {
+         switch request.operation {
+         case .clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite, .literalInsert, .agentExecutionTrace:
+             return [.dispatchedUnverified]
+-        case .requestPostEventPermission, .browserExecute, .swipe, .drag, .moveMouse,
++        case .requestPostEventPermission, .browserExecute, .swipe, .drag, .moveMouse, .systemDefinedKey,
+              .menuCommand, .clickMenuItem, .clickMenuItemByName, .clickMenuExtra,
+              .clickMenuBarItemNamed, .clickMenuBarItemIndex,
+              .launchDockItem, .rightClickDockItem,
+@@ -889,7 +890,7 @@ extension PeekabooBridgeOperationResultSemantics {
+             ]
+         case .typeActions, .hotkey:
+             return [rule(globalForeground, .variable)]
+-        case .swipe, .drag, .moveMouse:
++        case .swipe, .drag, .moveMouse, .systemDefinedKey:
+             return [rule(globalForeground, .exact(1))]
+         case .setValue:
+             // A toggle without a settable value is set by one verified press.
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgePayloads.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgePayloads.swift
+index 8748dd6a8..aa7a56df4 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgePayloads.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgePayloads.swift
+@@ -389,6 +389,14 @@ public struct PeekabooBridgeMoveMouseRequest: Codable, Sendable {
+     public let profile: MouseMovementProfile
+ }
+ 
++public struct PeekabooBridgeSystemDefinedKeyRequest: Codable, Sendable {
++    public let key: SystemDefinedKey
++
++    public init(key: SystemDefinedKey) {
++        self.key = key
++    }
++}
++
+ public struct PeekabooBridgeWaitRequest: Codable, Sendable {
+     public let target: ClickTarget
+     public let timeout: TimeInterval
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
+index 91c4284ea..aafc727cf 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
+@@ -60,6 +60,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
+     case swipe(PeekabooBridgeSwipeRequest)
+     case drag(PeekabooBridgeDragRequest)
+     case moveMouse(PeekabooBridgeMoveMouseRequest)
++    case systemDefinedKey(PeekabooBridgeSystemDefinedKeyRequest)
+     case waitForElement(PeekabooBridgeWaitRequest)
+     case listWindows(PeekabooBridgeWindowTargetRequest)
+     case listWindowMutationInventory(PeekabooBridgeWindowTargetRequest)
+@@ -199,6 +200,7 @@ extension PeekabooBridgeRequest {
+         case .swipe: .swipe
+         case .drag: .drag
+         case .moveMouse: .moveMouse
++        case .systemDefinedKey: .systemDefinedKey
+         case .waitForElement: .waitForElement
+         case .listWindows, .listWindowMutationInventory: .listWindows
+         case .focusWindow: .focusWindow
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
+index 2fbef0303..80915cc25 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
+@@ -99,7 +99,7 @@ extension PeekabooBridgeServer {
+              .foregroundModifierClick,
+              .setValue, .selectText, .performAction, .scroll, .targetedScroll, .hotkey, .targetedHotkey,
+              .exactWindowTargetedHotkey, .targetedClick,
+-             .exactWindowTargetedClick, .swipe, .drag, .moveMouse, .waitForElement:
++             .exactWindowTargetedClick, .swipe, .drag, .moveMouse, .systemDefinedKey, .waitForElement:
+             return try await self.handleAutomationRequest(request)
+         case .createExactWindowHeldPointerOwner, .beginExactWindowHeldPointer,
+              .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer,
+@@ -340,6 +340,9 @@ extension PeekabooBridgeServer {
+                 steps: payload.steps,
+                 profile: payload.profile)
+             return Self.globalPointerMutationResponse()
++        case let .systemDefinedKey(payload):
++            try SystemDefinedKeyEvents.post(payload.key)
++            return Self.globalPointerMutationResponse()
+         case let .waitForElement(payload):
+             let result = try await self.services.automation.waitForElement(
+                 target: payload.target,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/SystemDefinedKeyEvents.swift b/Core/PeekabooCore/Sources/PeekabooBridge/SystemDefinedKeyEvents.swift
+new file mode 100644
+index 000000000..4187978b7
+--- /dev/null
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/SystemDefinedKeyEvents.swift
+@@ -0,0 +1,65 @@
++import AppKit
++import CoreGraphics
++import Foundation
++
++/// A media, volume or brightness key, which macOS delivers as a system-defined event rather than a key code.
++public enum SystemDefinedKey: String, Codable, Sendable, CaseIterable {
++    case volumeUp
++    case volumeDown
++    case mute
++    case brightnessUp
++    case brightnessDown
++    case playPause
++    case next
++    case previous
++    case keyboardBrightnessUp
++    case keyboardBrightnessDown
++
++    /// The `NX_KEYTYPE_*` value from IOKit's `ev_keymap.h`.
++    var keyType: Int {
++        switch self {
++        case .volumeUp: 0
++        case .volumeDown: 1
++        case .brightnessUp: 2
++        case .brightnessDown: 3
++        case .mute: 7
++        case .playPause: 16
++        case .next: 17
++        case .previous: 18
++        case .keyboardBrightnessUp: 21
++        case .keyboardBrightnessDown: 22
++        }
++    }
++}
++
++enum SystemDefinedKeyEvents {
++    /// The `NX_SUBTYPE_AUX_CONTROL_BUTTONS` subtype that carries special keys.
++    private static let auxControlButtons: Int16 = 8
++
++    /// Posts one press and release to the HID tap; the system, not a window, decides what the key does.
++    static func post(_ key: SystemDefinedKey) throws {
++        // Build both events before posting either, so a failure never leaves the key held down.
++        let events = try [true, false].map { down in
++            let state = down ? 0xA : 0xB
++            guard let event = NSEvent.otherEvent(
++                with: .systemDefined,
++                location: .zero,
++                modifierFlags: NSEvent.ModifierFlags(rawValue: UInt(state << 8)),
++                timestamp: 0,
++                windowNumber: 0,
++                context: nil,
++                subtype: self.auxControlButtons,
++                data1: (key.keyType << 16) | (state << 8),
++                data2: -1)?.cgEvent
++            else {
++                throw PeekabooBridgeErrorEnvelope(
++                    code: .internalError,
++                    message: "Could not create the \(key.rawValue) system key event")
++            }
++            return event
++        }
++        for event in events {
++            event.post(tap: .cghidEventTap)
++        }
++    }
++}
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
+index 004a696d4..53e0e37fd 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
+@@ -298,6 +298,7 @@ struct PeekabooBridgeOperationResultSemanticsTests {
+             .swipe,
+             .drag,
+             .moveMouse,
++            .systemDefinedKey,
+             .focusWindow,
+             .moveWindow,
+             .resizeWindow,
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
+index 79ff0d8d7..cba2b6b51 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
+@@ -28,7 +28,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
+ 
+         // This count is intentionally reviewed whenever the wire enum grows. The exhaustive
+         // policy switches also make a missing classification a compile error.
+-        #expect(operations.count == 128)
++        #expect(operations.count == 129)
+ 
+         func partition<Value: Equatable>(_ values: [Value], by keyPath: KeyPath<Semantics.OperationPolicy, Value>) {
+             let groups = values.map { expected in
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
+index e917ff514..1275676a8 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
+@@ -9,7 +9,7 @@ struct PeekabooBridgeRequestPlanTests {
+     @Test
+     func `Every wire operation has one complete static descriptor`() {
+         let operations = PeekabooBridgeOperation.allCases
+-        #expect(operations.count == 128)
++        #expect(operations.count == 129)
+ 
+         let descriptors = operations.map(Semantics.operationDescriptor(for:))
+         #expect(descriptors.map(\.operation) == operations)
+@@ -67,6 +67,7 @@ struct PeekabooBridgeRequestPlanTests {
+             .swipe,
+             .drag,
+             .moveMouse,
++            .systemDefinedKey,
+             .beginExactWindowHeldPointer,
+             .exactWindowDrag,
+         ]

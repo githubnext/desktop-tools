@@ -1,4 +1,4 @@
-import { DESKTOP_KEYS, DESKTOP_WAIT_CONDITIONS, type DesktopRequest } from "./protocol.js";
+import { DESKTOP_KEYS, DESKTOP_SYSTEM_KEYS, DESKTOP_WAIT_CONDITIONS, type DesktopRequest } from "./protocol.js";
 import { WAIT_DEFAULT_MS, WAIT_MAX_MS } from "./wait.js";
 
 export type JsonSchema = { [key: string]: unknown };
@@ -105,6 +105,12 @@ const key: JsonSchema = {
 			maxLength: 2,
 			description: "One character, such as , . / ; ' [ ] or a, that a key types without Shift or Option.",
 		},
+	],
+};
+const systemKey: JsonSchema = {
+	anyOf: [
+		...(key.anyOf as JsonSchema[]),
+		...DESKTOP_SYSTEM_KEYS.map((key) => ({ type: "string", const: key })),
 	],
 };
 const modifiers: JsonSchema = {
@@ -882,11 +888,11 @@ Optional modifiers (command, control, option and shift, each at most once) are h
 			name: "desktop_system_key",
 			op: "system-key",
 			description:
-				`Press and release one system-wide shortcut on ${place}, such as Command-Space for Spotlight, Command-Tab to switch apps, Control-Up for Mission Control, Command-Shift-5 for the screenshot toolbar, or Control-Space to change input source. Use desktop_key for keys meant for a window. This needs no snapshot and has no target: the keys go to whatever is frontmost, as if typed on the keyboard, and they usually move focus, activate apps or open system UI. key and modifiers work as in desktop_key, including refusing characters that need Shift or Option. Any chord with Command and W, Q, H or M is refused, because it would close, quit, hide or minimize whatever is frontmost, or log out; use desktop_close, desktop_quit, desktop_hide or desktop_minimize. The result is unknown even when the keys were delivered, because nothing reads back what they did: observe with desktop_screen, desktop_apps or desktop_windows, close what opened (often desktop_system_key escape), and never blindly repeat the shortcut, since many shortcuts toggle. No keys remain held across calls.`,
+				`Press and release one system-wide shortcut on ${place}, such as Command-Space for Spotlight, Command-Tab to switch apps, Control-Up for Mission Control, Command-Shift-5 for the screenshot toolbar, or Control-Space to change input source. Use desktop_key for keys meant for a window. This needs no snapshot and has no target: the keys go to whatever is frontmost, as if typed on the keyboard, and they usually move focus, activate apps or open system UI. key and modifiers work as in desktop_key, including refusing characters that need Shift or Option. Any chord with Command and W, Q, H or M is refused, because it would close, quit, hide or minimize whatever is frontmost, or log out; use desktop_close, desktop_quit, desktop_hide or desktop_minimize. The result is unknown even when the keys were delivered, because nothing reads back what they did: observe with desktop_screen, desktop_apps or desktop_windows, close what opened (often desktop_system_key escape), and never blindly repeat the shortcut, since many shortcuts toggle. No keys remain held across calls. It also presses the media, volume and brightness keys, with no modifiers: play_pause, next_track and previous_track go to whichever app macOS routes media keys to, usually the one playing; volume_up, volume_down and mute change the output volume; brightness_up and brightness_down change the main display's brightness; keyboard_brightness_up and keyboard_brightness_down change the keyboard backlight where there is one. They are sent like the hardware keys, nothing reads back what they changed, and the result is unknown.`,
 			parameters: {
 				type: "object",
 				required: ["key"],
-				properties: { key, modifiers },
+				properties: { key: systemKey, modifiers },
 			},
 		},
 		{

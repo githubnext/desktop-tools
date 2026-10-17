@@ -261,7 +261,7 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     repeat?: number;
 } | {
     op: "system-key";
-    key: DesktopKey;
+    key: DesktopKey | DesktopSystemKey;
     modifiers?: DesktopModifier[];
 };
 export type DesktopPoint = {
@@ -275,12 +275,15 @@ export type DesktopClick = (typeof DESKTOP_CLICKS)[number];
 export type DesktopDirection = (typeof DESKTOP_DIRECTIONS)[number];
 export type DesktopButton = (typeof DESKTOP_BUTTONS)[number];
 /** Keys that type no character, named; every other key is given as the character it types. */
+/** Media, volume and brightness keys, which the system rather than a window acts on. */
+export declare const DESKTOP_SYSTEM_KEYS: readonly ["play_pause", "next_track", "previous_track", "volume_up", "volume_down", "mute", "brightness_up", "brightness_down", "keyboard_brightness_up", "keyboard_brightness_down"];
 export declare const DESKTOP_KEYS: readonly ["enter", "tab", "escape", "backspace", "delete", "up", "down", "left", "right", "space", "home", "end", "pageup", "pagedown", "help", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "keypad0", "keypad1", "keypad2", "keypad3", "keypad4", "keypad5", "keypad6", "keypad7", "keypad8", "keypad9", "keypaddecimal", "keypadmultiply", "keypadplus", "keypadminus", "keypaddivide", "keypadequals", "keypadenter", "keypadclear"];
 export declare const DESKTOP_MODIFIERS: readonly ["command", "control", "option", "shift"];
 export declare const DESKTOP_SELECTIONS: readonly ["text", "cursor_before", "cursor_after"];
 /** Named Accessibility actions; AXPress is desktop_click's route and is not listed separately. */
 export declare const DESKTOP_ELEMENT_ACTIONS: readonly ["AXShowMenu", "AXIncrement", "AXDecrement", "AXConfirm", "AXCancel", "AXPick", "AXRaise", "AXScrollToVisible"];
 export type DesktopNamedKey = (typeof DESKTOP_KEYS)[number];
+export type DesktopSystemKey = (typeof DESKTOP_SYSTEM_KEYS)[number];
 /** A named key, or the one printable character a key types without Shift or Option, such as `,` or `a`. */
 export type DesktopKey = DesktopNamedKey | (string & {});
 export type DesktopModifier = (typeof DESKTOP_MODIFIERS)[number];

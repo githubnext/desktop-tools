@@ -29,7 +29,21 @@ private struct SystemKeyReply: Encodable {
 	let data: SystemKeyResult
 }
 
-/// Posts one chord as global keyboard input to whatever is frontmost; nothing reads back its effect.
+/// The media, volume and brightness keys, posted as the system-defined events the keyboard sends.
+private let systemDefinedKeys: [String: SystemDefinedKey] = [
+	"play_pause": .playPause,
+	"next_track": .next,
+	"previous_track": .previous,
+	"volume_up": .volumeUp,
+	"volume_down": .volumeDown,
+	"mute": .mute,
+	"brightness_up": .brightnessUp,
+	"brightness_down": .brightnessDown,
+	"keyboard_brightness_up": .keyboardBrightnessUp,
+	"keyboard_brightness_down": .keyboardBrightnessDown,
+]
+
+/// Posts one chord, or one media key, as global keyboard input; nothing reads back its effect.
 func nativeSystemKey(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHandshakeResponse) async throws -> Data {
 	var result = SystemKeyResult()
 	var invoked = false
@@ -40,6 +54,21 @@ func nativeSystemKey(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHa
 			data.append(chunk)
 		}
 		let input = try JSONDecoder().decode(SystemKeyInput.self, from: data)
+		if let media = systemDefinedKeys[input.key] {
+			guard input.modifiers == nil else { throw ActionError("Media, volume and brightness keys take no modifiers.") }
+			guard (handshake.enabledOperations ?? handshake.supportedOperations).contains(.systemDefinedKey) else {
+				throw ActionError("The native runtime does not allow media keys. Update the desktop runtime before acting.")
+			}
+			try refuseLockedSession()
+			try Task.checkCancellation()
+			invoked = true
+			let action = try await client.systemDefinedKeyWithOutcome(media)
+			try record(action.outcome, into: &result)
+			if result.outcome == "unknown" {
+				result.message = "The key went to the system as if pressed on the keyboard; what it changed was not read back. Do not blindly repeat it, since play_pause and mute toggle."
+			}
+			return try JSONEncoder().encode(SystemKeyReply(data: result))
+		}
 		guard let primary = serviceKey(input.key) else {
 			throw ActionError("Choose a named key or the one printable character a key types, such as , or a.")
 		}
@@ -62,27 +91,13 @@ func nativeSystemKey(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHa
 		guard (handshake.enabledOperations ?? handshake.supportedOperations).contains(.hotkey) else {
 			throw ActionError("The native runtime does not allow system-wide keys. Update the desktop runtime before acting.")
 		}
-		let session = CGSessionCopyCurrentDictionary() as NSDictionary?
-		if session?["CGSSessionScreenIsLocked"] as? Bool == true {
-			throw ActionError(
-				"The macOS GUI session is locked. No key was sent.",
-				hint: "Unlock the active user session, then observe the screen before retrying."
-			)
-		}
+		try refuseLockedSession()
 		let chord = (modifiers.map { keyboardModifiers[$0]! } + [primary]).joined(separator: ",")
 		try Task.checkCancellation()
 		invoked = true
 		let action = try await client.hotkeyWithOutcome(keys: chord, holdDuration: 0)
-		result.native_outcome = action.outcome
-		guard let outcome = action.outcome else {
-			throw ActionError("The system key returned without its native outcome.")
-		}
-		result.requires_fresh_observation = outcome.dispatchState.mutationDispatched
-		if outcome.state == .refused {
-			result.outcome = "refused"
-		} else {
-			// Delivery to the frontmost receiver is all the host can attest; the shortcut's effect is never read back.
-			result.outcome = "unknown"
+		try record(action.outcome, into: &result)
+		if result.outcome == "unknown" {
 			result.message = "The keys went to whatever was frontmost; their effect was not read back. Observe with desktop_screen, desktop_apps or desktop_windows before acting again, and do not blindly repeat the shortcut."
 		}
 	} catch let failure as DesktopActionFailure {
@@ -103,4 +118,22 @@ func nativeSystemKey(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHa
 		)
 	}
 	return try JSONEncoder().encode(SystemKeyReply(data: result))
+}
+
+private func refuseLockedSession() throws {
+	let session = CGSessionCopyCurrentDictionary() as NSDictionary?
+	if session?["CGSSessionScreenIsLocked"] as? Bool == true {
+		throw ActionError(
+			"The macOS GUI session is locked. No key was sent.",
+			hint: "Unlock the active user session, then observe the screen before retrying."
+		)
+	}
+}
+
+private func record(_ outcome: DesktopActionOutcome?, into result: inout SystemKeyResult) throws {
+	result.native_outcome = outcome
+	guard let outcome else { throw ActionError("The system key returned without its native outcome.") }
+	result.requires_fresh_observation = outcome.dispatchState.mutationDispatched
+	// Delivery to the frontmost receiver is all the host can attest; the key's effect is never read back.
+	result.outcome = outcome.state == .refused ? "refused" : "unknown"
 }
