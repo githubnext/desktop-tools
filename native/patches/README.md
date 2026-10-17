@@ -555,3 +555,9 @@ guard and patches deliberately, or remove each patch when the dependency include
 Revalidate real button clicks, changed-focus refusal, literal multiline insertion, clipboard
 restoration, partial input, and interruption before shipping
 the update.
+
+`peekaboo-web-accessibility.patch` adds an `enableWebAccessibility` operation, which sets `AXManualAccessibility` on one app so that Chromium and Electron build the Accessibility tree of their web content. Until an assistive client asks, their web views list few or no elements. It never sets `AXEnhancedUserInterface`, which changes how some apps animate and place their windows.
+- **Request.** It carries the exact app generation, as a process identity.
+- **Host.** On the main actor, the host checks that the process still has that start identity, or answers `notFound`. It keeps the generations it turned on, or found on, and answers those without touching the app again, so it sets the attribute at most once per launch. Otherwise it reads the attribute, with a one-second messaging timeout, and sets it only when it isn't already on. An app that rejects the attribute is `operationNotSupported`. Any other AX error is `internalError`, marked as possibly completed when the app timed out.
+- **Result contract.** It needs Accessibility. It is a request-pinned, process-scoped, one-unit Accessibility-value background delivery answered with `bool`: true when this request turned it on. The outcome is `confirmedChange` when the attribute reads back on, `dispatchedUnverified` when it doesn't read back, and `confirmedNoChange` when it was already on. It is service-owned and joins the default allowlists.
+- **Tests.** The wire count is now 133. The operation joins the unconditionally mutating set and the Accessibility permission partition.

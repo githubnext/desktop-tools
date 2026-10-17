@@ -31,6 +31,7 @@ const only = new Set((values.only ?? []).flatMap((v) => v.split(",")).map((v) =>
 const TEXTEDIT = "com.apple.TextEdit";
 const FINDER = "com.apple.finder";
 const SAFARI = "com.apple.Safari";
+const CHROME = "com.google.Chrome";
 const run = randomBytes(3).toString("hex");
 
 // ---------- MCP client ----------
@@ -357,6 +358,15 @@ class Session {
 		});
 	}
 
+	chrome() {
+		return this.once("chrome", async () => {
+			if (!existsSync("/Applications/Google Chrome.app")) skip("Google Chrome is not installed in /Applications");
+			// A running Chrome may already have web accessibility on, and holds the user's windows.
+			if (await this.runningTarget(CHROME)) skip("Chrome is running; quit it to run the Chromium checks");
+			return this.openWindow(this.fixtures.page, CHROME, `Live page ${run}`, "Chrome fixture page");
+		});
+	}
+
 	async inspect(win, extra = {}) {
 		const result = await this.mcp.call("desktop_inspect", { pid: win.pid, window: win.window, ...extra });
 		const snap = result.data.snapshot_id;
@@ -430,6 +440,31 @@ const selectedNames = (table) => (table?.rows ?? []).filter((r) => r.selected).m
 
 const checks = [];
 const check = (pr, title, run, notes) => checks.push({ pr: String(pr), title, run, notes });
+
+// 0.11.0
+check(107, "desktop_inspect turns on a fresh Chrome's web accessibility once, and lists the page's fields", async (s, m) => {
+	if (!m.tools.get("desktop_inspect")?.inputSchema?.properties?.web_accessibility) skip("this build's desktop_inspect has no web_accessibility (#107 not in it)");
+	const win = await s.chrome();
+	const first = await s.inspect(win);
+	const field = find(first.els, "AXTextField", /Controlled field/);
+	const again = await s.inspect(win);
+	const kept = await s.inspect(win, { web_accessibility: false });
+	return expect(
+		first.result.data.web_accessibility === "enabled" && field
+			&& again.result.data.web_accessibility === "already_on" && kept.result.data.web_accessibility === undefined,
+		`first ${first.result.data.web_accessibility} with ${first.els.length} elements, field ${field ? "found" : "missing"}; again ${again.result.data.web_accessibility}; opted out ${kept.result.data.web_accessibility}`,
+	);
+}, "Launches Chrome on the fixture page and quits it after; it may restore the user's last Chrome session meanwhile.");
+
+check(107, "desktop_read leaves Safari's web accessibility alone and reports nothing", async (s, m) => {
+	if (!m.tools.get("desktop_read")?.inputSchema?.properties?.web_accessibility) skip("this build's desktop_read has no web_accessibility (#107 not in it)");
+	const win = await s.web();
+	const read = await s.read(win);
+	return expect(
+		read.data.web_accessibility === undefined && (read.data.text ?? "").includes(`Live page ${run}`),
+		`web_accessibility ${read.data.web_accessibility}; text ${brief(read.data.text, 80)}`,
+	);
+});
 
 // 0.10.0
 check(99, "desktop_insert pastes a PNG into a TextEdit rich document and restores the clipboard", async (s, m) => {

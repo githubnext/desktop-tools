@@ -209,6 +209,15 @@ function bounded(data: Record<string, unknown>, field: string, limit = MAX_TEXT)
 	return text;
 }
 
+/** The native argument that leaves a Chromium or Electron app's web accessibility as it is. */
+const KEEP_WEB_ACCESSIBILITY = "keep-web-accessibility";
+
+function validateWebAccessibility(request: { web_accessibility?: unknown }) {
+	if (request.web_accessibility !== undefined && typeof request.web_accessibility !== "boolean") {
+		throw new Error("Choose web_accessibility true or false.");
+	}
+}
+
 function validateScope(scope: unknown) {
 	if (
 		!scope || typeof scope !== "object" || Object.keys(scope).length !== 2
@@ -374,6 +383,7 @@ async function inspect(
 		validateScope(request.scope);
 		if (mode !== "accessibility") throw new Error("A scope needs accessibility mode.");
 	}
+	validateWebAccessibility(request);
 	const savePath = await validateSave(request);
 	const directory = await mkdtemp(join(tmpdir(), "desktop-tools-"));
 	try {
@@ -381,6 +391,7 @@ async function inspect(
 		const args = ["inspect", pid, window, path, mode];
 		if (request.ocr) args.push("ocr");
 		if (request.scope) args.push("scope", request.scope.snapshot, request.scope.element);
+		if (request.web_accessibility === false) args.push(KEEP_WEB_ACCESSIBILITY);
 		const data = await native(args, signal, { target: request });
 		if (request.scope && (data.scope as { from_element?: unknown } | undefined)?.from_element !== request.scope.element) {
 			throw new Error("Native inspection did not honor the requested scope.");
@@ -473,6 +484,8 @@ async function read(
 		validateScope(request.scope);
 		args.push(request.scope.snapshot, request.scope.element);
 	}
+	validateWebAccessibility(request);
+	if (request.web_accessibility === false) args.push(KEEP_WEB_ACCESSIBILITY);
 	if (request.table !== undefined || request.row_offset !== undefined || request.max_rows !== undefined) {
 		if (request.table !== true || !request.scope) {
 			throw new Error("A table read needs table true and scope: the table, or the area that holds it, from an accessibility desktop_inspect.");

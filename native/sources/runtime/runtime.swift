@@ -87,7 +87,7 @@ private final class Desktop {
 						.createSnapshot, .cleanSnapshot, .ownsSnapshot, .getDetectionResult, .beginSnapshotMutation,
 						.finishSnapshotMutation,
 						.targetedClick, .exactWindowTargetedClick, .foregroundModifierClick, .setValue, .performAction, .exactWindowTargetedHotkey, .hotkey, .exactWindowTargetedTypeActions,
-						.selectText, .literalInsert, .attachmentInsert, .clipboardTextRead, .clipboardImageRead, .clipboardImageExport, .clipboardFilesRead, .clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite, .targetedScroll, .exactWindowDrag, .drag, .moveMouse, .systemDefinedKey, .selectInputSource,
+						.selectText, .literalInsert, .attachmentInsert, .clipboardTextRead, .clipboardImageRead, .clipboardImageExport, .clipboardFilesRead, .clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite, .targetedScroll, .exactWindowDrag, .drag, .moveMouse, .systemDefinedKey, .selectInputSource, .enableWebAccessibility,
 						.createExactWindowHeldPointerOwner, .beginExactWindowHeldPointer, .releaseExactWindowHeldPointer,
 						.revokeExactWindowHeldPointer, .disconnectExactWindowHeldPointerOwner,
 						.launchApplicationWithOptions, .activateApplication, .quitApplication, .hideApplication, .backgroundCloseWindow,

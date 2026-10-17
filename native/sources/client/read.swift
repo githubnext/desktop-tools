@@ -152,6 +152,7 @@ private struct ReadScope: Encodable {
 private struct Reading: Encodable {
 	let application_name: String?
 	let window_title: String?
+	let web_accessibility: WebAccessibility?
 	let scope: ReadScope?
 	let text: String
 	let text_bytes: Int
@@ -171,25 +172,36 @@ private struct ReadReply: Encodable {
 
 /// Reads the text of one exact window, or of one element's subtree, without a snapshot or any input.
 func nativeRead(
-	_ client: PeekabooBridgeClient, pid: Int32, window: UInt32, scope: ScopeRequest?
+	_ client: PeekabooBridgeClient, pid: Int32, window: UInt32, scope: ScopeRequest?, web policy: WebAccessibilityPolicy
 ) async throws -> Data {
 	var source: ScopeSource?
 	if let scope { source = try await scopeSource(client, scope, pid: pid, window: window) }
-	let observation = try await client.desktopObservationWithOutcome(.init(
-		target: .pid(pid, window: .id(window)),
-		capture: .init(scale: .logical1x, focus: .background),
-		detection: .init(mode: .accessibility, traversalBudget: wideTraversal, requiresFreshAccessibilityTree: true),
-		output: .init(saveSnapshot: false, includeImageData: false),
-		timeout: .init(overall: 22, detection: 18)
-	))
-	guard let target = observation.targetIdentity,
-		target.processIdentity.processIdentifier == pid,
-		let exact = target.exactWindow, exact.identity.windowID == Int(window)
-	else { throw ReadError("The native read did not confirm the requested process and window. Refresh the window list and try again.") }
-	let result = observation.payload
-	guard result.files.publishedSnapshotID == nil, let detection = result.elements else {
-		throw ReadError("The native read returned no Accessibility tree for this window.")
+	var web = await policy.beforeRead(client, pid: pid)
+	func observe() async throws -> (DesktopTargetIdentity, DesktopObservationResult, ElementDetectionResult) {
+		let observation = try await client.desktopObservationWithOutcome(.init(
+			target: .pid(pid, window: .id(window)),
+			capture: .init(scale: .logical1x, focus: .background),
+			detection: .init(mode: .accessibility, traversalBudget: wideTraversal, requiresFreshAccessibilityTree: true),
+			output: .init(saveSnapshot: false, includeImageData: false),
+			timeout: .init(overall: 22, detection: 18)
+		))
+		guard let target = observation.targetIdentity,
+			target.processIdentity.processIdentifier == pid,
+			let exact = target.exactWindow, exact.identity.windowID == Int(window)
+		else { throw ReadError("The native read did not confirm the requested process and window. Refresh the window list and try again.") }
+		let result = observation.payload
+		guard result.files.publishedSnapshotID == nil, let detection = result.elements else {
+			throw ReadError("The native read returned no Accessibility tree for this window.")
+		}
+		return (target, result, detection)
 	}
+	var (target, result, detection) = try await observe()
+	let after = await policy.afterRead(
+		client, pid: pid, elements: detection.elements.all,
+		truncated: !traversalTruncation(detection.metadata.truncationInfo).isEmpty, before: web
+	)
+	web = after.state
+	if after.readAgain { (target, result, detection) = try await observe() }
 	let elements = try preorder(detection.elements.all)
 	var selected = elements[...]
 	var readScope: ReadScope?
@@ -209,6 +221,7 @@ func nativeRead(
 	let data = Reading(
 		application_name: result.target.app?.name,
 		window_title: detection.metadata.windowContext?.windowTitle ?? result.target.window?.title,
+		web_accessibility: web,
 		scope: readScope,
 		text: reading.text,
 		text_bytes: reading.text.utf8.count,

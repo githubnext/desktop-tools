@@ -32,8 +32,8 @@ private enum Client {
 		let operation = args[1]
 		guard (operation == "apps" && args.count == 2)
 			|| (operation == "windows" && args.count == 3)
-			|| (operation == "inspect" && args.count >= 5 && args.count <= 10)
-			|| (operation == "read" && (args.count == 4 || args.count == 6))
+			|| (operation == "inspect" && args.count >= 5 && args.count <= 11)
+			|| (operation == "read" && args.count >= 4 && args.count <= 7)
 			|| (operation == "elements" && args.count == 2)
 			|| (operation == "table" && args.count == 2)
 			|| (operation == "screen" && args.count >= 3 && args.count <= 5)
@@ -115,10 +115,15 @@ private enum Client {
 			}
 			return try await nativeScreen(client, path: args[2], index: display, ocr: ocr)
 		case "read":
+			var args = args
+			let keep = args.last == keepWebAccessibility
+			if keep { args.removeLast() }
+			guard args.count == 4 || args.count == 6 else { throw ClientError.usage }
 			let pid = try processID(args[2])
 			guard let window = UInt32(args[3]), window > 0 else { throw ClientError.usage }
 			let scope = args.count == 6 ? ScopeRequest(snapshot: args[4], element: args[5]) : nil
-			return try await nativeRead(client, pid: pid, window: window, scope: scope)
+			let web = WebAccessibilityPolicy(allowed: !keep, handshake: handshake)
+			return try await nativeRead(client, pid: pid, window: window, scope: scope, web: web)
 		case "elements":
 			return try await nativeElements(client)
 		case "table":
@@ -176,6 +181,8 @@ private enum Client {
 			guard let window = UInt32(args[3]), window > 0 else { throw ClientError.usage }
 			guard args[4].hasPrefix("/") else { throw ClientError.usage }
 			var rest = args[5...]
+			let keep = rest.last == keepWebAccessibility
+			if keep { rest = rest.dropLast() }
 			let mode = rest.first.flatMap(InspectionMode.init(rawValue:)) ?? .accessibility
 			if rest.first.flatMap(InspectionMode.init(rawValue:)) != nil { rest = rest.dropFirst() }
 			let ocr = rest.first == "ocr"
@@ -188,7 +195,9 @@ private enum Client {
 			}
 			guard rest.isEmpty else { throw ClientError.usage }
 			return try await inspect(
-				client, pid: pid, window: window, path: args[4], mode: mode, options: .init(ocr: ocr, scope: scope)
+				client, pid: pid, window: window, path: args[4], mode: mode, options: .init(
+					ocr: ocr, scope: scope, web: WebAccessibilityPolicy(allowed: !keep, handshake: handshake)
+				)
 			)
 		}
 	}
@@ -218,23 +227,39 @@ private enum Client {
 		// The scope element comes from an earlier snapshot; read it before this observation publishes another.
 		var source: ScopeSource?
 		if let scope = options.scope { source = try await scopeSource(client, scope, pid: pid, window: window) }
-		let observation = try await client.desktopObservationWithOutcome(.init(
-			target: .pid(pid, window: .id(window)),
-			capture: .init(scale: .logical1x, focus: .background),
-			detection: .init(
-				mode: accessibility ? .accessibility : .none,
-				traversalBudget: source == nil
-					? .init(maxDepth: 15, maxElementCount: 200, maxChildrenPerNode: 100) : wideTraversal,
-				requiresFreshAccessibilityTree: accessibility
-			),
-			output: .init(path: path, saveSnapshot: true, snapshotID: pixels, includeImageData: true),
-			timeout: source == nil ? .init(overall: 20, detection: 15) : .init(overall: 22, detection: 18)
-		))
-		guard let target = observation.targetIdentity,
-			target.processIdentity.processIdentifier == pid,
-			let exact = target.exactWindow, exact.identity.windowID == Int(window)
-		else { throw ClientError.target }
-		let result = observation.payload
+		var web = accessibility ? await options.web.beforeRead(client, pid: pid) : nil
+		func capture() async throws -> (DesktopTargetIdentity, UIAutomationTarget.ExactWindow, DesktopObservationResult) {
+			let observation = try await client.desktopObservationWithOutcome(.init(
+				target: .pid(pid, window: .id(window)),
+				capture: .init(scale: .logical1x, focus: .background),
+				detection: .init(
+					mode: accessibility ? .accessibility : .none,
+					traversalBudget: source == nil
+						? .init(maxDepth: 15, maxElementCount: 200, maxChildrenPerNode: 100) : wideTraversal,
+					requiresFreshAccessibilityTree: accessibility
+				),
+				output: .init(path: path, saveSnapshot: true, snapshotID: pixels, includeImageData: true),
+				timeout: source == nil ? .init(overall: 20, detection: 15) : .init(overall: 22, detection: 18)
+			))
+			guard let target = observation.targetIdentity,
+				target.processIdentity.processIdentifier == pid,
+				let exact = target.exactWindow, exact.identity.windowID == Int(window)
+			else { throw ClientError.target }
+			return (target, exact, observation.payload)
+		}
+		var (target, exact, result) = try await capture()
+		if accessibility, let detection = result.elements {
+			let after = await options.web.afterRead(
+				client, pid: pid, elements: detection.elements.all,
+				truncated: !traversalTruncation(detection.metadata.truncationInfo).isEmpty, before: web
+			)
+			web = after.state
+			if after.readAgain {
+				// The first snapshot is never returned, so it must not stay published.
+				if let published = result.files.publishedSnapshotID { try? await client.cleanSnapshot(snapshotId: published) }
+				(target, exact, result) = try await capture()
+			}
+		}
 		if let pixels {
 			guard result.files.publishedSnapshotID == pixels, result.elements == nil else { throw ClientError.pixels }
 			// Expose the ID only after the stored canonical projection grants pointer authority for this exact capture.
@@ -283,6 +308,7 @@ private enum Client {
 			application_name: result.target.app?.name,
 			// The traversal reads the title after target resolution, so a live title is newer there.
 			window_title: result.elements?.metadata.windowContext?.windowTitle ?? result.target.window?.title,
+			web_accessibility: web,
 			snapshot_id: result.files.publishedSnapshotID,
 			element_count: scope == nil ? result.elements?.metadata.elementCount ?? 0 : elements.count,
 			scope: scope,
@@ -438,6 +464,7 @@ private struct Inspection: Encodable {
 	let note: String?
 	let application_name: String?
 	let window_title: String?
+	let web_accessibility: WebAccessibility?
 	let snapshot_id: String?
 	let element_count: Int
 	let scope: InspectionScope?
@@ -454,6 +481,7 @@ private struct Inspection: Encodable {
 private struct InspectionOptions {
 	let ocr: Bool
 	let scope: ScopeRequest?
+	let web: WebAccessibilityPolicy
 }
 
 /// The scope element as found in this snapshot; `element` is its ID here.

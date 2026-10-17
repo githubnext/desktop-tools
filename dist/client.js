@@ -129,6 +129,13 @@ function bounded(data, field, limit = MAX_TEXT) {
     }
     return text;
 }
+/** The native argument that leaves a Chromium or Electron app's web accessibility as it is. */
+const KEEP_WEB_ACCESSIBILITY = "keep-web-accessibility";
+function validateWebAccessibility(request) {
+    if (request.web_accessibility !== undefined && typeof request.web_accessibility !== "boolean") {
+        throw new Error("Choose web_accessibility true or false.");
+    }
+}
 function validateScope(scope) {
     if (!scope || typeof scope !== "object" || Object.keys(scope).length !== 2
         || !("snapshot" in scope) || !("element" in scope)
@@ -275,6 +282,7 @@ async function inspect(native, request, signal) {
         if (mode !== "accessibility")
             throw new Error("A scope needs accessibility mode.");
     }
+    validateWebAccessibility(request);
     const savePath = await validateSave(request);
     const directory = await mkdtemp(join(tmpdir(), "desktop-tools-"));
     try {
@@ -284,6 +292,8 @@ async function inspect(native, request, signal) {
             args.push("ocr");
         if (request.scope)
             args.push("scope", request.scope.snapshot, request.scope.element);
+        if (request.web_accessibility === false)
+            args.push(KEEP_WEB_ACCESSIBILITY);
         const data = await native(args, signal, { target: request });
         if (request.scope && data.scope?.from_element !== request.scope.element) {
             throw new Error("Native inspection did not honor the requested scope.");
@@ -370,6 +380,9 @@ async function read(native, request, signal) {
         validateScope(request.scope);
         args.push(request.scope.snapshot, request.scope.element);
     }
+    validateWebAccessibility(request);
+    if (request.web_accessibility === false)
+        args.push(KEEP_WEB_ACCESSIBILITY);
     if (request.table !== undefined || request.row_offset !== undefined || request.max_rows !== undefined) {
         if (request.table !== true || !request.scope) {
             throw new Error("A table read needs table true and scope: the table, or the area that holds it, from an accessibility desktop_inspect.");
