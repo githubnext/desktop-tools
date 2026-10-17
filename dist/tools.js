@@ -269,7 +269,7 @@ export function desktopTools({ place, app }) {
         {
             name: "desktop_dialog_answer",
             op: "dialog-answer",
-            description: `Answer the one open dialog, alert or sheet of an exact target listed by desktop_dialog, without activating the app. Pass the same application or window target, plus either button with one listed title, or field with one listed text field index and text, which replaces that field's whole value. A button title must match exactly, including case, punctuation and ellipses, and be unique and enabled; there are no aliases such as "default" or "cancel". Native checks read the dialog afresh, bind the press to the process generation, window and button, and send one background Accessibility press. Text is set through Accessibility and read back; secure fields are refused. Buttons such as "Delete" or "Don't Save" discard unsaved work; choose them only deliberately. completed means the native service confirmed the press or the field's new value; the result refreshes the app's window inventory, since a dialog or its window may have closed. In an Open or Save panel the file name field and buttons can be answered, but choosing a folder or path is not supported. Never blindly repeat an interrupted answer; list the dialog again first.`,
+            description: `Answer the one open dialog, alert or sheet of an exact target listed by desktop_dialog. Pass the same application or window target, plus exactly one of: button with one listed title; field with one listed text field index and text, which replaces that field's whole value; or path, for an Open or Save panel only. A button title must match exactly, including case, punctuation and ellipses, and be unique and enabled; there are no aliases such as "default" or "cancel". Native checks read the dialog afresh, bind the press to the process generation, window and button, and send one background Accessibility press. Text is set through Accessibility and read back; secure fields are refused. Buttons such as "Delete" or "Don't Save" discard unsaved work; choose them only deliberately. completed means the native service confirmed the press or the field's new value; the result refreshes the app's window inventory, since a dialog or its window may have closed. Buttons and fields are answered in the background without activating the app. path takes an absolute path and chooses it in the panel without pressing its default button: an existing folder becomes the panel's folder; any other path names a file in an existing folder, which a Save panel takes as its folder and file name and an Open panel selects. This is foreground input: the native service activates the panel's app, verifies the exact panel has keyboard focus, and uses the panel's path field or Go to Folder (Command-Shift-G), so the real keyboard focus changes. completed means the panel read back the folder and, in a Save panel, the name; choosing a file in an Open panel, or a panel that exposes no folder, is unknown, so list the dialog before pressing its default button. Never blindly repeat an interrupted answer; list the dialog again first.`,
             parameters: {
                 type: "object",
                 required: ["target"],
@@ -278,6 +278,7 @@ export function desktopTools({ place, app }) {
                     button: { type: "string", minLength: 1, maxLength: 512 },
                     field: { type: "integer", minimum: 0, maximum: 1000 },
                     text: { type: "string", maxLength: 8192 },
+                    path: { type: "string", minLength: 1, maxLength: 4096 },
                 },
                 additionalProperties: false,
             },
@@ -727,11 +728,12 @@ export function desktopRequest(tool, args) {
         }
     }
     if (tool.op === "dialog-answer") {
-        const { button, field, text } = args;
-        const press = button !== undefined && field === undefined && text === undefined;
-        const enter = button === undefined && field !== undefined && text !== undefined;
-        if (!press && !enter) {
-            throw new Error("Supply one button title, or one field index with its text.");
+        const { button, field, text, path } = args;
+        const press = button !== undefined && field === undefined && text === undefined && path === undefined;
+        const enter = button === undefined && field !== undefined && text !== undefined && path === undefined;
+        const choose = path !== undefined && button === undefined && field === undefined && text === undefined;
+        if (!press && !enter && !choose) {
+            throw new Error("Supply one button title, one field index with its text, or one path.");
         }
     }
     const request = { op: tool.op };

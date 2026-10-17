@@ -37,7 +37,7 @@ export type DesktopManagement = {
         height: number;
     };
 };
-/** Press one button by its exact title, or replace one text field's value by its listed index. */
+/** Press one button by its exact title, replace one text field's value by its listed index, or choose a path in a file panel. */
 export type DesktopDialogAnswer = {
     op: "dialog-answer";
     target: DesktopAppTarget | DesktopWindowTarget;
@@ -46,6 +46,8 @@ export type DesktopDialogAnswer = {
 } | {
     field: number;
     text: string;
+} | {
+    path: string;
 });
 /** One status item from desktop_menubar_items: owner process generation, inventory index and its window if it has one. */
 export type DesktopStatusItemTarget = DesktopAppTarget & {

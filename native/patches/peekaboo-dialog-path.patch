@@ -1,0 +1,709 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/DialogOperationModels.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/DialogOperationModels.swift
+index 10248ba29..561ce3043 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/DialogOperationModels.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/DialogOperationModels.swift
+@@ -479,3 +479,42 @@ public struct PreparedDialogActionReceipt: Sendable, Codable, Equatable {
+         self.discoveryProof = discoveryProof
+     }
+ }
++
++/// Chooses one absolute path in one exact Open or Save panel, without pressing its default button.
++public struct FileDialogPathRequest: Sendable, Codable, Equatable {
++    public let target: DialogTargetSelector
++    public let path: String
++    public let focus: DialogForegroundFocusPolicy
++
++    public init(
++        target: DialogTargetSelector,
++        path: String,
++        focus: DialogForegroundFocusPolicy = DialogForegroundFocusPolicy()) throws
++    {
++        guard target.hasTarget else {
++            throw DesktopActionFailure.preDispatchRefusal(
++                reason: .invalidRequest,
++                message: "Choosing a file-dialog path requires an explicit app, PID, or window target.",
++                hint: "List the dialog and pass its exact owner.")
++        }
++        guard path.hasPrefix("/"), !path.contains("\0"), path.utf8.count <= 4096 else {
++            throw DesktopActionFailure.preDispatchRefusal(
++                reason: .invalidRequest,
++                message: "File-dialog paths must be absolute, at most 4096 bytes, and free of NUL characters.")
++        }
++        try focus.validate(operation: "File-dialog path")
++        self.target = target
++        self.path = path
++        self.focus = focus
++    }
++
++    private enum CodingKeys: String, CodingKey { case target, path, focus }
++
++    public init(from decoder: any Decoder) throws {
++        let container = try decoder.container(keyedBy: CodingKeys.self)
++        try self.init(
++            target: container.decode(DialogTargetSelector.self, forKey: .target),
++            path: container.decode(String.self, forKey: .path),
++            focus: container.decode(DialogForegroundFocusPolicy.self, forKey: .focus))
++    }
++}
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DialogService+FileDialogPath.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DialogService+FileDialogPath.swift
+new file mode 100644
+index 000000000..40958d865
+--- /dev/null
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DialogService+FileDialogPath.swift
+@@ -0,0 +1,264 @@
++import AppKit
++import AXorcist
++import Foundation
++import PeekabooFoundation
++
++@MainActor
++public protocol FileDialogPathProviding: Sendable {
++    func chooseFileDialogPath(_ request: FileDialogPathRequest) async throws -> DialogActionResult
++}
++
++extension DialogService: FileDialogPathProviding {
++    public func chooseFileDialogPath(_ request: FileDialogPathRequest) async throws -> DialogActionResult {
++        try await self.runDialogOperation(scope: Self.forcedDismissMutationScope, access: .write) {
++            let choice = try FileDialogPathChoice(request.path)
++            let candidates = try await self.targetedDialogCandidates(
++                target: request.target,
++                membership: .structuralMutation)
++            guard candidates.count == 1, let candidate = candidates.first else {
++                throw self.dialogCandidateRefusal(target: request.target, candidates: candidates)
++            }
++            guard self.isFileDialogElement(candidate.dialog) else {
++                throw Self.attributedDialogActionFailure(
++                    .preDispatchRefusal(
++                        reason: .operationUnsupported,
++                        message: "The dialog is not an Open or Save panel; no path was entered.",
++                        hint: "Answer it with a button or field instead."),
++                    target: candidate.target)
++            }
++            let plan = ForegroundDialogPlan(
++                target: candidate.target,
++                resolvedTarget: candidate.resolvedTarget,
++                window: candidate.window,
++                dialog: candidate.dialog)
++            return try await self.executeFileDialogPath(choice, plan: plan, focus: request.focus)
++        }
++    }
++
++    private func executeFileDialogPath(
++        _ choice: FileDialogPathChoice,
++        plan: ForegroundDialogPlan,
++        focus: DialogForegroundFocusPolicy) async throws -> DialogActionResult
++    {
++        var sequence = DesktopActionSequenceAccumulator()
++        do {
++            try await self.revalidateDialogTarget(
++                target: plan.target,
++                retainedWindow: plan.window,
++                retainedDialog: plan.dialog,
++                operation: "file-dialog path")
++            try await self.establishDialogWindowFocus(plan: plan, policy: focus)
++            try self.requireFileDialogKeyboardFocus(plan, autoFocus: focus.autoFocus)
++
++            let dialog = plan.dialog
++            if let outcome = try await self.ensureFileDialogExpandedIfNeeded(dialog: dialog) {
++                sequence.record(.outcome(outcome))
++            }
++            let isSavePanel = self.fileDialogNameField(in: dialog) != nil
++            // A Save panel takes the name in its own field; an Open panel selects the file Go to Folder reveals.
++            let destination = isSavePanel ? choice.directory : choice.path
++            var method: String
++            if destination == choice.directory, let pathField = self.fileDialogPathField(in: dialog) {
++                method = "path_textfield"
++                try sequence.record(.outcome(self.focusTextField(pathField)))
++                try sequence.record(.outcome(self.setFileDialogField(pathField, to: destination)))
++                try self.requireFileDialogKeyboardFocus(plan, autoFocus: focus.autoFocus)
++                try sequence.record(.outcome(self.fileDialogGlobalInput(operation: "commit the path field") {
++                    try self.syntheticInputDriver.tapKey(.return, modifiers: [])
++                }))
++                try await Task.sleep(for: .milliseconds(250))
++                if self.fileDialogDirectory(in: dialog) != choice.directory {
++                    method += "+go_to_folder"
++                    try await self.goToFolder(destination, plan: plan, focus: focus, sequence: &sequence)
++                }
++            } else {
++                method = "go_to_folder"
++                try await self.goToFolder(destination, plan: plan, focus: focus, sequence: &sequence)
++            }
++
++            // Navigation can rebuild the panel's fields, so find the name field again.
++            let nameField = isSavePanel ? self.fileDialogNameField(in: dialog) : nil
++            if let fileName = choice.fileName, let nameField {
++                try sequence.record(.outcome(self.focusTextField(nameField)))
++                try sequence.record(.outcome(self.setFileDialogField(nameField, to: fileName)))
++                try await Task.sleep(for: .milliseconds(150))
++            }
++
++            let directory = self.fileDialogDirectory(in: dialog)
++            let name = nameField.flatMap { $0.value() as? String }
++            let directoryVerified = directory == choice.directory
++            let nameVerified = choice.fileName.map { name == $0 } ?? true
++            // An Open panel's selection has no readback here, so choosing a file in one stays unverified.
++            let verified = directoryVerified && nameVerified && (choice.fileName == nil || nameField != nil)
++
++            var details = Self.dialogTargetDetails(plan.target)
++            details.merge([
++                "path": choice.path,
++                "directory": choice.directory,
++                "path_navigation_method": method,
++                "panel": isSavePanel ? "save" : "open",
++                "directory_readback": directory ?? "",
++                "directory_verified": String(directoryVerified),
++            ]) { _, new in new }
++            if let fileName = choice.fileName {
++                details["filename"] = fileName
++                details["filename_readback"] = name ?? ""
++                details["filename_verified"] = String(nameField != nil && nameVerified)
++            }
++
++            let resolution = sequence.successResolution()
++            guard let accepted = resolution.outcome, let delivery = accepted.delivery else {
++                throw DesktopActionFailure.indeterminate(
++                    delivery: nil,
++                    evidence: .completionUnknown,
++                    unitCount: resolution.mutationDisposition.unitCount,
++                    message: "File-dialog path entry finished without one canonical outcome.",
++                    hint: "Observe the file dialog before retrying.")
++            }
++            let outcome: DesktopActionOutcome = verified
++                ? .confirmedChange(delivery: delivery, unitCount: accepted.dispatchState.unitCount)
++                : .dispatchedUnverified(
++                    delivery: delivery,
++                    evidence: .deliveryAccepted,
++                    unitCount: accepted.dispatchState.unitCount)
++            return DialogActionResult(
++                success: true,
++                action: .handleFileDialog,
++                details: details,
++                outcome: outcome,
++                targetReceipt: plan.target.actionTargetReceipt,
++                targetWindowIdentity: plan.target.identity,
++                targetWindowBounds: plan.target.bounds,
++                focusedElement: plan.target.focusedElement,
++                resolvedTarget: plan.resolvedTarget)
++        } catch {
++            throw Self.preservingFileDialogFailure(error, after: sequence, target: plan.target)
++        }
++    }
++
++    /// Opens Go to Folder, fills its field, and commits it while the retained panel keeps keyboard focus.
++    private func goToFolder(
++        _ path: String,
++        plan: ForegroundDialogPlan,
++        focus: DialogForegroundFocusPolicy,
++        sequence: inout DesktopActionSequenceAccumulator) async throws
++    {
++        let before = self.collectTextFields(from: plan.dialog)
++        try self.requireFileDialogKeyboardFocus(plan, autoFocus: focus.autoFocus)
++        try sequence.record(.outcome(self.fileDialogGlobalInput(operation: "open Go to Folder") {
++            try self.syntheticInputDriver.hotkey(keys: ["cmd", "shift", "g"], holdDuration: 0.05)
++        }))
++        try await Task.sleep(for: .milliseconds(300))
++        let added = self.collectTextFields(from: plan.dialog).filter { field in
++            !before.contains { Self.sameElement($0, field) }
++        }
++        if added.count == 1, let field = added.first,
++           field.isAttributeSettable(named: AXAttributeNames.kAXValueAttribute)
++        {
++            try sequence.record(.outcome(self.setFileDialogField(field, to: path)))
++        } else {
++            try sequence.record(.outcome(self.fileDialogGlobalInput(operation: "select Go to Folder text") {
++                try self.syntheticInputDriver.hotkey(keys: ["cmd", "a"], holdDuration: 0.05)
++            }))
++            try await Task.sleep(for: .milliseconds(75))
++            try sequence.record(.outcome(self.typeTextValue(path, delay: 5000)))
++        }
++        try sequence.record(.outcome(self.fileDialogGlobalInput(operation: "commit Go to Folder") {
++            try self.syntheticInputDriver.tapKey(.return, modifiers: [])
++        }))
++        try await Task.sleep(for: .milliseconds(450))
++    }
++
++    private func setFileDialogField(_ field: Element, to value: String) throws -> DesktopActionOutcome {
++        if field.isAttributeSettable(named: AXAttributeNames.kAXValueAttribute),
++           field.setValue(value, forAttribute: AXAttributeNames.kAXValueAttribute)
++        {
++            return .dispatchedUnverified(
++                delivery: .init(mechanism: .accessibilityValue, mode: .background),
++                evidence: .deliveryAccepted,
++                unitCount: .one)
++        }
++        var sequence = DesktopActionSequenceAccumulator()
++        try sequence.record(.outcome(self.fileDialogGlobalInput(operation: "select the field text") {
++            try self.syntheticInputDriver.hotkey(keys: ["cmd", "a"], holdDuration: 0.05)
++        }))
++        usleep(75000)
++        try sequence.record(.outcome(self.typeTextValue(value, delay: 5000)))
++        guard let outcome = sequence.successResolution().outcome else {
++            throw DesktopActionFailure.indeterminate(
++                evidence: .completionUnknown,
++                message: "Typing into the file-dialog field finished without one canonical outcome.",
++                hint: "Observe the file dialog before retrying.")
++        }
++        return outcome
++    }
++
++    private func requireFileDialogKeyboardFocus(_ plan: ForegroundDialogPlan, autoFocus: Bool) throws {
++        do {
++            try Task.checkCancellation()
++            try self.focusService.requireDialogGlobalKeyboardFocus(
++                target: plan.target,
++                retainedWindow: plan.window,
++                dialog: plan.dialog)
++        } catch {
++            throw Self.dialogWindowFocusFailure(autoFocus: autoFocus, cause: error)
++        }
++    }
++
++    private func fileDialogPathField(in dialog: Element) -> Element? {
++        self.collectTextFields(from: dialog).first { $0.attribute(Attribute<String>("AXIdentifier")) == "PathTextField" }
++    }
++
++    private func fileDialogNameField(in dialog: Element) -> Element? {
++        self.collectTextFields(from: dialog).first {
++            $0.attribute(Attribute<String>("AXIdentifier")) == "saveAsNameTextField"
++        }
++    }
++
++    /// The panel's current directory, read from its path field; nil when the panel doesn't expose one.
++    private func fileDialogDirectory(in dialog: Element) -> String? {
++        guard let value = self.fileDialogPathField(in: dialog)?.value() as? String, value.hasPrefix("/") else {
++            return nil
++        }
++        return FileDialogPathChoice.canonical(value)
++    }
++}
++
++struct FileDialogPathChoice: Equatable {
++    let path: String
++    let directory: String
++    let fileName: String?
++
++    /// An existing directory is chosen as the panel's directory; anything else names a file in an existing one.
++    init(_ path: String) throws {
++        let canonical = Self.canonical(path)
++        var isDirectory: ObjCBool = false
++        if FileManager.default.fileExists(atPath: canonical, isDirectory: &isDirectory), isDirectory.boolValue {
++            self.init(path: canonical, directory: canonical, fileName: nil)
++            return
++        }
++        // A missing file's symlinks don't resolve, so resolve its folder on its own.
++        let url = URL(fileURLWithPath: path).standardizedFileURL
++        let parent = Self.canonical(url.deletingLastPathComponent().path)
++        let name = url.lastPathComponent
++        guard !name.isEmpty, name != "/",
++              FileManager.default.fileExists(atPath: parent, isDirectory: &isDirectory), isDirectory.boolValue
++        else {
++            throw DesktopActionFailure.preDispatchRefusal(
++                reason: .invalidRequest,
++                message: "The path's folder \(parent) doesn't exist; no path was entered.",
++                hint: "Choose a path inside an existing folder.")
++        }
++        self.init(path: (parent as NSString).appendingPathComponent(name), directory: parent, fileName: name)
++    }
++
++    init(path: String, directory: String, fileName: String?) {
++        self.path = path
++        self.directory = directory
++        self.fileName = fileName
++    }
++
++    static func canonical(_ path: String) -> String {
++        URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
++    }
++}
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DialogService+ForegroundOutcomes.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DialogService+ForegroundOutcomes.swift
+index d850a086a..f3d304b10 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DialogService+ForegroundOutcomes.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DialogService+ForegroundOutcomes.swift
+@@ -925,7 +925,7 @@ extension DialogService {
+             causeDescription: cause.localizedDescription)
+     }
+ 
+-    private func establishDialogWindowFocus(
++    func establishDialogWindowFocus(
+         plan: ForegroundDialogPlan,
+         policy: DialogForegroundFocusPolicy) async throws
+     {
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DialogFileDialogPathTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DialogFileDialogPathTests.swift
+new file mode 100644
+index 000000000..7f2ee1f47
+--- /dev/null
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DialogFileDialogPathTests.swift
+@@ -0,0 +1,74 @@
++import Foundation
++import PeekabooFoundation
++import Testing
++@testable import PeekabooAutomationKit
++
++@Suite("Exact file-dialog path")
++struct DialogFileDialogPathTests {
++    @Test
++    func `an existing folder is chosen as the panel's folder`() throws {
++        let folder = try Self.temporaryFolder()
++        defer { try? FileManager.default.removeItem(atPath: folder) }
++
++        let choice = try FileDialogPathChoice(folder + "/")
++        #expect(choice.directory == folder)
++        #expect(choice.path == folder)
++        #expect(choice.fileName == nil)
++    }
++
++    @Test
++    func `any other path names a file in its resolved folder`() throws {
++        let folder = try Self.temporaryFolder()
++        defer { try? FileManager.default.removeItem(atPath: folder) }
++        let link = folder + "-link"
++        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: folder)
++        defer { try? FileManager.default.removeItem(atPath: link) }
++
++        let choice = try FileDialogPathChoice(link + "/./Report.txt")
++        #expect(choice.directory == folder)
++        #expect(choice.fileName == "Report.txt")
++        #expect(choice.path == folder + "/Report.txt")
++    }
++
++    @Test
++    func `a path in a missing folder is refused before input`() throws {
++        let folder = try Self.temporaryFolder()
++        defer { try? FileManager.default.removeItem(atPath: folder) }
++
++        #expect(throws: DesktopActionFailure.self) {
++            try FileDialogPathChoice(folder + "/missing/Report.txt")
++        }
++    }
++
++    @Test
++    func `requests need an exact owner and one absolute path`() throws {
++        let target = try DialogTargetSelector(processIdentifier: 42, windowID: 7)
++        #expect(throws: DesktopActionFailure.self) {
++            try FileDialogPathRequest(target: target, path: "relative/path")
++        }
++        #expect(throws: DesktopActionFailure.self) {
++            try FileDialogPathRequest(target: target, path: "/tmp/a\0b")
++        }
++        #expect(throws: DesktopActionFailure.self) {
++            try FileDialogPathRequest(target: target, path: "/" + String(repeating: "a", count: 4096))
++        }
++
++        let request = try FileDialogPathRequest(target: target, path: "/tmp/Report.txt")
++        let decoded = try JSONDecoder().decode(FileDialogPathRequest.self, from: JSONEncoder().encode(request))
++        #expect(decoded == request)
++
++        let invalid = try JSONEncoder().encode(request)
++        let json = try #require(String(data: invalid, encoding: .utf8))
++            .replacingOccurrences(of: "\\/tmp\\/Report.txt", with: "Report.txt")
++            .replacingOccurrences(of: "/tmp/Report.txt", with: "Report.txt")
++        #expect(throws: DesktopActionFailure.self) {
++            try JSONDecoder().decode(FileDialogPathRequest.self, from: Data(json.utf8))
++        }
++    }
++
++    private static func temporaryFolder() throws -> String {
++        let url = FileManager.default.temporaryDirectory.appendingPathComponent("file-dialog-path-\(UUID().uuidString)")
++        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
++        return FileDialogPathChoice.canonical(url.path)
++    }
++}
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeFileDialogPath.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeFileDialogPath.swift
+new file mode 100644
+index 000000000..63e950e60
+--- /dev/null
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeFileDialogPath.swift
+@@ -0,0 +1,66 @@
++import Foundation
++import PeekabooAutomationKit
++import PeekabooFoundation
++
++extension PeekabooBridgeClient {
++    /// Chooses one path in one exact Open or Save panel in the Bridge host, without pressing its default button.
++    public func exactFileDialogPath(_ request: FileDialogPathRequest) async throws -> DialogActionResult {
++        let reply = try await self.sendCarryingActionOutcome(.exactFileDialogPath(request))
++        switch reply.response {
++        case let .dialogResult(result):
++            guard result.success,
++                  result.action == .handleFileDialog,
++                  let outcome = result.outcome,
++                  outcome.state == .confirmedChange || outcome.state == .dispatchedUnverified,
++                  let targetReceipt = result.targetReceipt,
++                  request.target.processIdentifier.map({ $0 == targetReceipt.processIdentifier }) ?? true,
++                  request.target.windowID.map({ $0 == targetReceipt.windowID }) ?? true
++            else {
++                throw DesktopActionFailure.indeterminate(
++                    route: .bridge,
++                    evidence: .completionUnknown,
++                    unitCount: reply.outcome?.outcome.dispatchState.unitCount,
++                    message: "Bridge returned invalid exact file-dialog path evidence.",
++                    hint: "Observe the dialog before retrying and update the runtime host.")
++            }
++            let routedOutcome = outcome.routed(to: .bridge)
++            if let projected = reply.outcome?.outcome, projected != routedOutcome {
++                throw DesktopActionFailure.indeterminate(
++                    route: .bridge,
++                    delivery: outcome.delivery,
++                    evidence: .completionUnknown,
++                    unitCount: outcome.dispatchState.unitCount,
++                    message: "Bridge exact file-dialog path carried contradictory canonical outcomes.",
++                    hint: "Observe the dialog before retrying and update the runtime host.")
++            }
++            return DialogActionResult(
++                success: result.success,
++                action: result.action,
++                details: result.details,
++                outcome: routedOutcome,
++                targetReceipt: targetReceipt,
++                targetWindowIdentity: result.targetWindowIdentity,
++                targetWindowBounds: result.targetWindowBounds,
++                focusedElement: result.focusedElement,
++                resolvedTarget: result.resolvedTarget)
++        case let .error(envelope):
++            if let failure = envelope.desktopActionFailure ?? reply.outcome.flatMap({ projection in
++                DesktopActionFailure(
++                    outcome: projection.outcome,
++                    message: envelope.message,
++                    hint: envelope.actionFailureHint,
++                    causeDescription: envelope.actionFailureCauseDescription ?? envelope.details)
++            }) {
++                throw failure.routed(to: .bridge)
++            }
++            throw envelope
++        default:
++            throw DesktopActionFailure.indeterminate(
++                route: .bridge,
++                evidence: .completionUnknown,
++                unitCount: reply.outcome?.outcome.dispatchState.unitCount,
++                message: "Bridge returned an unexpected exact file-dialog path response.",
++                hint: "Observe the dialog before retrying and update the runtime host.")
++        }
++    }
++}
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
+index e449dc0e2..bdaff7381 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
+@@ -155,6 +155,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
+     case exactDialogDismiss
+     case exactDialogEnterText
+     case exactDialogForceDismiss
++    case exactFileDialogPath
+     // Snapshots/cache
+     case createSnapshot
+     case storeDetectionResult
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
+index dff541e62..768089912 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
+@@ -132,6 +132,7 @@ extension PeekabooBridgeOperation {
+         .exactDialogDismiss,
+         .exactDialogEnterText,
+         .exactDialogForceDismiss,
++        .exactFileDialogPath,
+         .createSnapshot,
+         .storeDetectionResult,
+         .getDetectionResult,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
+index 164a0592d..690a04547 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
+@@ -705,6 +705,15 @@ extension PeekabooBridgeOperationResultSemantics {
+                 targetPolicy: .responseResolved,
+                 responseFamilies: [.dialogResult],
+                 responseTargetEvidence: .dialog)
++        case .exactFileDialogPath:
++            descriptor(
++                ownership: .service,
++                typedResponse: .dialogResult,
++                requiredPermissions: [.accessibility, .postEvent],
++                completion: .dispatchedUnverified(compositeForeground),
++                targetPolicy: .responseResolved,
++                responseFamilies: [.dialogResult],
++                responseTargetEvidence: .dialog)
+         case .createSnapshot:
+             descriptor(
+                 completion: .readOnly,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationReceiptModels.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationReceiptModels.swift
+index ea7dbf502..f207b01a1 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationReceiptModels.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationReceiptModels.swift
+@@ -1290,7 +1290,7 @@ extension PeekabooBridgeOperationReceiptSemantics {
+         let expectedAction: DialogActionType? = switch request.operation {
+         case .dialogClickButton, .backgroundDialogClickButton, .exactDialogClickButton: .clickButton
+         case .dialogEnterText, .exactDialogEnterText: .enterText
+-        case .dialogHandleFile: .handleFileDialog
++        case .dialogHandleFile, .exactFileDialogPath: .handleFileDialog
+         case .dialogDismiss, .exactDialogDismiss, .exactDialogForceDismiss: .dismiss
+         default: nil
+         }
+@@ -1325,6 +1325,8 @@ extension PeekabooBridgeOperationReceiptSemantics {
+             try self.validateDialogTargetReceipt(result, selector: payload.target)
+         case let .exactDialogForceDismiss(payload):
+             try self.validateDialogTargetReceipt(result, selector: payload.target)
++        case let .exactFileDialogPath(payload):
++            try self.validateDialogTargetReceipt(result, selector: payload.target)
+         default:
+             break
+         }
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
+index 6a4c10c10..888a38aa6 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
+@@ -547,6 +547,7 @@ extension PeekabooBridgeOperationResultSemantics {
+              .exactDialogDismiss,
+              .exactDialogEnterText,
+              .exactDialogForceDismiss,
++             .exactFileDialogPath,
+              .createSnapshot,
+              .storeDetectionResult,
+              .getDetectionResult,
+@@ -619,6 +620,8 @@ extension PeekabooBridgeOperationResultSemantics {
+             return [.confirmedChange]
+         case .exactDialogEnterText:
+             return [.confirmedNoChange, .dispatchedUnverified]
++        case .exactFileDialogPath:
++            return [.confirmedChange, .dispatchedUnverified]
+         case .relaunchApplicationWithOptions:
+             return [.confirmedChange, .dispatchedUnverified]
+         case .launchApplication, .launchApplicationWithOptions, .activateApplication, .hideApplication:
+@@ -983,6 +986,8 @@ extension PeekabooBridgeOperationResultSemantics {
+             return [rule(axBackground, .exact(1))]
+         case .exactDialogForceDismiss:
+             return [rule(globalForeground, .exact(1))]
++        case .exactFileDialogPath:
++            return [rule(globalForeground, .variable), rule(compositeForeground, .variable)]
+         case let .desktopObservation(payload):
+             if case let .menubarPopover(_, openIfNeeded) = payload.target,
+                openIfNeeded != nil
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
+index 6c12ec2b9..fd2044683 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
+@@ -118,6 +118,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
+     case exactDialogDismiss(PreparedDialogActionReceipt)
+     case exactDialogEnterText(DialogInputExecutionRequest)
+     case exactDialogForceDismiss(DialogForcedDismissExecutionRequest)
++    case exactFileDialogPath(FileDialogPathRequest)
+     case createSnapshot(PeekabooBridgeCreateSnapshotRequest)
+     case storeDetectionResult(PeekabooBridgeStoreDetectionRequest)
+     case getDetectionResult(PeekabooBridgeGetDetectionRequest)
+@@ -253,6 +254,7 @@ extension PeekabooBridgeRequest {
+         case .exactDialogDismiss: .exactDialogDismiss
+         case .exactDialogEnterText: .exactDialogEnterText
+         case .exactDialogForceDismiss: .exactDialogForceDismiss
++        case .exactFileDialogPath: .exactFileDialogPath
+         case .createSnapshot: .createSnapshot
+         case .storeDetectionResult: .storeDetectionResult
+         case .getDetectionResult: .getDetectionResult
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
+index d67180862..e761bf6d9 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
+@@ -128,7 +128,7 @@ extension PeekabooBridgeServer {
+              .dialogHandleFile, .dialogDismiss,
+              .dialogListElements, .targetedDialogListElements, .prepareDialogAction,
+              .exactDialogClickButton, .exactDialogDismiss, .exactDialogEnterText,
+-             .exactDialogForceDismiss:
++             .exactDialogForceDismiss, .exactFileDialogPath:
+             return try await self.handleDialogRequest(request)
+         case .createSnapshot, .storeDetectionResult, .getDetectionResult, .ownsSnapshot, .storeScreenshot,
+              .storeObservationSnapshot, .storeAnnotatedScreenshot, .listSnapshots, .getMostRecentSnapshot,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+ServiceHandlers.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+ServiceHandlers.swift
+index c56f4d521..f457b6706 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+ServiceHandlers.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+ServiceHandlers.swift
+@@ -871,6 +871,8 @@ extension PeekabooBridgeServer {
+             return try await self.handleExactDialogEnterText(payload)
+         case let .exactDialogForceDismiss(payload):
+             return try await self.handleExactDialogForceDismiss(payload)
++        case let .exactFileDialogPath(payload):
++            return try await self.handleExactFileDialogPath(payload)
+         default:
+             throw Self.invalidRequest(for: request)
+         }
+@@ -1171,6 +1173,38 @@ extension PeekabooBridgeServer {
+             mutation: .init(outcome: outcome, target: .responseResolved))
+     }
+ 
++    private func handleExactFileDialogPath(
++        _ payload: FileDialogPathRequest) async throws -> PeekabooBridgeHandledResponse
++    {
++        guard let service = self.services.dialogs as? any FileDialogPathProviding else {
++            throw DesktopActionFailure.preDispatchRefusal(
++                reason: .runtimeIncompatible,
++                message: "This runtime host cannot choose exact file-dialog paths; no path was entered.",
++                hint: "Update the runtime host before retrying.")
++        }
++        let result = try await service.chooseFileDialogPath(payload)
++        try Self.throwExactDialogRefusalIfReported(result, operation: "Exact file-dialog path")
++        guard result.success,
++              result.action == .handleFileDialog,
++              let outcome = result.outcome,
++              outcome.state == .confirmedChange || outcome.state == .dispatchedUnverified,
++              outcome.delivery?.mode == .foreground,
++              let targetReceipt = result.targetReceipt,
++              payload.target.processIdentifier.map({ $0 == targetReceipt.processIdentifier }) ?? true,
++              payload.target.windowID.map({ $0 == targetReceipt.windowID }) ?? true
++        else {
++            throw DesktopActionFailure.indeterminate(
++                delivery: result.outcome?.delivery,
++                evidence: .completionUnknown,
++                unitCount: result.outcome?.dispatchState.unitCount,
++                message: "Exact file-dialog path returned invalid outcome or target evidence.",
++                hint: "Observe the dialog before retrying and update the execution host.")
++        }
++        return .init(
++            response: .dialogResult(result),
++            mutation: .init(outcome: outcome, target: .responseResolved))
++    }
++
+     private func handleCreateSnapshot(
+         _ payload: PeekabooBridgeCreateSnapshotRequest) async throws -> PeekabooBridgeResponse
+     {
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
+index 89e126c38..f716c349a 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
+@@ -338,6 +338,7 @@ struct PeekabooBridgeOperationResultSemanticsTests {
+             .clipboardImageWrite,
+             .menuCommand,
+             .clipboardFilesWrite,
++            .exactFileDialogPath,
+         ]
+         let classified = Set(PeekabooBridgeOperation.allCases.filter(\.mutatesDesktop))
+         #expect(classified == expected)
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
+index bac411600..2d9916f27 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
+@@ -28,7 +28,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
+ 
+         // This count is intentionally reviewed whenever the wire enum grows. The exhaustive
+         // policy switches also make a missing classification a compile error.
+-        #expect(operations.count == 126)
++        #expect(operations.count == 127)
+ 
+         func partition<Value: Equatable>(_ values: [Value], by keyPath: KeyPath<Semantics.OperationPolicy, Value>) {
+             let groups = values.map { expected in
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
+index b35512c4c..06421f438 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
+@@ -9,7 +9,7 @@ struct PeekabooBridgeRequestPlanTests {
+     @Test
+     func `Every wire operation has one complete static descriptor`() {
+         let operations = PeekabooBridgeOperation.allCases
+-        #expect(operations.count == 126)
++        #expect(operations.count == 127)
+ 
+         let descriptors = operations.map(Semantics.operationDescriptor(for:))
+         #expect(descriptors.map(\.operation) == operations)
+@@ -78,6 +78,7 @@ struct PeekabooBridgeRequestPlanTests {
+             .exactDialogForceDismiss,
+             .clickMenuBarItemIndex,
+             .literalInsert,
++            .exactFileDialogPath,
+         ]
+         let accessibility: Set<PeekabooBridgeOperation> = [
+             .inspectAccessibilityTree,
