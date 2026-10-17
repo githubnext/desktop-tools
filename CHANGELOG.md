@@ -205,7 +205,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The first release: a signed, notarized Desktop Tools menu bar app, and the desktop tools served over MCP. ([#28](https://github.com/githubnext/desktop-tools/pull/28), [#29](https://github.com/githubnext/desktop-tools/pull/29), [#12](https://github.com/githubnext/desktop-tools/pull/12))
 
-[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/githubnext/desktop-tools/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/githubnext/desktop-tools/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/githubnext/desktop-tools/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/githubnext/desktop-tools/compare/v0.12.0...v0.13.0
