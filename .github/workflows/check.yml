@@ -34,6 +34,8 @@ jobs:
           node-version: 24
       # Unsigned: signing belongs to each embedding app.
       - run: node dist/build.js --out build --scratch .build/native
+      # The host's caller and self-target rules; Peekaboo's own tests run with npm run peekaboo-test.
+      - run: swift test --package-path native --scratch-path .build/native --filter DesktopToolsCallersTests
       # Embedders rebuild into the same output; notices from other sources must survive.
       - run: |
           mkdir -p build/Licenses/embedder && echo kept > build/Licenses/embedder/NOTICE

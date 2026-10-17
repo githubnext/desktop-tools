@@ -4,6 +4,14 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Added
+
+- The Desktop Tools app asks once per agent, such as Claude Code or a terminal app, "Allow *name* to control this Mac?", and refuses every request from an agent you haven't allowed with `CALLER_NOT_APPROVED`, listings and captures included, without making it wait. Agents are recognized by their validated signature, or by their path when unsigned, and **Approved Agents** in the menu revokes, allows or forgets each one. After updating, each agent you use is asked about once. Recent Activity names the agent, such as `claude-code`, instead of `node`. Embedding apps opt in with `desktop_tools_set_caller_handler`. ([#PR](https://github.com/githubnext/desktop-tools/pull/PR))
+
+### Changed
+
+- Agent input aimed at any Desktop Tools process, including another build of it, or sent while one of its prompts or menus is open, is refused with `SELF_TARGET_REFUSED`, so only the user can answer its prompts or choose Pause All Input. Agents can still observe them. ([#PR](https://github.com/githubnext/desktop-tools/pull/PR))
+
 ## [0.13.1] - 2026-10-17
 
 ### Fixed

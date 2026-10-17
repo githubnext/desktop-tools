@@ -585,3 +585,9 @@ the update.
 - **Result contract.** The response is now `int`: `PeekabooBridgeWebAccessibilityChange` (0 already on, 1 turned on with `AXManualAccessibility`, 2 with `AXEnhancedUserInterface`, 3 unsupported). Outcomes are unchanged otherwise.
 - **Checked live.** In Chrome 155 with `AXEnhancedUserInterface` on, window moves and resizes still read back the exact requested geometry, so they don't turn it off around the change.
 - **Tests.** No operation is added.
+
+`peekaboo-caller-admission.patch` gives the `operationAdmission` hook what the embedding app needs to approve callers and keep agent input off its own UI.
+- **Admission.** The hook now takes a `PeekabooBridgeOperationAdmission`: the operation, whether it mutates the desktop, the client's pid from the socket's audit token, and the pid the request targets when one can be found. It returns a refusal message as before.
+- **Target.** The target is the resolved window's owner, else the scope's process, else the first process identity, window identity or action receipt found in the request by reflection (at most six levels deep), else the owner of the window of the snapshot the request names. `snapshotWindow` becomes internal for that.
+- **Handshake.** The hook is also asked at the handshake, as `permissionsStatus`, so a refused client learns why before it asks for anything; the refusal is a `permissionDenied` envelope and the client gets no operations.
+- **Tests.** The admission test checks the client pid, a new test checks targets from a scope and from a request's process identity, and another checks a handshake refusal. No operation is added.
