@@ -263,6 +263,10 @@ function makeFixtures() {
 	writeFileSync(plain, "Live check plain document.\nSecond line.\n");
 	const rich = join(root, `live-rich-${run}.rtf`);
 	writeFileSync(rich, "{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Helvetica;}}\\f0\\fs28 Live check rich document. Replace WORD here.\\par}");
+	// TextEdit takes an image paste into an RTFD document; into an .rtf one it asks to convert first.
+	const rtfd = join(root, `live-rtfd-${run}.rtfd`);
+	mkdirSync(rtfd);
+	writeFileSync(join(rtfd, "TXT.rtf"), "{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Helvetica;}}\\f0\\fs28 Live check RTFD document.\\par}");
 	const page = join(root, `live-page-${run}.html`);
 	writeFileSync(page, PAGE(`Live page ${run}`));
 	const sources = join(root, "paste-sources");
@@ -270,7 +274,7 @@ function makeFixtures() {
 	for (const name of ["pasted-a.txt", "pasted-b.txt", "item-02.txt"]) writeFileSync(join(sources, name), `${name}\n`);
 	const image = join(root, "fixture.png");
 	writeFileSync(image, png(64, 48, 17));
-	return { root, folder, plain, rich, page, image, sources, captures: join(root, "captures") };
+	return { root, folder, plain, rich, rtfd, page, image, sources, captures: join(root, "captures") };
 }
 
 // ---------- session: what the harness opened, and how to put it back ----------
@@ -338,7 +342,7 @@ class Session {
 	}
 
 	textedit(kind) {
-		const path = kind === "rich" ? this.fixtures.rich : this.fixtures.plain;
+		const path = this.fixtures[kind];
 		return this.once(`textedit-${kind}`, () =>
 			this.openWindow(path, TEXTEDIT, `live-${kind}-${run}`, `TextEdit ${kind} document`),
 		);
@@ -623,17 +627,18 @@ check(107, "desktop_read leaves Safari's web accessibility alone and reports not
 	);
 });
 
-check(99, "desktop_insert pastes a PNG into a TextEdit rich document and restores the clipboard", async (s, m) => {
+check(99, "desktop_insert pastes a PNG into a TextEdit RTFD document and restores the clipboard", async (s, m) => {
 	const insert = m.tools.get("desktop_insert");
 	if (!insert?.inputSchema?.properties?.format) skip("this build's desktop_insert has no attachment format (#99 not in it)");
 	await s.clipboard();
-	const win = await s.textedit("rich");
+	const win = await s.textedit("rtfd");
 	const { snap, els } = await s.inspect(win);
 	const area = findOrSkip(els, "AXTextArea", null, "text area");
 	await m.call("desktop_click", { snapshot: snap, element: area.id });
 	const fresh = await s.inspect(win);
 	const known = `live-check-known-${run}`;
-	await m.call("desktop_clipboard_write", { text: known });
+	const write = await m.call("desktop_clipboard_write", { text: known });
+	if (write.outcome !== "completed") return expect(false, `clipboard write: ${evidence(write)}`);
 	const result = await m.call("desktop_insert", { snapshot: fresh.snap, format: "image", path: s.fixtures.image });
 	const after = await m.call("desktop_clipboard_read", { format: "text" });
 	const act = action(result);
@@ -681,7 +686,8 @@ check(96, "clipboard image save_path with a mismatched extension is refused and 
 
 check(96, "clipboard image save_path with no image saves null and writes nothing", async (s, m) => {
 	await s.clipboard();
-	await m.call("desktop_clipboard_write", { text: `no image ${run}` });
+	const write = await m.call("desktop_clipboard_write", { text: `no image ${run}` });
+	if (write.outcome !== "completed") return expect(false, `clipboard write: ${evidence(write)}`);
 	const out = join(s.fixtures.captures, "clip-none.png");
 	const read = await m.call("desktop_clipboard_read", { format: "image", save_path: out });
 	return expect(read.data.saved === null && !existsSync(out), `saved ${brief(read.data.saved)}; file ${existsSync(out) ? "written" : "absent"}`);
@@ -720,11 +726,11 @@ check(89, "expect: a condition that already holds is refused and no key is sent"
 });
 
 check(89, "expect: a condition that never holds stays unknown, input sent once", async (s, m) => {
-	const win = await s.textedit("plain");
-	const { snap } = await s.inspect(win);
-	const result = await m.call("desktop_key", {
-		snapshot: snap,
-		key: "right",
+	await s.textedit("plain");
+	// Background keys come back completed and expect leaves those alone, so this needs input macOS can't confirm:
+	// a system key. F19 has no default binding.
+	const result = await m.call("desktop_system_key", {
+		key: "f19",
 		expect: { until: "window_appears", bundle_id: TEXTEDIT, title_contains: `never-${run}`, timeout_ms: 1000 },
 	});
 	const exp = dig(result.data, "expectation");
@@ -732,17 +738,29 @@ check(89, "expect: a condition that never holds stays unknown, input sent once",
 });
 
 check(89, "expect: Command-Space with window_appears for Spotlight completes (foreground system key)", async (s, m) => {
+	// macOS 27 hosts Spotlight in Siri AI (com.apple.campo); earlier releases in com.apple.Spotlight.
+	let host = null;
+	for (const bundleId of ["com.apple.campo", "com.apple.Spotlight"]) {
+		if (await s.runningTarget(bundleId)) {
+			host = bundleId;
+			break;
+		}
+	}
+	if (!host) skip("no Spotlight host app is running");
 	const result = await m.call("desktop_system_key", {
 		key: "space",
 		modifiers: ["command"],
-		expect: { until: "window_appears", bundle_id: "com.apple.Spotlight", timeout_ms: 3000 },
+		expect: { until: "window_appears", bundle_id: host, timeout_ms: 3000 },
 	});
-	await sleep(300);
-	await m.call("desktop_system_key", { key: "escape" });
 	const exp = dig(result.data, "expectation");
+	// Escape goes to the frontmost app, so send it only when Spotlight was seen open.
+	if (exp?.status === "matched") {
+		await sleep(300);
+		await m.call("desktop_system_key", { key: "escape" });
+	}
 	return expect(
 		result.outcome === "completed" && exp?.status === "matched",
-		`${evidence(result, "native_outcome", "expectation")}; Spotlight dismissed with escape`,
+		`${host}: ${evidence(result, "native_outcome", "expectation")}${exp?.status === "matched" ? "; dismissed with escape" : ""}`,
 	);
 });
 

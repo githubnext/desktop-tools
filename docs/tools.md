@@ -39,7 +39,7 @@ Captures go through ScreenCaptureKit, which every Peekaboo process for the user 
 
 `desktop_wait` replaces polling `desktop_inspect` or `desktop_windows` after slow work such as a launch, a page load, an export or a dialog opening. Each call waits for one condition (`until`):
 
-- `window_appears`: an app, by `bundle_id` or `pid`, has a window that is on screen, minimized or on a Space, optionally with an exact `title` or a `title_contains` substring. `window_gone`: the window `pid` and `window` is no longer listed, or its app quit.
+- `window_appears`: an app, by `bundle_id` or `pid`, has a window that is on screen, minimized, or on another Space or in a hidden app (a window macOS keeps listed but ordered out on the current Space, such as the Spotlight panel, doesn't count), optionally with an exact `title` or a `title_contains` substring. `window_gone`: the window `pid` and `window` is no longer listed, or its app quit.
 - `dialog_appears`, `dialog_gone`: `desktop_dialog` finds a dialog, alert or sheet in app `pid`, or in its window `window`, or finds none.
 - `element_appears`, `element_gone`: an element of window `pid` and `window` matches `element`, an exact role and at least one of an exact title, value or identifier.
 - `text_changes`, `text_equals`, `text_contains`: the window's text, a `scope`'s text, or the value of the one element `element` matches, differs from the first poll, equals `text` or contains it.

@@ -72,6 +72,8 @@ const patches = [
     "peekaboo-secure-subrole.patch",
     "peekaboo-web-accessibility-enhanced-ui.patch",
     "peekaboo-caller-admission.patch",
+    "peekaboo-clipboard-image-export-allowlist.patch",
+    "peekaboo-paste-window-release.patch",
 ].map((name) => join(native, "patches", name));
 function spawn(command, env) {
     return spawnSync(command[0], command.slice(1), { encoding: "utf8", env: env ?? process.env });
@@ -144,6 +146,23 @@ try {
 }
 finally {
     rmSync(temporary, { recursive: true, force: true });
+}
+// The embedded host silently drops operations outside Peekaboo's embedded allowlist, so a new operation
+// reached clients only as "not supported". Fail the build instead.
+const operationList = (source, start) => {
+    const from = source.indexOf(start);
+    if (from < 0)
+        throw new Error(`Cannot find ${start} in the native sources`);
+    const block = source.slice(from + start.length, source.indexOf("]", from + start.length));
+    return new Set([...block.matchAll(/\.(\w+)/g)].map((match) => match[1]));
+};
+const policy = readFileSync(join(checkoutPath, "Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift"), "utf8");
+const remote = operationList(policy, "remoteDefaultAllowlist: Set<PeekabooBridgeOperation> = [");
+const excluded = operationList(policy, "remoteDefaultAllowlist.subtracting([");
+const requested = operationList(readFileSync(join(native, "sources", "runtime", "runtime.swift"), "utf8"), "allowedOperations: [");
+const dropped = [...requested].filter((name) => !remote.has(name) || excluded.has(name));
+if (dropped.length) {
+    throw new Error(`The embedded host would drop these allowed operations: ${dropped.join(", ")}`);
 }
 const build = [
     "xcrun",
