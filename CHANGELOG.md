@@ -4,6 +4,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-17
+
 ### Added
 
 - `desktop_insert` with `format: "files"` copies files into a Finder window's folder, refusing names already there, and restores the clipboard once every name appears. ([#114](https://github.com/githubnext/desktop-tools/pull/114))
@@ -157,7 +159,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The first release: a signed, notarized Desktop Tools menu bar app, and the desktop tools served over MCP. ([#28](https://github.com/githubnext/desktop-tools/pull/28), [#29](https://github.com/githubnext/desktop-tools/pull/29), [#12](https://github.com/githubnext/desktop-tools/pull/12))
 
-[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/githubnext/desktop-tools/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/githubnext/desktop-tools/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/githubnext/desktop-tools/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/githubnext/desktop-tools/compare/v0.9.0...v0.10.0
