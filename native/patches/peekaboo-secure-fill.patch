@@ -1,0 +1,640 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+Planning.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+Planning.swift
+index 7c3d80eb8..e584d2126 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+Planning.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+Planning.swift
+@@ -12,6 +12,23 @@ extension HotkeyService {
+         primaryKey == "v" && flags == .maskCommand
+     }
+ 
++    /// Whether a chord puts text into the focused field: a character or Space without Command or Control, or a
++    /// Command-V paste with any other modifiers.
++    public nonisolated static func entersText(_ keys: String) -> Bool {
++        guard let chord = try? HotkeyChord(keys: self.parsedKeys(keys)) else { return false }
++        let key = chord.plan.primaryKey
++        let flags = chord.plan.modifierFlags
++        if key == "v", flags.contains(.maskCommand) { return true }
++        guard !flags.contains(.maskCommand), !flags.contains(.maskControl) else { return false }
++        return !self.nonTextKeys.contains(key) && !(key.hasPrefix("f") && Int(key.dropFirst()) != nil)
++    }
++
++    /// Keys that edit, move or submit without entering a character.
++    private nonisolated static let nonTextKeys: Set<String> = [
++        "return", "tab", "escape", "delete", "forwarddelete", "left", "right", "up", "down", "home", "end",
++        "pageup", "pagedown", "help", "clear", "capslock", "keypadenter", "keypadclear",
++    ]
++
+     public nonisolated static func isSelectAllShortcut(_ keys: String) -> Bool {
+         guard let chord = try? HotkeyChord(keys: self.parsedKeys(keys)) else { return false }
+         return self.isSelectAllShortcut(primaryKey: chord.plan.primaryKey, flags: chord.plan.modifierFlags)
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/TypeService.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/TypeService.swift
+index dfd44c9de..8ca80a562 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/TypeService.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/TypeService.swift
+@@ -788,7 +788,7 @@ public final class TypeService {
+     /// Sample the actual delivery scope immediately before each text segment.
+     /// This catches focus-changing sequences such as Tab → password → Return,
+     /// where before/after samples both observe a non-secure field.
+-    static func focusedElementIsSecureField(processIdentifier: pid_t? = nil) -> Bool {
++    public static func focusedElementIsSecureField(processIdentifier: pid_t? = nil) -> Bool {
+         let container: AXUIElement = if let processIdentifier {
+             AXUIElementCreateApplication(processIdentifier)
+         } else {
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeBootstrap.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeBootstrap.swift
+index 22c078eac..76763522c 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeBootstrap.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeBootstrap.swift
+@@ -21,6 +21,8 @@ public enum PeekabooBridgeBootstrap {
+         var targetWindowObserver: (@Sendable (PeekabooBridgeTargetWindow) -> Void)? = nil
+         var operationObserver: (@Sendable (PeekabooBridgeOperationRecord) -> Void)? = nil
+         var operationAdmission: (@Sendable (PeekabooBridgeOperationAdmission) -> String?)? = nil
++        var secureTextFill: (@Sendable (PeekabooBridgeSecureTextFillContext) async
++            -> PeekabooBridgeSecureTextFillAuthorization)? = nil
+     }
+ 
+     @discardableResult
+@@ -122,6 +124,7 @@ public enum PeekabooBridgeBootstrap {
+         server.targetWindowObserver = configuration.targetWindowObserver
+         server.operationObserver = configuration.operationObserver
+         server.operationAdmission = configuration.operationAdmission
++        server.secureTextFill = configuration.secureTextFill
+         let host = PeekabooBridgeHost(
+             socketPath: configuration.socketPath,
+             server: server,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift
+index 1ed6bb825..2a3ecb031 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift
+@@ -332,6 +332,23 @@ extension PeekabooBridgeClient {
+         }
+     }
+ 
++    /// Fills the focused secure text field with a Keychain item or agent text, which the host may ask the user about
++    /// first, so the request may wait up to `timeoutSec`. True when the field's mask matches the secret's length.
++    public func secureTextFillWithOutcome(
++        _ request: PeekabooBridgeSecureTextFillRequest,
++        timeoutSec: TimeInterval) async throws -> UIAutomationActionResult<Bool>
++    {
++        try await self.actionResult(
++            for: .secureTextFill(request),
++            expectedResponse: "secure text fill",
++            requiresTargetIdentity: true,
++            timeoutSec: timeoutSec)
++        { response in
++            guard case let .bool(matched) = response else { return nil }
++            return matched
++        }
++    }
++
+     public func waitForElement(target: ClickTarget, timeout: TimeInterval, snapshotId: String?) async throws
+         -> WaitForElementResult
+     {
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
+index 77a11d7ae..f1f6ee689 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
+@@ -98,6 +98,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
+     case systemDefinedKey
+     case selectInputSource
+     case enableWebAccessibility
++    case secureTextFill
+     case waitForElement
+     // Windows
+     case listWindows
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
+index 943448ed0..2144852cc 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
+@@ -80,6 +80,7 @@ extension PeekabooBridgeOperation {
+         .systemDefinedKey,
+         .selectInputSource,
+         .enableWebAccessibility,
++        .secureTextFill,
+         .waitForElement,
+         .listWindows,
+         .focusWindow,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
+index c3a4fa9dc..1dabd0d8a 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
+@@ -301,6 +301,13 @@ extension PeekabooBridgeOperationResultSemantics {
+                 completion: .dispatchedUnverified(globalForeground),
+                 targetPolicy: .global,
+                 responseFamilies: [.ok])
++        case .secureTextFill:
++            descriptor(
++                ownership: .service,
++                requiredPermissions: [.accessibility, .postEvent],
++                completion: .dispatchedUnverified(windowBackground),
++                targetPolicy: .requestPinned,
++                responseFamilies: [.bool])
+         case .enableWebAccessibility:
+             descriptor(
+                 ownership: .service,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationReceipts.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationReceipts.swift
+index c22d7799e..25a0b99bb 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationReceipts.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationReceipts.swift
+@@ -1266,6 +1266,11 @@ extension PeekabooBridgeRequest {
+             [DesktopTargetEvidenceAdapter.evidence(
+                 windowIdentity: payload.request.windowIdentity,
+                 bounds: payload.request.windowBounds)]
++        case let .secureTextFill(payload):
++            [DesktopTargetEvidenceAdapter.evidence(
++                windowIdentity: payload.expectedWindowIdentity,
++                bounds: payload.expectedWindowBounds,
++                focusedElement: payload.expectedFocusedElement)]
+         case let .exactWindowTargetedHotkey(payload):
+             [DesktopTargetEvidenceAdapter.evidence(
+                 windowIdentity: payload.expectedWindowIdentity,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
+index 66927f5ea..32a870d52 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
+@@ -326,6 +326,8 @@ extension PeekabooBridgeOperationResultSemantics {
+             .process(payload.expectedIdentity)
+         case let .enableWebAccessibility(payload):
+             .process(payload.expectedIdentity)
++        case let .secureTextFill(payload):
++            .process(payload.expectedWindowIdentity.processIdentity)
+         case let .clickMenuItem(payload):
+             payload.expectedIdentity.map(DesktopOperationScope.process) ?? .global
+         case let .clickMenuItemByName(payload):
+@@ -498,6 +500,7 @@ extension PeekabooBridgeOperationResultSemantics {
+              .systemDefinedKey,
+              .selectInputSource,
+              .enableWebAccessibility,
++             .secureTextFill,
+              .waitForElement,
+              .listWindows,
+              .listWindowMutationInventory,
+@@ -643,6 +646,8 @@ extension PeekabooBridgeOperationResultSemantics {
+             return [.confirmedChange, .dispatchedUnverified, .suspectedNoop]
+         case .enableWebAccessibility:
+             return [.confirmedChange, .confirmedNoChange, .dispatchedUnverified]
++        case .secureTextFill:
++            return [.confirmedChange, .dispatchedUnverified]
+         case .hideDock, .showDock:
+             return [.confirmedChange, .confirmedNoChange, .dispatchedUnverified, .suspectedNoop]
+         case .unhideApplication, .dialogClickButton, .backgroundDialogClickButton,
+@@ -955,6 +960,9 @@ extension PeekabooBridgeOperationResultSemantics {
+             return [rule(axBackground, .exact(1))]
+         case .enableWebAccessibility:
+             return [rule(valueBackground, .exact(1))]
++        case .secureTextFill:
++            // No unit count is reported: it would be the secret's length.
++            return [rule(windowBackground, .variable)]
+         case let .clickMenuItem(payload):
+             return [rule(
+                 payload.deliveryMode == .background ? axBackground : axForeground,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
+index faf9a766a..5ee74c4c5 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
+@@ -65,6 +65,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
+     case systemDefinedKey(PeekabooBridgeSystemDefinedKeyRequest)
+     case selectInputSource(PeekabooBridgeSelectInputSourceRequest)
+     case enableWebAccessibility(PeekabooBridgeEnableWebAccessibilityRequest)
++    case secureTextFill(PeekabooBridgeSecureTextFillRequest)
+     case waitForElement(PeekabooBridgeWaitRequest)
+     case listWindows(PeekabooBridgeWindowTargetRequest)
+     case listWindowMutationInventory(PeekabooBridgeWindowTargetRequest)
+@@ -209,6 +210,7 @@ extension PeekabooBridgeRequest {
+         case .systemDefinedKey: .systemDefinedKey
+         case .selectInputSource: .selectInputSource
+         case .enableWebAccessibility: .enableWebAccessibility
++        case .secureTextFill: .secureTextFill
+         case .waitForElement: .waitForElement
+         case .listWindows, .listWindowMutationInventory: .listWindows
+         case .focusWindow: .focusWindow
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
+index c52518256..4397945e7 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
+@@ -11,7 +11,13 @@ extension PeekabooBridgeServer {
+         peer: PeekabooBridgePeer?,
+         permissions: PermissionsStatus) async throws -> PeekabooBridgeHandledResponse
+     {
++        try await self.refuseCharactersIntoSecureFocus(request)
+         switch request.operation {
++        case .secureTextFill:
++            guard case let .secureTextFill(payload) = request.unwrappedOperationRequest else {
++                throw Self.invalidRequest(for: request)
++            }
++            return try await self.handleSecureTextFill(payload, peer: peer)
+         case .clipboardFilesRead:
+             return try await self.handleClipboardFilesRead()
+         case .clipboardFilesWrite:
+@@ -496,7 +502,7 @@ extension PeekabooBridgeServer {
+         }
+     }
+ 
+-    private func automationOutcomeService() throws -> (any UIAutomationActionOutcomeProviding)? {
++    func automationOutcomeService() throws -> (any UIAutomationActionOutcomeProviding)? {
+         if let service = self.services.automation as? any UIAutomationActionOutcomeProviding {
+             return service
+         }
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer.swift
+index d215ff9b7..f65965d91 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer.swift
+@@ -146,6 +146,9 @@ public final class PeekabooBridgeServer {
+     /// Refuses an authorized request before dispatch when it returns a message, and refuses the handshake too, so a
+     /// refused client gets no operation at all.
+     var operationAdmission: (@Sendable (PeekabooBridgeOperationAdmission) -> String?)?
++    /// Resolves the secret for a secure text field fill, or refuses it; without it, fills are not supported.
++    var secureTextFill: (@Sendable (PeekabooBridgeSecureTextFillContext) async
++        -> PeekabooBridgeSecureTextFillAuthorization)?
+     let encoder: JSONEncoder
+     let decoder: JSONDecoder
+     let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "server")
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooEmbeddedBridgeRuntime.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooEmbeddedBridgeRuntime.swift
+index 2d719b134..a610483d9 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooEmbeddedBridgeRuntime.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooEmbeddedBridgeRuntime.swift
+@@ -162,6 +162,10 @@ public actor PeekabooEmbeddedBridgeRuntime {
+         /// mutates the desktop, the client and the target process. It is asked at the handshake too, as
+         /// `permissionsStatus`. Called on the main actor for every request, so it must be quick.
+         public var operationAdmission: (@Sendable (PeekabooBridgeOperationAdmission) -> String?)?
++        /// Resolves the secret for each secure text field fill, or refuses it, on the main actor. It may wait for the
++        /// user; fills are refused without it.
++        public var secureTextFill: (@Sendable (PeekabooBridgeSecureTextFillContext) async
++            -> PeekabooBridgeSecureTextFillAuthorization)?
+ 
+         let screenCaptureKitProcessCapabilityRegistrar: @Sendable () throws -> Void
+         let screenCaptureKitOwnershipPreparer: @Sendable () async throws -> Void
+@@ -398,7 +402,8 @@ public actor PeekabooEmbeddedBridgeRuntime {
+                     screenCaptureKitOwnershipPreparer: configuration.screenCaptureKitOwnershipPreparer,
+                     targetWindowObserver: configuration.targetWindowObserver,
+                     operationObserver: configuration.operationObserver,
+-                    operationAdmission: configuration.operationAdmission))
++                    operationAdmission: configuration.operationAdmission,
++                    secureTextFill: configuration.secureTextFill))
+         }
+         let host = preparedHost.host
+ 
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/SecureTextFill.swift b/Core/PeekabooCore/Sources/PeekabooBridge/SecureTextFill.swift
+new file mode 100644
+index 000000000..bd660f24b
+--- /dev/null
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/SecureTextFill.swift
+@@ -0,0 +1,286 @@
++import AppKit
++import ApplicationServices
++import Foundation
++@_spi(Bridge) import PeekabooAutomationKit
++import PeekabooFoundation
++
++/// Fills one secure text field, such as a password field, with a secret the agent names or supplies.
++///
++/// The embedder resolves the secret: it reads a Keychain item, or asks the user before using text the agent sent.
++/// The secret is typed with key events into the field that has keyboard focus, and the fill is confirmed only when
++/// the field's mask has exactly one character per secret character. Nothing about the secret, not even its length,
++/// is returned, logged or kept.
++public struct PeekabooBridgeSecureTextFillRequest: Codable, Sendable {
++    public enum Secret: Codable, Sendable, Equatable {
++        /// A Keychain item the embedder reads, so the agent never sees the secret.
++        case keychain(PeekabooBridgeKeychainItem)
++        /// Text the agent sent, which the embedder may only use once it is allowed.
++        case text(String)
++    }
++
++    public let snapshotId: String
++    public let expectedWindowIdentity: WindowMutationIdentity
++    public let expectedWindowBounds: CGRect
++    /// The secure field, which must have keyboard focus.
++    public let expectedFocusedElement: FocusedElementIdentity
++    public let secret: Secret
++
++    public init(
++        snapshotId: String,
++        expectedWindowIdentity: WindowMutationIdentity,
++        expectedWindowBounds: CGRect,
++        expectedFocusedElement: FocusedElementIdentity,
++        secret: Secret)
++    {
++        self.snapshotId = snapshotId
++        self.expectedWindowIdentity = expectedWindowIdentity
++        self.expectedWindowBounds = expectedWindowBounds
++        self.expectedFocusedElement = expectedFocusedElement
++        self.secret = secret
++    }
++}
++
++/// A Keychain password item, by its attributes.
++public struct PeekabooBridgeKeychainItem: Codable, Sendable, Equatable {
++    public enum Kind: String, Codable, Sendable {
++        /// `kSecClassGenericPassword`, named by its service.
++        case generic
++        /// `kSecClassInternetPassword`, named by its server; it fills only a web field on that host.
++        case internet
++    }
++
++    public let kind: Kind
++    /// The generic item's service, or the internet item's server.
++    public let name: String
++    public let account: String?
++
++    public init(kind: Kind, name: String, account: String?) {
++        self.kind = kind
++        self.name = name
++        self.account = account
++    }
++}
++
++/// What the embedder is asked to authorize for one fill.
++public struct PeekabooBridgeSecureTextFillContext: Sendable {
++    /// The socket peer that sent the request.
++    public let clientProcessIdentifier: pid_t
++    public let targetProcessIdentifier: pid_t
++    public let applicationName: String?
++    public let bundleIdentifier: String?
++    /// The host of the field's web page, when it is in a web area whose URL has one.
++    public let webHost: String?
++    public let secret: PeekabooBridgeSecureTextFillRequest.Secret
++}
++
++public enum PeekabooBridgeSecureTextFillAuthorization: Sendable {
++    /// Type this secret.
++    case fill(String)
++    /// Refuse before any input, with this message.
++    case refuse(String)
++}
++
++/// Refusals the client recognizes by their exact messages.
++public enum SecureTextFillRefusal {
++    /// Characters, typed or pasted, can reach a secure field only through a fill.
++    public static let secureFocus =
++        "The focused element is a secure text field, such as a password field, so characters and pastes are refused. Nothing was sent."
++    public static let notSecure = "The focused element is not a secure text field. Nothing was typed."
++    public static let systemPrompt =
++        "This is a system authentication prompt, which is filled only by a person. Nothing was typed."
++}
++
++@MainActor
++extension PeekabooBridgeServer {
++    /// Apps whose password prompts guard the system itself, including those a Keychain read raises.
++    private static let systemPromptBundles: Set<String> = [
++        "com.apple.SecurityAgent", "com.apple.LocalAuthentication.UIAgent", "com.apple.loginwindow",
++        "com.apple.coreautha",
++    ]
++    private static let maskCharacters: Set<Character> = ["\u{F79A}", "\u{2022}", "\u{25CF}", "*"]
++
++    /// Refuses a request that would put characters into a focused secure field any other way than a fill.
++    ///
++    /// Enter, Tab, Escape, arrows, Delete and shortcuts other than paste stay allowed.
++    func refuseCharactersIntoSecureFocus(_ request: PeekabooBridgeRequest) async throws {
++        let process: pid_t?
++        switch request.unwrappedOperationRequest {
++        case let .exactWindowTargetedHotkey(payload):
++            guard HotkeyService.entersText(payload.keys) else { return }
++            process = pid_t(payload.expectedWindowIdentity.ownerProcessIdentifier)
++        case let .targetedHotkey(payload):
++            guard HotkeyService.entersText(payload.keys) else { return }
++            process = pid_t(payload.targetProcessIdentifier)
++        case let .hotkey(payload):
++            guard HotkeyService.entersText(payload.keys) else { return }
++            process = nil
++        case let .exactWindowTargetedTypeActions(payload):
++            guard Self.typesText(payload.actions) else { return }
++            process = pid_t(payload.expectedWindowIdentity.ownerProcessIdentifier)
++        case let .targetedTypeActions(payload):
++            guard Self.typesText(payload.actions) else { return }
++            process = pid_t(payload.targetProcessIdentifier)
++        case let .exactWindowPixelFocusType(payload):
++            guard Self.typesText(payload.request.actions) else { return }
++            process = pid_t(payload.request.windowIdentity.ownerProcessIdentifier)
++        case let .typeActions(payload):
++            guard Self.typesText(payload.actions) else { return }
++            process = nil
++        case let .type(payload):
++            guard !payload.text.isEmpty else { return }
++            process = nil
++        case let .literalInsert(payload):
++            process = await self.snapshotWindow(payload.snapshot)?.0
++        case let .attachmentInsert(payload):
++            process = await self.snapshotWindow(payload.snapshot)?.0
++        default:
++            return
++        }
++        // A targeted request checks its app's focus; a global one, and one whose app is unknown, the system's.
++        if TypeService.focusedElementIsSecureField(processIdentifier: process) {
++            throw PeekabooBridgeErrorEnvelope(code: .permissionDenied, message: SecureTextFillRefusal.secureFocus)
++        }
++    }
++
++    private static func typesText(_ actions: [TypeAction]) -> Bool {
++        actions.contains { if case let .text(text) = $0 { !text.isEmpty } else { false } }
++    }
++
++    func handleSecureTextFill(
++        _ payload: PeekabooBridgeSecureTextFillRequest,
++        peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeHandledResponse
++    {
++        guard let authorize = self.secureTextFill else {
++            throw PeekabooBridgeErrorEnvelope(
++                code: .operationNotSupported, message: "This host does not fill secure text fields.")
++        }
++        guard let peer else {
++            throw PeekabooBridgeErrorEnvelope(code: .permissionDenied, message: "The request has no verified client.")
++        }
++        guard let service = try self.automationOutcomeService() else {
++            throw PeekabooBridgeErrorEnvelope(
++                code: .operationNotSupported, message: "This host cannot confirm secure text field fills.")
++        }
++        let pid = pid_t(payload.expectedWindowIdentity.ownerProcessIdentifier)
++        let app = NSRunningApplication(processIdentifier: pid)
++        if let bundle = app?.bundleIdentifier, Self.systemPromptBundles.contains(bundle) {
++            throw PeekabooBridgeErrorEnvelope(code: .permissionDenied, message: SecureTextFillRefusal.systemPrompt)
++        }
++        guard let field = Self.focusedElement(of: pid), Self.isSecure(field) else {
++            throw PeekabooBridgeErrorEnvelope(code: .permissionDenied, message: SecureTextFillRefusal.notSecure)
++        }
++        let context = PeekabooBridgeSecureTextFillContext(
++            clientProcessIdentifier: peer.processIdentifier,
++            targetProcessIdentifier: pid,
++            applicationName: app?.localizedName,
++            bundleIdentifier: app?.bundleIdentifier,
++            webHost: Self.webHost(of: field),
++            secret: payload.secret)
++        let secret: String
++        switch await authorize(context) {
++        case let .refuse(message):
++            throw PeekabooBridgeErrorEnvelope(code: .permissionDenied, message: message)
++        case let .fill(value):
++            secret = value
++        }
++        guard !secret.isEmpty, !secret.unicodeScalars.contains(where: { $0.properties.generalCategory == .control })
++        else {
++            throw PeekabooBridgeErrorEnvelope(
++                code: .invalidRequest,
++                message: "The password is empty or has control characters, such as newlines or tabs, which key events can't type. Nothing was typed.")
++        }
++        // A prompt or a Keychain read may have taken long enough for focus to move.
++        guard let current = Self.focusedElement(of: pid), CFEqual(current, field) else {
++            throw PeekabooBridgeErrorEnvelope(
++                code: .permissionDenied,
++                message: "The secure field lost keyboard focus while the password was being prepared. Nothing was typed.")
++        }
++
++        let delivery = DesktopActionOutcome.Delivery(mechanism: .windowTargetedEvents, mode: .background)
++        let target = ExactWindowKeyboardTarget(
++            windowIdentity: payload.expectedWindowIdentity,
++            windowBounds: payload.expectedWindowBounds,
++            focusedElement: payload.expectedFocusedElement)
++        let typed: UIAutomationActionResult<TypeResult>
++        do {
++            typed = try await service.typeActionsWithOutcome(
++                [.clear, .text(secret)], cadence: .fixed(milliseconds: 2), snapshotId: payload.snapshotId,
++                target: target)
++        } catch let failure as DesktopActionFailure {
++            // Failure messages can count the characters sent so far, which would reveal part of the length.
++            guard failure.outcome.dispatchState.mutationDispatched else {
++                throw PeekabooBridgeErrorEnvelope(
++                    code: .permissionDenied,
++                    message: "The secure field could not take typed input. Nothing was typed.")
++            }
++            throw DesktopActionFailure.indeterminate(
++                route: .local,
++                evidence: .completionUnknown,
++                message: "Typing the password stopped partway.",
++                hint: "Inspect the window; clear the field before filling it again.")
++        }
++        guard typed.outcome?.dispatchState.mutationDispatched ?? true else {
++            throw PeekabooBridgeErrorEnvelope(
++                code: .permissionDenied, message: "The secure field refused typed input. Nothing was typed.")
++        }
++        let matched = await Self.masksMatch(field, length: secret.count)
++        let outcome: DesktopActionOutcome = matched
++            ? .confirmedChange(delivery: delivery)
++            : .dispatchedUnverified(delivery: delivery, evidence: .deliveryAccepted)
++        return .init(
++            response: .bool(matched),
++            mutation: .init(outcome: outcome, target: .requestPinned))
++    }
++
++    private static func focusedElement(of pid: pid_t) -> AXUIElement? {
++        let application = AXUIElementCreateApplication(pid)
++        AXUIElementSetMessagingTimeout(application, 1)
++        var focused: CFTypeRef?
++        guard AXUIElementCopyAttributeValue(application, kAXFocusedUIElementAttribute as CFString, &focused)
++            == .success, let focused, CFGetTypeID(focused) == AXUIElementGetTypeID()
++        else { return nil }
++        return unsafeDowncast(focused, to: AXUIElement.self)
++    }
++
++    private static func string(_ name: String, of element: AXUIElement) -> String? {
++        var value: CFTypeRef?
++        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
++        return value as? String
++    }
++
++    private static func isSecure(_ element: AXUIElement) -> Bool {
++        self.string(kAXRoleAttribute, of: element) == "AXSecureTextField"
++            || self.string(kAXSubroleAttribute, of: element) == "AXSecureTextField"
++    }
++
++    /// The host of the nearest enclosing web area's URL.
++    private static func webHost(of element: AXUIElement) -> String? {
++        var current = element
++        for _ in 0..<64 {
++            var parent: CFTypeRef?
++            guard AXUIElementCopyAttributeValue(current, kAXParentAttribute as CFString, &parent) == .success,
++                  let parent, CFGetTypeID(parent) == AXUIElementGetTypeID()
++            else { return nil }
++            current = unsafeDowncast(parent, to: AXUIElement.self)
++            guard self.string(kAXRoleAttribute, of: current) == "AXWebArea" else { continue }
++            var url: CFTypeRef?
++            guard AXUIElementCopyAttributeValue(current, "AXURL" as CFString, &url) == .success,
++                  let url = url as? URL ?? (url as? String).flatMap(URL.init(string:))
++            else { return nil }
++            return url.host?.lowercased()
++        }
++        return nil
++    }
++
++    /// Whether the field shows exactly `length` mask characters; web pages update their values a little later.
++    private static func masksMatch(_ field: AXUIElement, length: Int) async -> Bool {
++        for attempt in 0..<15 {
++            if attempt > 0 { try? await Task.sleep(for: .milliseconds(100)) }
++            guard let value = self.string(kAXValueAttribute, of: field),
++                  value.allSatisfy(self.maskCharacters.contains)
++            else { continue }
++            if value.count == length { return true }
++        }
++        return false
++    }
++}
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/HotkeyEntersTextTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/HotkeyEntersTextTests.swift
+new file mode 100644
+index 000000000..231c80d03
+--- /dev/null
++++ b/Core/PeekabooCore/Tests/PeekabooTests/HotkeyEntersTextTests.swift
+@@ -0,0 +1,22 @@
++import Testing
++@testable import PeekabooAutomationKit
++
++/// Which chords the bridge refuses while a secure text field has keyboard focus.
++struct HotkeyEntersTextTests {
++    @Test
++    func `Characters, Space, Option characters and Command-V enter text`() {
++        for keys in ["a", "A", "1", "space", "/", "alt,e", "shift,a", "cmd,v", "cmd,shift,v", "cmd,alt,shift,v"] {
++            #expect(HotkeyService.entersText(keys), "\(keys)")
++        }
++    }
++
++    @Test
++    func `Editing, moving, submitting and other shortcuts don't`() {
++        for keys in [
++            "return", "tab", "shift,tab", "escape", "delete", "forwarddelete", "left", "shift,right", "up", "down",
++            "home", "end", "pageup", "pagedown", "f5", "cmd,a", "cmd,c", "cmd,x", "ctrl,a", "cmd,z",
++        ] {
++            #expect(!HotkeyService.entersText(keys), "\(keys)")
++        }
++    }
++}
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
+index 86398c375..c90e12118 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
+@@ -301,6 +301,7 @@ struct PeekabooBridgeOperationResultSemanticsTests {
+             .systemDefinedKey,
+             .selectInputSource,
+             .enableWebAccessibility,
++            .secureTextFill,
+             .focusWindow,
+             .moveWindow,
+             .resizeWindow,
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
+index 48c30f946..890343362 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
+@@ -28,7 +28,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
+ 
+         // This count is intentionally reviewed whenever the wire enum grows. The exhaustive
+         // policy switches also make a missing classification a compile error.
+-        #expect(operations.count == 133)
++        #expect(operations.count == 134)
+ 
+         func partition<Value: Equatable>(_ values: [Value], by keyPath: KeyPath<Semantics.OperationPolicy, Value>) {
+             let groups = values.map { expected in
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
+index 2876ec160..c713f0f85 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
+@@ -9,7 +9,7 @@ struct PeekabooBridgeRequestPlanTests {
+     @Test
+     func `Every wire operation has one complete static descriptor`() {
+         let operations = PeekabooBridgeOperation.allCases
+-        #expect(operations.count == 133)
++        #expect(operations.count == 134)
+ 
+         let descriptors = operations.map(Semantics.operationDescriptor(for:))
+         #expect(descriptors.map(\.operation) == operations)
+@@ -81,6 +81,7 @@ struct PeekabooBridgeRequestPlanTests {
+             .literalInsert,
+             .attachmentInsert,
+             .exactFileDialogPath,
++            .secureTextFill,
+         ]
+         let accessibility: Set<PeekabooBridgeOperation> = [
+             .inspectAccessibilityTree,

@@ -76,6 +76,7 @@ private let activityNames: [PeekabooBridgeOperation: String] = [
 	.enableWebAccessibility: "Turn on web accessibility",
 	.exactWindowTargetedTypeActions: "Type",
 	.selectText: "Select text",
+	.secureTextFill: "Fill password",
 	.literalInsert: "Insert text",
 	.attachmentInsert: "Insert attachment",
 	.targetedScroll: "Scroll",

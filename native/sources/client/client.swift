@@ -38,6 +38,7 @@ private enum Client {
 			|| (operation == "table" && args.count == 2)
 			|| (operation == "screen" && args.count >= 3 && args.count <= 5)
 			|| (operation == "action" && args.count == 2)
+			|| (operation == "fill" && args.count == 2)
 			|| (operation == "management" && args.count == 2)
 			|| (operation == "launch" && args.count == 2)
 			|| (operation == "open" && args.count == 2)
@@ -74,6 +75,8 @@ private enum Client {
 		switch operation {
 		case "action":
 			return try await nativeAction(client, handshake: handshake)
+		case "fill":
+			return try await nativeFill(client, handshake: handshake)
 		case "clipboard":
 			return try await nativeClipboard(client)
 		case "menu":

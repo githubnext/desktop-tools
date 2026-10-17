@@ -102,7 +102,7 @@ export const DESKTOP_ELEMENT_ACTIONS = [
     "AXScrollToVisible",
 ];
 export function isDesktopAction(request) {
-    return request.op === "click" || request.op === "type" || request.op === "key"
+    return request.op === "click" || request.op === "type" || request.op === "fill-password" || request.op === "key"
         || request.op === "system-key" || request.op === "switch-space" || request.op === "input-source"
         || request.op === "insert" || request.op === "select" || request.op === "scroll"
         || request.op === "drag" || request.op === "hover" || request.op === "press"

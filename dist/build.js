@@ -71,6 +71,7 @@ const patches = [
     "peekaboo-finder-paste.patch",
     "peekaboo-secure-subrole.patch",
     "peekaboo-caller-admission.patch",
+    "peekaboo-secure-fill.patch",
 ].map((name) => join(native, "patches", name));
 function spawn(command, env) {
     return spawnSync(command[0], command.slice(1), { encoding: "utf8", env: env ?? process.env });

@@ -15,6 +15,11 @@ private struct Runtime {
 	let setPaused: @convention(c) (Bool) -> Void
 	let setCallerHandler: @convention(c) ((@convention(c) (UnsafePointer<CChar>) -> Void)?) -> Void
 	let setCallers: @convention(c) (UnsafePointer<CChar>) -> Void
+	let setPasswordAutofill: @convention(c) (Bool) -> Void
+	let setConfirmationHandlers: @convention(c) (
+		(@convention(c) (UInt64, UnsafePointer<CChar>) -> Void)?, (@convention(c) (UInt64) -> Void)?
+	) -> Void
+	let answerConfirmation: @convention(c) (UInt64, Bool) -> Void
 
 	init(_ path: String) {
 		guard let handle = dlopen(path, RTLD_NOW) else { fatalError(String(cString: dlerror())) }
@@ -33,6 +38,9 @@ private struct Runtime {
 		setPaused = symbol("desktop_tools_set_paused")
 		setCallerHandler = symbol("desktop_tools_set_caller_handler")
 		setCallers = symbol("desktop_tools_set_callers")
+		setPasswordAutofill = symbol("desktop_tools_set_password_autofill")
+		setConfirmationHandlers = symbol("desktop_tools_set_confirmation_handlers")
+		answerConfirmation = symbol("desktop_tools_answer_confirmation")
 	}
 }
 
@@ -57,6 +65,15 @@ private struct Activity: Decodable {
 	var count: Int
 }
 
+/// A question the runtime asks the user, such as whether an agent may fill a password it supplied.
+private struct Confirmation: Decodable {
+	var key: String
+	var title: String
+	var message: String
+	var allow: String
+	var deny: String
+}
+
 /// The menu lists this many recent operations; the rest are under All Activity.
 private let recentShown = 5
 
@@ -66,6 +83,22 @@ private let callerAsked: @convention(c) (UnsafePointer<CChar>) -> Void = { json 
 	DispatchQueue.main.async {
 		MainActor.assumeIsolated { Host.current?.ask(about: data) }
 	}
+}
+
+/// The runtime asks to confirm one action, such as filling a password, on the main thread and awaits the answer.
+private let confirmationAsked: @convention(c) (UInt64, UnsafePointer<CChar>) -> Void = { id, json in
+	let data = Data(String(cString: json).utf8)
+	MainActor.assumeIsolated { Host.current?.confirm(id, data) }
+}
+
+/// The runtime stopped waiting for an answer, on the main thread; its prompt closes.
+private let confirmationWithdrawn: @convention(c) (UInt64) -> Void = { id in
+	MainActor.assumeIsolated { Confirmations.shared.cancel(key: confirmationKey(id)) }
+}
+
+/// Each request is its own question, so two password fills never share one answer.
+private func confirmationKey(_ id: UInt64) -> String {
+	"confirmation \(id)"
 }
 
 @MainActor
@@ -87,6 +120,8 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	private var decisions: [CallerDecision]
 	/// Callers asked about and not answered yet, newest last.
 	private var waiting: [Caller] = []
+	// Agent-supplied passwords need the user's approval for each fill unless the user turned this on.
+	private var passwords = UserDefaults.standard.bool(forKey: "agentPasswords")
 
 	override init() {
 		let bin = Bundle.main.executableURL!.deletingLastPathComponent()
@@ -121,6 +156,8 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		runtime.setHighlight(highlight)
 		pushDecisions()
 		runtime.setCallerHandler(callerAsked)
+		runtime.setPasswordAutofill(passwords)
+		runtime.setConfirmationHandlers(confirmationAsked, confirmationWithdrawn)
 		runtime.start(socket, client)
 		render()
 	}
@@ -181,6 +218,12 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		outline.target = self
 		outline.state = highlight ? .on : .off
 		menu.addItem(outline)
+		let autofill = NSMenuItem(
+			title: "Always Allow Agent-Supplied Passwords", action: #selector(togglePasswords), keyEquivalent: "")
+		autofill.target = self
+		autofill.state = passwords ? .on : .off
+		autofill.toolTip = "Fill passwords that agents supply without asking each time. Keychain items still need macOS's approval."
+		menu.addItem(autofill)
 		menu.addItem(.separator())
 		renderActivity()
 		menu.addItem(.separator())
@@ -349,6 +392,26 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		cursor.toggle()
 		UserDefaults.standard.set(cursor, forKey: "agentCursor")
 		runtime.setCursor(cursor)
+	}
+
+	@objc private func togglePasswords() {
+		passwords.toggle()
+		UserDefaults.standard.set(passwords, forKey: "agentPasswords")
+		runtime.setPasswordAutofill(passwords)
+	}
+
+	/// Asks the user, then answers the runtime; the runtime refuses on its own if nobody answers in time.
+	fileprivate func confirm(_ id: UInt64, _ data: Data) {
+		guard let request = try? JSONDecoder().decode(Confirmation.self, from: data) else {
+			return runtime.answerConfirmation(id, false)
+		}
+		Task {
+			let answer = await Confirmations.shared.ask(.init(
+				key: confirmationKey(id), title: request.title, message: request.message, allow: request.allow,
+				deny: request.deny))
+			// nil: withdrawn after the runtime stopped waiting, so there is no one to answer.
+			if let answer { runtime.answerConfirmation(id, answer == .allow) }
+		}
 	}
 
 	@objc private func toggleHighlight() {
