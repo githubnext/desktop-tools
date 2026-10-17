@@ -17,6 +17,8 @@ Targets are exact: an app target binds a process generation, and a window target
 | `desktop_dialog` | Read the open dialog or sheet in an app or window: its buttons, text fields and labels |
 | `desktop_clipboard_read` | Read the clipboard as text, an image, or file references |
 
+Captures go through ScreenCaptureKit, which every Peekaboo process for the user shares one call at a time. When an earlier capture timed out and hasn't returned, which usually means another capture on the Mac is busy, a new capture waits up to 2 seconds for it. If it still hasn't returned, the capture is refused with a message saying the problem is temporary; wait a few seconds and inspect again. There is no fallback capture, because every other capture path would also use ScreenCaptureKit while the abandoned call still runs. `desktop_apps` has 2.5 seconds to read the app inventory and is refused, not cut short, when the Mac is too busy to finish in time.
+
 ## Apps and windows
 
 | Tool | Does |
