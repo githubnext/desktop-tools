@@ -19,7 +19,7 @@ export async function validateSave(request, extensions = ["png"]) {
         return undefined;
     }
     if (typeof path !== "string" || !isAbsolute(path) || normalize(path) !== path || path.length > 1024
-        || path.includes("\0") || !extensions.includes(path.split(".").at(-1).toLowerCase())) {
+        || path.includes("\0") || !extensions.includes(extensionOf(path))) {
         const names = extensions.map((extension) => "." + extension);
         throw new Error(`save_path must be a normalized absolute path ending in ${names.length > 1 ? names.slice(0, -1).join(", ") + " or " + names.at(-1) : names[0]}.`);
     }
@@ -89,8 +89,7 @@ export async function saveCapture(capture, scratch, path, request, area, tools, 
     }
     const saved = await tools.dimensions(source, signal);
     signal.throwIfAborted();
-    // Exclusive unless overwrite was asked for, so a file created since validation is never replaced.
-    await copyFile(source, path, request.overwrite === true ? 0 : constants.COPYFILE_EXCL);
+    await place(source, path, request.overwrite === true);
     return { path, width: saved.width, height: saved.height, region };
 }
 export const CLIPBOARD_SAVE_EXTENSIONS = Object.values(CLIPBOARD_EXTENSIONS).flat();
@@ -102,7 +101,7 @@ export async function saveClipboardImage(exported, path, overwrite, source, sign
     const extensions = CLIPBOARD_EXTENSIONS[source.uti];
     if (!extensions)
         throw new Error(`The clipboard image type ${source.uti} can't be saved.`);
-    if (!extensions.includes(path.split(".").at(-1).toLowerCase())) {
+    if (!extensions.includes(extensionOf(path))) {
         throw new Error(`The clipboard holds a ${source.mimeType} image; save it with a .${extensions.join(" or .")} path. Nothing was written.`);
     }
     const exportedFile = await lstat(exported);
@@ -110,9 +109,15 @@ export async function saveClipboardImage(exported, path, overwrite, source, sign
         throw new Error("The exported clipboard image is incomplete. Nothing was written.");
     }
     signal.throwIfAborted();
-    // Exclusive unless overwrite was asked for, so a file created since validation is never replaced.
-    await copyFile(exported, path, overwrite ? 0 : constants.COPYFILE_EXCL);
+    await place(exported, path, overwrite);
     return { path, uti: source.uti, mime_type: source.mimeType, bytes: source.bytes, width: source.width, height: source.height };
+}
+function extensionOf(path) {
+    return path.split(".").at(-1).toLowerCase();
+}
+/** Copies a finished file to save_path; exclusive unless overwrite was asked for, so a file created since validation is never replaced. */
+async function place(source, path, overwrite) {
+    await copyFile(source, path, overwrite ? 0 : constants.COPYFILE_EXCL);
 }
 async function isPng(path) {
     const file = await open(path, "r");

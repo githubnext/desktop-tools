@@ -1,10 +1,10 @@
 import type { DesktopAction, DesktopOutcome, DesktopRequest, DesktopResult } from "./protocol.js";
-import { locateCell, type TableCell, type TableElement, TableError } from "./table.js";
+import { errorMessage, type Json, parseResult } from "./results.js";
+import { locateCell, type TableCell, type TableElement } from "./table.js";
 
-type Json = Record<string, unknown>;
 type SetCell = Extract<DesktopRequest, { op: "set-cell" }>;
 
-export type CellIO = {
+type CellIO = {
 	/** One native table read of the scope element in the snapshot. */
 	table(input: { pid: number; window: number; snapshot: string; element: string }, signal: AbortSignal): Promise<Json>;
 	/** One desktop action, followed by its fresh observation. */
@@ -77,7 +77,7 @@ export async function setCell(io: CellIO, request: SetCell, signal: AbortSignal)
 		validate(request);
 		cell = await readCell(io, request, { element: request.row }, request.column, signal);
 	} catch (error) {
-		return refused((error instanceof Error ? error.message : String(error)).slice(0, 2000));
+		return refused(errorMessage(error));
 	}
 	const located = { row: cell.row, column: cell.column, column_title: cell.column_title, before: cell.text };
 	const control = cell.control;
@@ -111,7 +111,7 @@ export async function setCell(io: CellIO, request: SetCell, signal: AbortSignal)
 	const result = await io.act(action, signal);
 	let data: Json;
 	try {
-		data = JSON.parse(result.text) as Json;
+		data = parseResult(result);
 	} catch {
 		return result;
 	}
@@ -131,7 +131,7 @@ export async function setCell(io: CellIO, request: SetCell, signal: AbortSignal)
 				: "differs";
 		} catch (error) {
 			readback = "unreadable";
-			report.readback_error = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
+			report.readback_error = errorMessage(error);
 		}
 		report.readback = readback;
 		if (outcome === "completed" && readback !== "matched") {

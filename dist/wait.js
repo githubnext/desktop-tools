@@ -1,4 +1,5 @@
 import { DESKTOP_WAIT_CONDITIONS, } from "./protocol.js";
+import { errorMessage, parseResult } from "./results.js";
 export const WAIT_DEFAULT_MS = 10_000;
 /** Below the 60-second request timeout common MCP clients use, with room for the final inspection. */
 export const WAIT_MAX_MS = 45_000;
@@ -26,7 +27,7 @@ function exactString(value, name, limit = 512) {
     }
 }
 /** Refuses argument combinations a condition doesn't use, so a misplaced filter is never silently ignored. */
-export function validateWait(request, maxTimeout = WAIT_MAX_MS) {
+function validateWait(request, maxTimeout = WAIT_MAX_MS) {
     const until = request.until;
     if (!DESKTOP_WAIT_CONDITIONS.includes(until)) {
         throw new Error(`Choose until from ${DESKTOP_WAIT_CONDITIONS.join(", ")}.`);
@@ -113,20 +114,14 @@ function validateMatch(element, forText) {
         throw new Error(`element needs role and at least one of ${keys.slice(1).join(", ")}.`);
     }
 }
-function parse(result) {
-    return JSON.parse(result.text);
-}
-function message(error) {
-    return (error instanceof Error ? error.message : String(error)).slice(0, 2000);
-}
 /** Apps with the bundle ID or PID, from one complete-or-partial inventory. */
 async function findApps(reads, request, signal) {
-    const data = parse(await reads.observe({ op: "apps" }, signal));
+    const data = parseResult(await reads.observe({ op: "apps" }, signal));
     const rows = data.apps.filter((app) => request.pid !== undefined ? app.pid === request.pid : app.bundle_id === request.bundle_id);
     return { rows, complete: data.inventory_completeness === "complete" };
 }
 async function listWindows(reads, pid, signal) {
-    const data = parse(await reads.observe({ op: "windows", pid }, signal));
+    const data = parseResult(await reads.observe({ op: "windows", pid }, signal));
     const rows = data.windows;
     // Accessibility found every window only when no row or warning says its enumeration was cut short.
     const accessible = !rows.some((row) => row.observation_reason === "accessibility_enumeration_incomplete")
@@ -193,7 +188,7 @@ function pollWindowAppears(reads, request) {
             }
             catch (error) {
                 signal.throwIfAborted();
-                errors.push(message(error));
+                errors.push(errorMessage(error));
             }
         }
         if (matched.length)
@@ -259,12 +254,12 @@ function pollDialog(reads, request) {
             accessible = (await listWindows(reads, pid, signal)).accessible;
         }
         try {
-            const dialog = parse(await reads.observe({ op: "dialog", target }, signal));
+            const dialog = parseResult(await reads.observe({ op: "dialog", target }, signal));
             return { holds: appears, observation: { dialog } };
         }
         catch (error) {
             signal.throwIfAborted();
-            const text = message(error);
+            const text = errorMessage(error);
             const refusal = dialogRefusal(text);
             // The dialog read skips windows Accessibility can't reach, so it proves absence only when all were reached.
             if (refusal === "absent") {
@@ -304,7 +299,7 @@ function pollElement(reads, request) {
                 if (gone)
                     return { holds: true, observation: { pid: request.pid, window_id: request.window, reason: gone } };
             }
-            return { holds: false, observation: { error: message(error) } };
+            return { holds: false, observation: { error: errorMessage(error) } };
         }
         const count = found.match_count;
         // A cut-short traversal may have missed the element, so it never proves absence.
@@ -336,7 +331,7 @@ function pollText(reads, request) {
         }
         catch (error) {
             signal.throwIfAborted();
-            return { holds: false, observation: { error: message(error) } };
+            return { holds: false, observation: { error: errorMessage(error) } };
         }
         if (read.text === undefined)
             return { holds: false, observation: read.observation };
@@ -408,7 +403,7 @@ async function confirm(reads, request, abort) {
             window: request.window,
             ...(request.scope ? { scope: request.scope } : {}),
         }, signal);
-        const data = parse(result);
+        const data = parseResult(result);
         if (result.isError)
             return { inspection: { snapshot_id: null, error: data.inspection_error } };
         const elements = (data.ui_elements ?? []).filter((element) => matchesElement(element, request.element));
@@ -426,7 +421,7 @@ async function confirm(reads, request, abort) {
     }
     catch (error) {
         abort?.throwIfAborted();
-        return { inspection: { snapshot_id: null, error: message(error) } };
+        return { inspection: { snapshot_id: null, error: errorMessage(error) } };
     }
 }
 /** Polls a condition with backoff until it holds or the timeout passes. Sends no input. */
@@ -449,7 +444,7 @@ async function poll(check, timeout, abort) {
                 break;
             // A failed read is one more observation; the condition is read again next time.
             polls++;
-            lastError = message(error);
+            lastError = errorMessage(error);
         }
         if (last?.holds)
             break;
@@ -518,7 +513,7 @@ export async function expectAfter(reads, expect, act, abort) {
     }
     catch (error) {
         abort?.throwIfAborted();
-        return refusedExpect(expect, `The expected condition couldn't be read before input: ${message(error)}`, null);
+        return refusedExpect(expect, `The expected condition couldn't be read before input: ${errorMessage(error)}`, null);
     }
     if (before.holds) {
         return refusedExpect(expect, "The expected condition already holds, so it can't show what this action does. Expect a condition the action changes, or leave out expect.", before.observation);
@@ -529,7 +524,7 @@ export async function expectAfter(reads, expect, act, abort) {
     const result = await act(abort);
     if (result.outcome !== "unknown")
         return result;
-    const data = JSON.parse(result.text);
+    const data = parseResult(result);
     const action = (data.action ?? {});
     let polled;
     try {
@@ -541,7 +536,7 @@ export async function expectAfter(reads, expect, act, abort) {
     }
     const { matched, result: expectation, image } = await report(reads, expect, polled).catch((error) => ({
         matched: false,
-        result: { until: expect.until, status: "timed_out", last_error: message(error) },
+        result: { until: expect.until, status: "timed_out", last_error: errorMessage(error) },
         image: undefined,
     }));
     if (!matched) {

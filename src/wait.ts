@@ -7,6 +7,7 @@ import {
 	type DesktopResult,
 	type DesktopWait,
 } from "./protocol.js";
+import { errorMessage, type Json, parseResult } from "./results.js";
 
 /** The reads a wait polls; each call is one native process, so nothing is held between polls. */
 export type WaitReads = {
@@ -31,7 +32,6 @@ const CONFIRM_MS = 10_000;
 const MAX_ROWS = 10;
 const MAX_TEXT = 8192;
 
-type Json = Record<string, unknown>;
 /** One poll's verdict and what it saw, in the read tools' shapes. */
 type Check = { holds: boolean; observation: Json };
 
@@ -50,7 +50,7 @@ function exactString(value: unknown, name: string, limit = 512) {
 }
 
 /** Refuses argument combinations a condition doesn't use, so a misplaced filter is never silently ignored. */
-export function validateWait(request: DesktopWait, maxTimeout = WAIT_MAX_MS) {
+function validateWait(request: DesktopWait, maxTimeout = WAIT_MAX_MS) {
 	const until = request.until;
 	if (!(DESKTOP_WAIT_CONDITIONS as readonly string[]).includes(until)) {
 		throw new Error(`Choose until from ${DESKTOP_WAIT_CONDITIONS.join(", ")}.`);
@@ -129,17 +129,10 @@ function validateMatch(element: DesktopElementMatch, forText: boolean) {
 	}
 }
 
-function parse(result: DesktopResult): Json {
-	return JSON.parse(result.text) as Json;
-}
-
-function message(error: unknown): string {
-	return (error instanceof Error ? error.message : String(error)).slice(0, 2000);
-}
 
 /** Apps with the bundle ID or PID, from one complete-or-partial inventory. */
 async function findApps(reads: WaitReads, request: DesktopWait, signal: AbortSignal) {
-	const data = parse(await reads.observe({ op: "apps" }, signal));
+	const data = parseResult(await reads.observe({ op: "apps" }, signal));
 	const rows = (data.apps as Json[]).filter((app) =>
 		request.pid !== undefined ? app.pid === request.pid : app.bundle_id === request.bundle_id
 	);
@@ -147,7 +140,7 @@ async function findApps(reads: WaitReads, request: DesktopWait, signal: AbortSig
 }
 
 async function listWindows(reads: WaitReads, pid: number, signal: AbortSignal) {
-	const data = parse(await reads.observe({ op: "windows", pid }, signal));
+	const data = parseResult(await reads.observe({ op: "windows", pid }, signal));
 	const rows = data.windows as Json[];
 	// Accessibility found every window only when no row or warning says its enumeration was cut short.
 	const accessible = !rows.some((row) => row.observation_reason === "accessibility_enumeration_incomplete")
@@ -211,7 +204,7 @@ function pollWindowAppears(reads: WaitReads, request: DesktopWait) {
 				}
 			} catch (error) {
 				signal.throwIfAborted();
-				errors.push(message(error));
+				errors.push(errorMessage(error));
 			}
 		}
 		if (matched.length) return { holds: true, observation: { windows: matched.slice(0, MAX_ROWS) } };
@@ -273,11 +266,11 @@ function pollDialog(reads: WaitReads, request: DesktopWait) {
 			accessible = (await listWindows(reads, pid, signal)).accessible;
 		}
 		try {
-			const dialog = parse(await reads.observe({ op: "dialog", target }, signal));
+			const dialog = parseResult(await reads.observe({ op: "dialog", target }, signal));
 			return { holds: appears, observation: { dialog } };
 		} catch (error) {
 			signal.throwIfAborted();
-			const text = message(error);
+			const text = errorMessage(error);
 			const refusal = dialogRefusal(text);
 			// The dialog read skips windows Accessibility can't reach, so it proves absence only when all were reached.
 			if (refusal === "absent") {
@@ -315,7 +308,7 @@ function pollElement(reads: WaitReads, request: DesktopWait) {
 				const { gone } = await findWindow(reads, request.pid!, request.window!, signal);
 				if (gone) return { holds: true, observation: { pid: request.pid, window_id: request.window, reason: gone } };
 			}
-			return { holds: false, observation: { error: message(error) } };
+			return { holds: false, observation: { error: errorMessage(error) } };
 		}
 		const count = found.match_count as number;
 		// A cut-short traversal may have missed the element, so it never proves absence.
@@ -346,7 +339,7 @@ function pollText(reads: WaitReads, request: DesktopWait) {
 			read = await readText(reads, request, signal);
 		} catch (error) {
 			signal.throwIfAborted();
-			return { holds: false, observation: { error: message(error) } };
+			return { holds: false, observation: { error: errorMessage(error) } };
 		}
 		if (read.text === undefined) return { holds: false, observation: read.observation };
 		const text = read.text;
@@ -414,7 +407,7 @@ async function confirm(reads: WaitReads, request: DesktopWait, abort?: AbortSign
 			window: request.window!,
 			...(request.scope ? { scope: request.scope } : {}),
 		}, signal);
-		const data = parse(result);
+		const data = parseResult(result);
 		if (result.isError) return { inspection: { snapshot_id: null, error: data.inspection_error } };
 		const elements = ((data.ui_elements ?? []) as Json[]).filter((element) => matchesElement(element, request.element!));
 		const inspection = {
@@ -430,7 +423,7 @@ async function confirm(reads: WaitReads, request: DesktopWait, abort?: AbortSign
 		return { inspection, image: elements.length ? result.image : undefined };
 	} catch (error) {
 		abort?.throwIfAborted();
-		return { inspection: { snapshot_id: null, error: message(error) } };
+		return { inspection: { snapshot_id: null, error: errorMessage(error) } };
 	}
 }
 
@@ -452,7 +445,7 @@ async function poll(check: (signal: AbortSignal) => Promise<Check>, timeout: num
 			if (deadline.aborted) break;
 			// A failed read is one more observation; the condition is read again next time.
 			polls++;
-			lastError = message(error);
+			lastError = errorMessage(error);
 		}
 		if (last?.holds) break;
 		if (!(await sleep(delay, signal))) {
@@ -509,7 +502,7 @@ export function validateExpect(expect: unknown): DesktopWait {
 }
 
 /** Input the expectation follows: one action call, which runs at most once. */
-export type ExpectedAction = (signal?: AbortSignal) => Promise<DesktopResult>;
+type ExpectedAction = (signal?: AbortSignal) => Promise<DesktopResult>;
 
 /**
  * Runs an action once, and when its outcome is unknown, polls the expected condition for a short time.
@@ -528,7 +521,7 @@ export async function expectAfter(
 		before = await check(AbortSignal.any([...(abort ? [abort] : []), AbortSignal.timeout(CONFIRM_MS)]));
 	} catch (error) {
 		abort?.throwIfAborted();
-		return refusedExpect(expect, `The expected condition couldn't be read before input: ${message(error)}`, null);
+		return refusedExpect(expect, `The expected condition couldn't be read before input: ${errorMessage(error)}`, null);
 	}
 	if (before.holds) {
 		return refusedExpect(
@@ -546,7 +539,7 @@ export async function expectAfter(
 	}
 	const result = await act(abort);
 	if (result.outcome !== "unknown") return result;
-	const data = JSON.parse(result.text) as Json;
+	const data = parseResult(result);
 	const action = (data.action ?? {}) as Json;
 	let polled: Awaited<ReturnType<typeof poll>>;
 	try {
@@ -557,7 +550,7 @@ export async function expectAfter(
 	}
 	const { matched, result: expectation, image } = await report(reads, expect, polled).catch((error) => ({
 		matched: false,
-		result: { until: expect.until, status: "timed_out", last_error: message(error) } as Json,
+		result: { until: expect.until, status: "timed_out", last_error: errorMessage(error) } as Json,
 		image: undefined,
 	}));
 	if (!matched) {

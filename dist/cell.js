@@ -1,4 +1,5 @@
-import { locateCell, TableError } from "./table.js";
+import { errorMessage, parseResult } from "./results.js";
+import { locateCell } from "./table.js";
 const MAX_ID = 600;
 const MAX_VALUE = 8192;
 function refused(reason, extra = {}) {
@@ -55,7 +56,7 @@ export async function setCell(io, request, signal) {
         cell = await readCell(io, request, { element: request.row }, request.column, signal);
     }
     catch (error) {
-        return refused((error instanceof Error ? error.message : String(error)).slice(0, 2000));
+        return refused(errorMessage(error));
     }
     const located = { row: cell.row, column: cell.column, column_title: cell.column_title, before: cell.text };
     const control = cell.control;
@@ -88,7 +89,7 @@ export async function setCell(io, request, signal) {
     const result = await io.act(action, signal);
     let data;
     try {
-        data = JSON.parse(result.text);
+        data = parseResult(result);
     }
     catch {
         return result;
@@ -110,7 +111,7 @@ export async function setCell(io, request, signal) {
         }
         catch (error) {
             readback = "unreadable";
-            report.readback_error = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
+            report.readback_error = errorMessage(error);
         }
         report.readback = readback;
         if (outcome === "completed" && readback !== "matched") {

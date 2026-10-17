@@ -4,8 +4,8 @@ import { dirname, isAbsolute, normalize } from "node:path";
 
 /** A rectangle in global top-left desktop points, as window and display bounds use. */
 export type DesktopRegion = { x: number; y: number; width: number; height: number };
-export type CaptureSave = { save_path?: unknown; overwrite?: unknown; region?: unknown };
-export type SavedCapture = { path: string; width: number; height: number; region: DesktopRegion | null };
+type CaptureSave = { save_path?: unknown; overwrite?: unknown; region?: unknown };
+type SavedCapture = { path: string; width: number; height: number; region: DesktopRegion | null };
 
 type Run = (file: string, args: string[], signal: AbortSignal) => Promise<string>;
 type Dimensions = (path: string, signal: AbortSignal) => Promise<{ width: number; height: number }>;
@@ -32,7 +32,7 @@ export async function validateSave(
 	}
 	if (
 		typeof path !== "string" || !isAbsolute(path) || normalize(path) !== path || path.length > 1024
-		|| path.includes("\0") || !extensions.includes(path.split(".").at(-1)!.toLowerCase())
+		|| path.includes("\0") || !extensions.includes(extensionOf(path))
 	) {
 		const names = extensions.map((extension) => "." + extension);
 		throw new Error(
@@ -118,13 +118,12 @@ export async function saveCapture(
 	}
 	const saved = await tools.dimensions(source, signal);
 	signal.throwIfAborted();
-	// Exclusive unless overwrite was asked for, so a file created since validation is never replaced.
-	await copyFile(source, path, request.overwrite === true ? 0 : constants.COPYFILE_EXCL);
+	await place(source, path, request.overwrite === true);
 	return { path, width: saved.width, height: saved.height, region };
 }
 
 export const CLIPBOARD_SAVE_EXTENSIONS = Object.values(CLIPBOARD_EXTENSIONS).flat();
-export type SavedClipboardImage = { path: string; uti: string; mime_type: string; bytes: number; width: number; height: number };
+type SavedClipboardImage = { path: string; uti: string; mime_type: string; bytes: number; width: number; height: number };
 
 /**
  * Saves the clipboard image's original bytes, exported to a private file, at path. The bytes are copied
@@ -139,7 +138,7 @@ export async function saveClipboardImage(
 ): Promise<SavedClipboardImage> {
 	const extensions = CLIPBOARD_EXTENSIONS[source.uti];
 	if (!extensions) throw new Error(`The clipboard image type ${source.uti} can't be saved.`);
-	if (!extensions.includes(path.split(".").at(-1)!.toLowerCase())) {
+	if (!extensions.includes(extensionOf(path))) {
 		throw new Error(
 			`The clipboard holds a ${source.mimeType} image; save it with a .${extensions.join(" or .")} path. Nothing was written.`,
 		);
@@ -149,9 +148,17 @@ export async function saveClipboardImage(
 		throw new Error("The exported clipboard image is incomplete. Nothing was written.");
 	}
 	signal.throwIfAborted();
-	// Exclusive unless overwrite was asked for, so a file created since validation is never replaced.
-	await copyFile(exported, path, overwrite ? 0 : constants.COPYFILE_EXCL);
+	await place(exported, path, overwrite);
 	return { path, uti: source.uti, mime_type: source.mimeType, bytes: source.bytes, width: source.width, height: source.height };
+}
+
+function extensionOf(path: string): string {
+	return path.split(".").at(-1)!.toLowerCase();
+}
+
+/** Copies a finished file to save_path; exclusive unless overwrite was asked for, so a file created since validation is never replaced. */
+async function place(source: string, path: string, overwrite: boolean): Promise<void> {
+	await copyFile(source, path, overwrite ? 0 : constants.COPYFILE_EXCL);
 }
 
 async function isPng(path: string): Promise<boolean> {

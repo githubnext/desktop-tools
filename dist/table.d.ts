@@ -1,5 +1,3 @@
-/** Containers read as tables. Web tables and ARIA grids are AXTable too. */
-export declare const TABLE_ROLES: string[];
 export declare const TABLE_ROWS_DEFAULT = 100;
 export declare const TABLE_ROWS_MAX = 500;
 /** One element of the native table read, in tree pre-order. */
@@ -22,7 +20,7 @@ export type TableElement = {
     disclosure_level?: number | null;
     disclosing?: boolean | null;
 };
-export type TableRow = {
+type TableRow = {
     index: number;
     element: string | null;
     cells: string[];
@@ -30,7 +28,7 @@ export type TableRow = {
     expanded?: boolean;
     selected?: true;
 };
-export type Table = {
+type Table = {
     table: {
         role: string;
         label: string | null;
@@ -75,3 +73,4 @@ export declare function locateCell(elements: TableElement[], row: {
 } | {
     index: number;
 }, column: string | number): TableCell;
+export {};

@@ -48,6 +48,7 @@ import {
 	validateNotificationAction,
 } from "./notifications.js";
 import { setCell } from "./cell.js";
+import { errorMessage, parseResult } from "./results.js";
 import { buildTable, TABLE_ROWS_MAX, type TableElement, TableError } from "./table.js";
 import { expectAfter, validateExpect, waitFor, type WaitReads } from "./wait.js";
 
@@ -1284,7 +1285,7 @@ async function act(
 		const outcome = sent ? "unknown" : "refused";
 		return actionResult({
 			outcome,
-			reason: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
+			reason: errorMessage(error),
 			message: sent && request.op === "launch"
 				? "The launch may still finish and open the app later. Observe desktop_apps before any further action; do not blindly repeat the launch."
 				: sent && request.op === "open"
@@ -1354,7 +1355,7 @@ async function act(
 			pid: receipt.pid,
 			window: receipt.window_id,
 		}, signal);
-		const fresh = JSON.parse(observation.text) as Record<string, unknown>;
+		const fresh = parseResult(observation);
 		if (observation.isError) {
 			return actionResult({
 				...data,
@@ -1376,7 +1377,7 @@ async function act(
 	} catch (error) {
 		return actionResult({
 			...data,
-			observation_error: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
+			observation_error: errorMessage(error),
 			message:
 				"The action completed, but a fresh observation was unavailable. Inspect again to verify the result; do not repeat the action blindly.",
 		}, outcome);
@@ -1410,7 +1411,7 @@ async function menubarClick(
 			const outcome = sent ? "unknown" : "refused";
 			return actionResult({
 				outcome,
-				reason: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
+				reason: errorMessage(error),
 				message: sent
 					? "The click may have opened the item's menu. Observe with desktop_screen before any further action; do not blindly repeat it, because a second click usually closes the menu."
 					: "The desktop action was not sent to the native desktop.",
@@ -1454,7 +1455,7 @@ async function menubarClick(
 		} catch (error) {
 			return actionResult({
 				...data,
-				observation_error: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
+				observation_error: errorMessage(error),
 			}, outcome);
 		}
 	} finally {
@@ -1539,7 +1540,7 @@ async function observeManagement(
 			pid: receipt.pid,
 			window: receipt.window_id!,
 		}, signal);
-		const fresh = JSON.parse(observation.text) as Record<string, unknown>;
+		const fresh = parseResult(observation);
 		if (observation.isError) {
 			data.observation_error = fresh;
 			data.message =
@@ -1557,10 +1558,7 @@ async function observeManagement(
 			isError: false,
 		};
 	} catch (error) {
-		data.observation_error = (error instanceof Error ? error.message : String(error)).slice(
-			0,
-			2000,
-		);
+		data.observation_error = errorMessage(error);
 		data.message = outcome === "completed"
 			? "The native action completed. Later inventory or inspection was unavailable; refresh the target before any further action, without repeating the completed action blindly."
 			: "Native completion was not confirmed and later inventory was unavailable. Refresh the target before choosing any further action; do not blindly repeat the request.";
@@ -1686,7 +1684,7 @@ async function execute(
 		} catch (error) {
 			return actionResult({
 				outcome: "refused",
-				reason: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
+				reason: errorMessage(error),
 				message: "No input was sent.",
 			}, "refused");
 		}
@@ -1710,7 +1708,7 @@ async function execute(
 		} catch (error) {
 			return actionResult({
 				outcome: "refused",
-				reason: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
+				reason: errorMessage(error),
 				message: "No input was sent.",
 			}, "refused");
 		}

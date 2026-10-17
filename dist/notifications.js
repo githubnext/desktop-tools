@@ -1,5 +1,6 @@
+import { errorMessage, parseResult } from "./results.js";
 /** Notification Center's process; its banners, alerts and open panel are windows of it. */
-export const NOTIFICATION_CENTER = "com.apple.notificationcenterui";
+const NOTIFICATION_CENTER = "com.apple.notificationcenterui";
 /** Hosts of system alerts such as permission prompts, which desktop_dialog reads and answers. */
 const ALERT_HOSTS = ["com.apple.UserNotificationCenter", "com.apple.SecurityAgent"];
 /** Under the 60-second request timeout common MCP clients use. */
@@ -10,12 +11,6 @@ const MAX_TEXTS = 8;
 const MAX_TEXT = 1000;
 /** Custom action names as the native client lists and accepts them. */
 const MAX_ACTION = 64;
-function parse(result) {
-    return JSON.parse(result.text);
-}
-function message(error) {
-    return (error instanceof Error ? error.message : String(error)).slice(0, 2000);
-}
 function clip(text) {
     return typeof text === "string" && text.trim() ? text.slice(0, MAX_TEXT) : null;
 }
@@ -112,14 +107,14 @@ function entries(inspection, pid, window) {
 const lastRead = new Map();
 /** The running apps with exactly this bundle ID; a query keeps a long inventory from cutting them off. */
 async function appsWith(io, bundle, signal) {
-    const data = parse(await io.observe({ op: "apps", query: bundle }, signal));
+    const data = parseResult(await io.observe({ op: "apps", query: bundle }, signal));
     return { rows: (data.apps ?? []).filter((row) => row.bundle_id === bundle), data };
 }
 /** Shown windows of the apps with this bundle ID. */
 async function shownWindows(io, bundle, signal) {
     const shown = [];
     for (const app of (await appsWith(io, bundle, signal)).rows) {
-        const data = parse(await io.observe({ op: "windows", pid: app.pid }, signal));
+        const data = parseResult(await io.observe({ op: "windows", pid: app.pid }, signal));
         for (const row of (data.windows ?? [])) {
             if (row.is_on_screen === true)
                 shown.push({ pid: app.pid, row });
@@ -140,7 +135,7 @@ export async function readNotifications(io, signal) {
         }
         catch (error) {
             signal.throwIfAborted();
-            alerts.push({ host, error: message(error) });
+            alerts.push({ host, error: errorMessage(error) });
         }
     }
     if (!center) {
@@ -159,7 +154,7 @@ export async function readNotifications(io, signal) {
         const window = row.window_id;
         try {
             const result = await io.observe({ op: "inspect", pid, window }, signal);
-            const data = parse(result);
+            const data = parseResult(result);
             if (result.isError) {
                 errors.push({ window_id: window, error: data.inspection_error ?? data });
                 continue;
@@ -170,7 +165,7 @@ export async function readNotifications(io, signal) {
         }
         catch (error) {
             signal.throwIfAborted();
-            errors.push({ window_id: window, error: message(error) });
+            errors.push({ window_id: window, error: errorMessage(error) });
         }
     }
     lastRead.clear();
@@ -234,7 +229,7 @@ export async function notificationAction(io, request, signal) {
             outcome,
             data: {
                 outcome,
-                reason: message(error),
+                reason: errorMessage(error),
                 message: dispatched
                     ? "The notification action may have run. Read notifications again before acting further."
                     : "No input was sent.",
@@ -287,7 +282,7 @@ export async function notificationAction(io, request, signal) {
                 outcome: "unknown",
                 action,
                 native_outcome: native,
-                observation_error: message(error),
+                observation_error: errorMessage(error),
                 message: "Read notifications again before acting further; do not repeat the action blindly.",
                 native: data,
             },

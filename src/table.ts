@@ -1,5 +1,5 @@
 /** Containers read as tables. Web tables and ARIA grids are AXTable too. */
-export const TABLE_ROLES = ["AXTable", "AXOutline", "AXGrid"];
+const TABLE_ROLES = ["AXTable", "AXOutline", "AXGrid"];
 export const TABLE_ROWS_DEFAULT = 100;
 export const TABLE_ROWS_MAX = 500;
 const MAX_COLUMNS = 64;
@@ -25,7 +25,7 @@ export type TableElement = {
 	disclosing?: boolean | null;
 };
 
-export type TableRow = {
+type TableRow = {
 	index: number;
 	element: string | null;
 	cells: string[];
@@ -34,7 +34,7 @@ export type TableRow = {
 	selected?: true;
 };
 
-export type Table = {
+type Table = {
 	table: { role: string; label: string | null; element: string | null };
 	tables_in_scope: number;
 	columns: string[] | null;

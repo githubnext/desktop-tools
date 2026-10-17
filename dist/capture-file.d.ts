@@ -5,12 +5,12 @@ export type DesktopRegion = {
     width: number;
     height: number;
 };
-export type CaptureSave = {
+type CaptureSave = {
     save_path?: unknown;
     overwrite?: unknown;
     region?: unknown;
 };
-export type SavedCapture = {
+type SavedCapture = {
     path: string;
     width: number;
     height: number;
@@ -32,7 +32,7 @@ export declare function saveCapture(capture: string, scratch: string, path: stri
     dimensions: Dimensions;
 }, signal: AbortSignal): Promise<SavedCapture>;
 export declare const CLIPBOARD_SAVE_EXTENSIONS: string[];
-export type SavedClipboardImage = {
+type SavedClipboardImage = {
     path: string;
     uti: string;
     mime_type: string;
