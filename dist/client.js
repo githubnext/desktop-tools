@@ -383,6 +383,21 @@ function validateAction(request) {
         }
         return;
     }
+    if (request.op === "dialog-answer") {
+        validateDialogTarget(request.target);
+        const keys = Object.keys(request).filter((key) => key !== "op" && key !== "target").sort();
+        if ("button" in request && keys.length === 1) {
+            if (typeof request.button !== "string" || !request.button || request.button.length > 512)
+                throw new Error("Use one exact dialog button title of at most 512 UTF-16 code units.");
+            return;
+        }
+        if (!("field" in request) || keys.join() !== "field,text" || !Number.isInteger(request.field)
+            || request.field < 0 || request.field > 1000 || typeof request.text !== "string"
+            || request.text.length > 8192) {
+            throw new Error("Answer a dialog with exactly one button title, or one listed field index and at most 8192 UTF-16 code units of text.");
+        }
+        return;
+    }
     if (request.op === "menu") {
         validateAppOnly(request.target);
         validateMenuPath(request.path);
@@ -512,20 +527,31 @@ function validateAppOnly(target) {
         throw new Error("Pass only the application's target object from desktop_apps.");
     }
 }
-function validateManagement(request) {
-    const target = request.target;
-    if (request.op === "activate" || request.op === "quit") {
+function validateDialogTarget(target) {
+    if (target && typeof target === "object" && "window_id" in target)
+        validateWindowTarget(target);
+    else
         validateAppOnly(target);
-        return;
-    }
-    validateAppTarget(target);
-    const window = request.target;
+}
+function validateWindowTarget(window) {
+    validateAppTarget(window);
     if (!Number.isInteger(window.window_id) || window.window_id < 1 || window.window_id > 4_294_967_295
         || typeof window.is_minimized !== "boolean" || !window.bounds
         || ![window.bounds.x, window.bounds.y, window.bounds.width, window.bounds.height].every(Number.isFinite)
         || window.bounds.width <= 0 || window.bounds.height <= 0) {
         throw new Error("Pass the window's target object, including its original bounds, from desktop_windows unchanged.");
     }
+}
+function validateManagement(request) {
+    if (request.op === "activate" || request.op === "quit" || request.op === "hide"
+        || request.op === "unhide") {
+        validateAppOnly(request.target);
+        if (request.op === "quit" && request.force !== undefined && typeof request.force !== "boolean") {
+            throw new Error("Quit force must be true or false.");
+        }
+        return;
+    }
+    validateWindowTarget(request.target);
     if (request.op === "move") {
         const position = request.position;
         if (!position || ![position.x, position.y].every(Number.isFinite)) {
@@ -613,15 +639,17 @@ async function act(native, request, signal) {
             : request;
         const operation = request.op === "menu"
             ? "menu"
-            : request.op === "clipboard-write"
-                ? "clipboard"
-                : request.op === "launch"
-                    ? "launch"
-                    : request.op === "open"
-                        ? "open"
-                        : isDesktopManagement(request)
-                            ? "management"
-                            : "action";
+            : request.op === "dialog-answer"
+                ? "dialog"
+                : request.op === "clipboard-write"
+                    ? "clipboard"
+                    : request.op === "launch"
+                        ? "launch"
+                        : request.op === "open"
+                            ? "open"
+                            : isDesktopManagement(request)
+                                ? "management"
+                                : "action";
         data = await native([operation], signal, {
             input: JSON.stringify(input),
             onDispatch() {
@@ -665,13 +693,14 @@ async function act(native, request, signal) {
     }
     if (outcome === "unknown"
         && ((request.op === "quit" && data.terminated === false)
-            || (request.op === "close" && data.target_receipt))) {
+            || ((request.op === "close" || request.op === "dialog-answer") && data.target_receipt))) {
         return await observeManagement(native, request, data, signal);
     }
     if (outcome !== "completed" || request.op === "clipboard-write") {
         return actionResult(data, outcome);
     }
-    if (isDesktopManagement(request) || request.op === "launch" || request.op === "open") {
+    if (isDesktopManagement(request) || request.op === "launch" || request.op === "open"
+        || request.op === "dialog-answer") {
         return await observeManagement(native, request, data, signal);
     }
     // Observation is separate from delivery: its failure must not turn completed input into a retry.
@@ -719,12 +748,16 @@ async function observeManagement(native, request, action, signal) {
     const target = request.op === "launch" || request.op === "open"
         ? action.application?.target
         : request.target;
+    const applicationLevel = request.op === "activate" || request.op === "quit"
+        || request.op === "hide" || request.op === "unhide" || request.op === "launch"
+        || request.op === "open";
     if (!receipt || !target || receipt.pid !== target.pid
         || receipt.process_start_identity_decimal !== target.process_start_identity_decimal
-        || (request.op === "activate" || request.op === "quit" || request.op === "launch"
-            || request.op === "open"
+        || (applicationLevel
             ? receipt.window_id !== undefined
-            : receipt.window_id !== request.target.window_id)) {
+            : request.op === "dialog-answer" && !("window_id" in request.target)
+                ? !receipt.window_id
+                : receipt.window_id !== request.target.window_id)) {
         return actionResult({
             ...action,
             outcome: "unknown",
@@ -740,7 +773,8 @@ async function observeManagement(native, request, action, signal) {
         const app = apps.apps.find((app) => app.pid === receipt.pid);
         data.application = app || null;
         // The native receipt owns close/quit evidence; later inventory cannot undo or establish it.
-        if (!app && (request.op === "quit" || request.op === "close")) {
+        if (!app
+            && (request.op === "quit" || request.op === "close" || request.op === "dialog-answer")) {
             return managementResult(data, action, outcome);
         }
         if (!app)
@@ -757,9 +791,8 @@ async function observeManagement(native, request, action, signal) {
         if (windows.windows.some((window) => window.process_start_identity_decimal !== receipt.process_start_identity_decimal)) {
             throw new Error("Later window inventory could not be bound to the original application generation.");
         }
-        if (request.op === "activate" || request.op === "quit" || request.op === "launch"
-            || request.op === "open"
-            || request.op === "close") {
+        // A dialog answer can close its sheet or window, so the refreshed inventory is its observation.
+        if (applicationLevel || request.op === "close" || request.op === "dialog-answer") {
             return managementResult(data, action, outcome);
         }
         if (!windows.windows.some((window) => window.window_id === receipt.window_id)) {
@@ -832,6 +865,8 @@ async function execute(native, request, abort) {
             "windows",
             "menus",
             "menu",
+            "dialog",
+            "dialog-answer",
             "inspect",
             "screen",
             "click",
@@ -845,10 +880,13 @@ async function execute(native, request, abort) {
             "launch",
             "open",
             "quit",
+            "hide",
+            "unhide",
             "close",
             "focus",
             "minimize",
             "restore",
+            "maximize",
             "move",
             "resize",
         ].includes(request.op)) {
@@ -892,6 +930,19 @@ async function execute(native, request, abort) {
                     throw new Error("Native menu inventory did not honor the requested literal path.");
             }
             return { text: bounded(data, "menus") };
+        }
+        if (request.op === "dialog") {
+            validateDialogTarget(request.target);
+            const data = await native(["dialog"], signal, {
+                input: JSON.stringify({ op: request.op, target: request.target }),
+            });
+            const receipt = data.target_receipt;
+            if (receipt?.pid !== request.target.pid
+                || receipt.process_start_identity_decimal !== request.target.process_start_identity_decimal
+                || !receipt.window_id
+                || ("window_id" in request.target && receipt.window_id !== request.target.window_id))
+                throw new Error("Native dialog listing returned a different application generation or window.");
+            return { text: bounded(data, "other_elements") };
         }
         if (request.op === "clipboard-read") {
             if (request.format !== undefined && request.format !== "text" && request.format !== "image"

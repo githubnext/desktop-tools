@@ -32,6 +32,14 @@ struct ManagementTarget: Codable {
 		is_minimized = window.isMinimized
 	}
 
+	init(window identity: WindowMutationIdentity, bounds: CGRect) {
+		pid = identity.ownerProcessIdentifier
+		process_start_identity_decimal = String(identity.ownerProcessStartIdentity)
+		window_id = identity.windowID
+		self.bounds = Bounds(bounds)
+		is_minimized = identity.isMinimized
+	}
+
 	func processIdentity() throws -> ApplicationProcessIdentity {
 		guard pid > 0, let generation = UInt64(process_start_identity_decimal), generation > 0,
 			String(generation) == process_start_identity_decimal
@@ -58,7 +66,9 @@ struct ManagementTarget: Codable {
 
 private struct ManagementRequest: Decodable {
 	enum Operation: String, Decodable {
-		case activate, quit, close, focus, minimize, restore, move, resize
+		case activate, quit, hide, unhide, close, focus, minimize, restore, maximize, move, resize
+
+		var targetsApplication: Bool { self == .activate || self == .quit || self == .hide || self == .unhide }
 	}
 	struct Position: Decodable {
 		let x: Double
@@ -72,8 +82,10 @@ private struct ManagementRequest: Decodable {
 	let target: ManagementTarget
 	let position: Position?
 	let size: Size?
+	let force: Bool?
 
 	func validate() throws {
+		guard force == nil || op == .quit else { throw ManagementError("Only quit accepts force.") }
 		switch op {
 		case .move:
 			guard let position, size == nil, position.x.isFinite, position.y.isFinite else {
@@ -130,13 +142,24 @@ func nativeManagement(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeH
 		try request.validate()
 		let process = try request.target.processIdentity()
 		let window: WindowMutationIdentity?
-		if request.op == .activate || request.op == .quit {
+		if request.op.targetsApplication {
 			guard request.target.window_id == nil, request.target.bounds == nil, request.target.is_minimized == nil else {
-				throw ManagementError("Activation and quit take an application target from desktop_apps.")
+				throw ManagementError("Activate, hide, unhide and quit take an application target from desktop_apps.")
 			}
 			window = nil
 		} else {
 			window = try request.target.windowIdentity()
+		}
+		let operations = handshake.enabledOperations ?? handshake.supportedOperations
+		let required: PeekabooBridgeOperation? = switch request.op {
+		case .hide: .hideApplication
+		case .maximize: .maximizeWindow
+		default: nil
+		}
+		if let required {
+			guard handshake.supportedOperations.contains(required), operations.contains(required) else {
+				throw ManagementError("The desktop runtime does not support exact \(request.op.rawValue). Update the runtime before acting.")
+			}
 		}
 		if request.op == .quit {
 			guard handshake.negotiatedVersion >= PeekabooBridgeConstants.processGenerationPinnedApplicationQuitVersion,
@@ -168,7 +191,8 @@ func nativeManagement(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeH
 		var terminated: Bool?
 		invoked = true
 		switch request.op {
-		case .activate:
+		case .activate, .unhide:
+			// The Bridge refuses background unhide; activation is the exact route that unhides an app.
 			operation = .activateApplication
 			let action = try await client.activateApplicationTargetedResult(request: .init(
 				identifier: "PID:\(process.processIdentifier)", expectedIdentity: process
@@ -178,10 +202,20 @@ func nativeManagement(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeH
 				throw ManagementError("Activation returned no matching application-only receipt.")
 			}
 			outcome = action.outcome
+		case .hide:
+			operation = .hideApplication
+			let action = try await client.hideApplicationTargetedResult(request: ApplicationHideRequest(
+				identifier: "PID:\(process.processIdentifier)", expectedIdentity: process
+			))
+			result.native_outcome = action.outcome
+			guard action.targetIdentity?.processIdentity == process, action.targetIdentity?.exactWindow == nil else {
+				throw ManagementError("Hide returned no matching application-only receipt.")
+			}
+			outcome = action.outcome
 		case .quit:
 			operation = .quitApplication
 			let action = try await client.quitApplicationResult(request: .init(
-				identifier: "PID:\(process.processIdentifier)", force: false, expectedIdentity: process
+				identifier: "PID:\(process.processIdentifier)", force: request.force == true, expectedIdentity: process
 			), supportsPinnedQuit: true)
 			terminated = action.payload
 			outcome = action.outcome
@@ -205,6 +239,9 @@ func nativeManagement(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeH
 		case .restore:
 			operation = .restoreWindow
 			outcome = try await client.restoreWindowResult(target: .windowId(window!.windowID), expectedIdentity: window!).outcome
+		case .maximize:
+			operation = .maximizeWindow
+			outcome = try await client.maximizeWindowResult(target: .windowId(window!.windowID), expectedIdentity: window!).outcome
 		case .move:
 			operation = .moveWindow
 			let position = request.position!
@@ -236,7 +273,9 @@ func nativeManagement(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeH
 		result.requires_fresh_observation = outcome.dispatchState.mutationDispatched
 		result.terminated = terminated
 		if terminated == false {
-			result.message = "The normal quit request was accepted, but termination was not confirmed. Inspect remaining windows for unsaved work or other dialogs; do not blindly retry or force quit."
+			result.message = request.force == true
+				? "The force quit was sent, but termination was not confirmed. Refresh desktop_apps before any further action; do not blindly repeat it."
+				: "The normal quit request was accepted, but termination was not confirmed. Inspect remaining windows for unsaved work or other dialogs with desktop_dialog; do not blindly retry, and force quit only deliberately because it discards unsaved work."
 		}
 		if request.op == .close, !outcome.isConfirmed {
 			result.message = "The close request was not confirmed complete. Inspect remaining windows for unsaved work or other dialogs; do not blindly retry close."

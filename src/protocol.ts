@@ -10,11 +10,15 @@ export type DesktopWindowTarget = DesktopAppTarget & {
 	is_minimized: boolean;
 };
 export type DesktopManagement =
-	| { op: "activate"; target: DesktopAppTarget }
-	| { op: "quit"; target: DesktopAppTarget }
-	| { op: "focus" | "minimize" | "restore" | "close"; target: DesktopWindowTarget }
+	| { op: "activate" | "hide" | "unhide"; target: DesktopAppTarget }
+	| { op: "quit"; target: DesktopAppTarget; force?: boolean }
+	| { op: "focus" | "minimize" | "restore" | "maximize" | "close"; target: DesktopWindowTarget }
 	| { op: "move"; target: DesktopWindowTarget; position: { x: number; y: number } }
 	| { op: "resize"; target: DesktopWindowTarget; size: { width: number; height: number } };
+/** Press one button by its exact title, or replace one text field's value by its listed index. */
+export type DesktopDialogAnswer =
+	& { op: "dialog-answer"; target: DesktopAppTarget | DesktopWindowTarget }
+	& ({ button: string } | { field: number; text: string });
 export type DesktopApplication = { path: string } | { bundle_id: string };
 export type DesktopLaunch = {
 	op: "launch";
@@ -30,6 +34,8 @@ export type DesktopRequest =
 	| DesktopManagement
 	| DesktopLaunch
 	| DesktopOpen
+	| DesktopDialogAnswer
+	| { op: "dialog"; target: DesktopAppTarget | DesktopWindowTarget }
 	| { op: "clipboard-read"; format?: "text" | "image" | "files" }
 	| { op: "clipboard-write"; text: string }
 	| { op: "clipboard-write"; format: "image"; path: string }
@@ -175,7 +181,11 @@ export type DesktopAction = Extract<
 			| "move"
 			| "resize"
 			| "clipboard-write"
-			| "menu";
+			| "menu"
+			| "dialog-answer"
+			| "hide"
+			| "unhide"
+			| "maximize";
 	}
 >;
 export type DesktopOutcome = "completed" | "refused" | "unknown";
@@ -192,12 +202,13 @@ export function isDesktopAction(request: DesktopRequest): request is DesktopActi
 	return request.op === "click" || request.op === "type" || request.op === "key"
 		|| request.op === "insert" || request.op === "select" || request.op === "scroll"
 		|| request.op === "drag" || request.op === "clipboard-write" || request.op === "launch"
-		|| request.op === "open" || request.op === "menu"
+		|| request.op === "open" || request.op === "menu" || request.op === "dialog-answer"
 		|| isDesktopManagement(request);
 }
 
 export function isDesktopManagement(request: DesktopRequest): request is DesktopManagement {
-	return request.op === "activate" || request.op === "quit" || request.op === "focus"
-		|| request.op === "minimize" || request.op === "restore" || request.op === "close"
+	return request.op === "activate" || request.op === "quit" || request.op === "hide"
+		|| request.op === "unhide" || request.op === "focus" || request.op === "minimize"
+		|| request.op === "restore" || request.op === "maximize" || request.op === "close"
 		|| request.op === "move" || request.op === "resize";
 }

@@ -13,13 +13,14 @@ export type DesktopWindowTarget = DesktopAppTarget & {
     is_minimized: boolean;
 };
 export type DesktopManagement = {
-    op: "activate";
+    op: "activate" | "hide" | "unhide";
     target: DesktopAppTarget;
 } | {
     op: "quit";
     target: DesktopAppTarget;
+    force?: boolean;
 } | {
-    op: "focus" | "minimize" | "restore" | "close";
+    op: "focus" | "minimize" | "restore" | "maximize" | "close";
     target: DesktopWindowTarget;
 } | {
     op: "move";
@@ -36,6 +37,16 @@ export type DesktopManagement = {
         height: number;
     };
 };
+/** Press one button by its exact title, or replace one text field's value by its listed index. */
+export type DesktopDialogAnswer = {
+    op: "dialog-answer";
+    target: DesktopAppTarget | DesktopWindowTarget;
+} & ({
+    button: string;
+} | {
+    field: number;
+    text: string;
+});
 export type DesktopApplication = {
     path: string;
 } | {
@@ -54,7 +65,10 @@ export type DesktopOpen = {
     };
     application?: DesktopApplication;
 };
-export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | {
+export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | DesktopDialogAnswer | {
+    op: "dialog";
+    target: DesktopAppTarget | DesktopWindowTarget;
+} | {
     op: "clipboard-read";
     format?: "text" | "image" | "files";
 } | {
@@ -150,7 +164,7 @@ export type DesktopKey = (typeof DESKTOP_KEYS)[number];
 export type DesktopModifier = (typeof DESKTOP_MODIFIERS)[number];
 export type DesktopSelection = (typeof DESKTOP_SELECTIONS)[number];
 export type DesktopAction = Extract<DesktopRequest, {
-    op: "click" | "type" | "key" | "insert" | "select" | "scroll" | "drag" | "activate" | "launch" | "open" | "quit" | "close" | "focus" | "minimize" | "restore" | "move" | "resize" | "clipboard-write" | "menu";
+    op: "click" | "type" | "key" | "insert" | "select" | "scroll" | "drag" | "activate" | "launch" | "open" | "quit" | "close" | "focus" | "minimize" | "restore" | "move" | "resize" | "clipboard-write" | "menu" | "dialog-answer" | "hide" | "unhide" | "maximize";
 }>;
 export type DesktopOutcome = "completed" | "refused" | "unknown";
 export type DesktopImage = {

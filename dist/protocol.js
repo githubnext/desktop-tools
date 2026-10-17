@@ -72,11 +72,12 @@ export function isDesktopAction(request) {
     return request.op === "click" || request.op === "type" || request.op === "key"
         || request.op === "insert" || request.op === "select" || request.op === "scroll"
         || request.op === "drag" || request.op === "clipboard-write" || request.op === "launch"
-        || request.op === "open" || request.op === "menu"
+        || request.op === "open" || request.op === "menu" || request.op === "dialog-answer"
         || isDesktopManagement(request);
 }
 export function isDesktopManagement(request) {
-    return request.op === "activate" || request.op === "quit" || request.op === "focus"
-        || request.op === "minimize" || request.op === "restore" || request.op === "close"
+    return request.op === "activate" || request.op === "quit" || request.op === "hide"
+        || request.op === "unhide" || request.op === "focus" || request.op === "minimize"
+        || request.op === "restore" || request.op === "maximize" || request.op === "close"
         || request.op === "move" || request.op === "resize";
 }
