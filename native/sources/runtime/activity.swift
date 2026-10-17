@@ -107,6 +107,46 @@ private let activityHidden: Set<PeekabooBridgeOperation> = [
 	.disconnectExactWindowHeldPointerOwner, .prepareDialogAction,
 ]
 
+/// Pause all input: while on, the runtime refuses every operation that changes the desktop, and clipboard writes,
+/// before dispatch. Only the embedding app sets it, from its own menu; clients have no way to change it.
+final class Pause: @unchecked Sendable {
+	static let shared = Pause()
+	static let message = "Input is paused in Desktop Tools, so nothing was sent. Ask the user to resume input from the Desktop Tools menu; reading the desktop still works."
+	private let lock = NSLock()
+	private var paused = false
+
+	var isPaused: Bool {
+		lock.lock()
+		defer { lock.unlock() }
+		return paused
+	}
+
+	func set(_ value: Bool) {
+		lock.lock()
+		paused = value
+		lock.unlock()
+	}
+
+	/// The refusal for one request, or nil when it may run.
+	func refusal(_ operation: PeekabooBridgeOperation, mutatesDesktop: Bool) -> String? {
+		isPaused && Self.blocks(operation, mutatesDesktop: mutatesDesktop) ? Self.message : nil
+	}
+
+	/// Desktop changes and clipboard writes, but never snapshot bookkeeping or releasing a held button.
+	static func blocks(_ operation: PeekabooBridgeOperation, mutatesDesktop: Bool) -> Bool {
+		if pauseExempt.contains(operation) { return false }
+		return mutatesDesktop || clipboardWrites.contains(operation)
+	}
+}
+
+private let clipboardWrites: Set<PeekabooBridgeOperation> = [.clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite]
+
+/// Reads and cleanup keep working while paused, so a paused agent can still observe and nothing stays held.
+private let pauseExempt: Set<PeekabooBridgeOperation> = [
+	.createSnapshot, .cleanSnapshot, .ownsSnapshot, .getDetectionResult, .finishSnapshotMutation,
+	.releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer, .disconnectExactWindowHeldPointerOwner,
+]
+
 /// Records one finished request when it is worth listing. Runs while the client still waits for its reply,
 /// so the client's environment and parent are still readable.
 func recordActivity(_ record: PeekabooBridgeOperationRecord) {
@@ -125,7 +165,8 @@ func recordActivity(_ record: PeekabooBridgeOperationRecord) {
 		operation: name,
 		app: record.targetProcessIdentifier.flatMap { NSRunningApplication(processIdentifier: $0)?.localizedName },
 		window: record.targetWindowID.flatMap(windowTitle),
-		outcome: record.outcome.rawValue,
+		outcome: record.outcome == .refused && Pause.shared.isPaused
+			&& Pause.blocks(operation, mutatesDesktop: record.mutatesDesktop) ? "paused" : record.outcome.rawValue,
 		count: 1
 	))
 }

@@ -1,20 +1,22 @@
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeBootstrap.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeBootstrap.swift
-index b0627bc94..b6d2bab3f 100644
+index b0627bc94..07059f0ae 100644
 --- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeBootstrap.swift
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeBootstrap.swift
-@@ -19,6 +19,7 @@ public enum PeekabooBridgeBootstrap {
+@@ -19,6 +19,8 @@ public enum PeekabooBridgeBootstrap {
          let requestDrainTimeoutSec: TimeInterval
          let screenCaptureKitOwnershipPreparer: @Sendable () async throws -> Void
          var targetWindowObserver: (@Sendable (PeekabooBridgeTargetWindow) -> Void)? = nil
 +        var operationObserver: (@Sendable (PeekabooBridgeOperationRecord) -> Void)? = nil
++        var operationAdmission: (@Sendable (PeekabooBridgeOperation, Bool) -> String?)? = nil
      }
  
      @discardableResult
-@@ -118,6 +119,7 @@ public enum PeekabooBridgeBootstrap {
+@@ -118,6 +120,8 @@ public enum PeekabooBridgeBootstrap {
              automationActivityObserver: configuration.automationActivityObserver,
              browserSessionBootstrapProvider: services.browserSessionBootstrapProvider)
          server.targetWindowObserver = configuration.targetWindowObserver
 +        server.operationObserver = configuration.operationObserver
++        server.operationAdmission = configuration.operationAdmission
          let host = PeekabooBridgeHost(
              socketPath: configuration.socketPath,
              server: server,
@@ -121,7 +123,7 @@ index 000000000..a2ad0d774
 +    }
 +}
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Routing.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Routing.swift
-index aca49389f..6f02f5140 100644
+index aca49389f..4d7846995 100644
 --- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Routing.swift
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Routing.swift
 @@ -18,6 +18,15 @@ extension PeekabooBridgeServer {
@@ -139,6 +141,20 @@ index aca49389f..6f02f5140 100644
 +        peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeHandledResponse
      {
          let request = plan.request
+         do {
+@@ -83,6 +92,13 @@ extension PeekabooBridgeServer {
+                 plan: plan,
+                 stage: .preDispatch(PeekabooBridgeOperationResultSemantics.preDispatchReason(for: envelope)))
+         }
++        if let refusal = self.operationAdmission?(op, plan.result.completion.mutatesDesktop) {
++            failed = true
++            throw PeekabooBridgeOperationResultSemantics.canonicalFailure(
++                .init(code: .permissionDenied, message: refusal),
++                plan: plan,
++                stage: .preDispatch(.permissionDenied))
++        }
+         await self.reportTargetWindow(plan, peer: peer)
+ 
          do {
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+TargetWindow.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+TargetWindow.swift
 index 728abef12..5a3d5cdb6 100644
@@ -180,47 +196,54 @@ index 728abef12..5a3d5cdb6 100644
  
      private func snapshotWindow(_ snapshotId: String) async -> (pid_t, CGWindowID)? {
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer.swift
-index 5a1c3c3e3..9f6fbd161 100644
+index 5a1c3c3e3..b0d87cdc2 100644
 --- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer.swift
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer.swift
-@@ -141,6 +141,8 @@ public final class PeekabooBridgeServer {
+@@ -141,6 +141,11 @@ public final class PeekabooBridgeServer {
      let automationActivityObserver: (@Sendable (pid_t) -> Void)?
      /// Receives each authorized request's exact target window before dispatch.
      var targetWindowObserver: (@Sendable (PeekabooBridgeTargetWindow) -> Void)?
 +    /// Receives each authorized request once it has finished, with its target and outcome.
 +    var operationObserver: (@Sendable (PeekabooBridgeOperationRecord) -> Void)?
++    /// Refuses an authorized request before dispatch when it returns a message: the operation and whether it
++    /// mutates the desktop.
++    var operationAdmission: (@Sendable (PeekabooBridgeOperation, Bool) -> String?)?
      let encoder: JSONEncoder
      let decoder: JSONDecoder
      let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "server")
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooEmbeddedBridgeRuntime.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooEmbeddedBridgeRuntime.swift
-index a3723e271..09e92c69b 100644
+index a3723e271..814aba2bc 100644
 --- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooEmbeddedBridgeRuntime.swift
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooEmbeddedBridgeRuntime.swift
-@@ -156,6 +156,8 @@ public actor PeekabooEmbeddedBridgeRuntime {
+@@ -156,6 +156,11 @@ public actor PeekabooEmbeddedBridgeRuntime {
          public let requestDrainTimeoutSeconds: TimeInterval
          /// Receives each authorized request's exact target window before dispatch, on the main actor.
          public var targetWindowObserver: (@Sendable (PeekabooBridgeTargetWindow) -> Void)?
 +        /// Receives each authorized request once it has finished, with its target and outcome, on the main actor.
 +        public var operationObserver: (@Sendable (PeekabooBridgeOperationRecord) -> Void)?
++        /// Refuses an authorized request before dispatch when it returns a message, given the operation and whether
++        /// it mutates the desktop. Called on the main actor for every request, so it must be quick.
++        public var operationAdmission: (@Sendable (PeekabooBridgeOperation, Bool) -> String?)?
  
          let screenCaptureKitProcessCapabilityRegistrar: @Sendable () throws -> Void
          let screenCaptureKitOwnershipPreparer: @Sendable () async throws -> Void
-@@ -390,7 +392,8 @@ public actor PeekabooEmbeddedBridgeRuntime {
+@@ -390,7 +395,9 @@ public actor PeekabooEmbeddedBridgeRuntime {
                      requestTimeoutSec: configuration.requestTimeoutSeconds,
                      requestDrainTimeoutSec: configuration.requestDrainTimeoutSeconds,
                      screenCaptureKitOwnershipPreparer: configuration.screenCaptureKitOwnershipPreparer,
 -                    targetWindowObserver: configuration.targetWindowObserver))
 +                    targetWindowObserver: configuration.targetWindowObserver,
-+                    operationObserver: configuration.operationObserver))
++                    operationObserver: configuration.operationObserver,
++                    operationAdmission: configuration.operationAdmission))
          }
          let host = preparedHost.host
  
 diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationRecordTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationRecordTests.swift
 new file mode 100644
-index 000000000..814c42440
+index 000000000..3381bf8b5
 --- /dev/null
 +++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationRecordTests.swift
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,142 @@
 +import CoreGraphics
 +import Foundation
 +import PeekabooAutomationKit
@@ -286,6 +309,34 @@ index 000000000..814c42440
 +    }
 +
 +    @Test
++    func `an admission refusal stops the request before dispatch and is recorded as refused`() async throws {
++        let server = PeekabooBridgeServer(
++            services: StubServices(snapshots: InMemorySnapshotManager()),
++            hostKind: .gui,
++            allowlistedTeams: [],
++            allowlistedBundles: [])
++        let records = OperationRecords()
++        server.operationObserver = { records.append($0) }
++        let asked = AdmissionQuestions()
++        server.operationAdmission = { operation, mutates in
++            asked.append(operation, mutates)
++            return operation == .listApplications ? "Input is paused." : nil
++        }
++
++        do {
++            _ = try await server.route(Self.plan(.listApplications), peer: Self.peer)
++            Issue.record("The paused request was dispatched.")
++        } catch let envelope as PeekabooBridgeErrorEnvelope {
++            #expect(envelope.message == "Input is paused.")
++            #expect(envelope.operationMayHaveCompleted == false)
++        }
++
++        #expect(asked.values.map(\.0) == [.listApplications])
++        #expect(asked.values.map(\.1) == [false])
++        #expect(records.values.map(\.outcome) == [.refused])
++    }
++
++    @Test
 +    func `mutation states map to completed, unknown or refused`() {
 +        #expect(PeekabooBridgeServer.recordedOutcome(nil) == .completed)
 +        #expect(PeekabooBridgeServer.recordedOutcome(.confirmedChange) == .completed)
@@ -307,6 +358,19 @@ index 000000000..814c42440
 +        _ request: PeekabooBridgeRequest) -> PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan
 +    {
 +        PeekabooBridgeOperationResultSemantics.requestPlan(for: request, vocabulary: .current)
++    }
++}
++
++private final class AdmissionQuestions: @unchecked Sendable {
++    private let lock = NSLock()
++    private var questions: [(PeekabooBridgeOperation, Bool)] = []
++
++    var values: [(PeekabooBridgeOperation, Bool)] {
++        self.lock.withLock { self.questions }
++    }
++
++    func append(_ operation: PeekabooBridgeOperation, _ mutates: Bool) {
++        self.lock.withLock { self.questions.append((operation, mutates)) }
 +    }
 +}
 +

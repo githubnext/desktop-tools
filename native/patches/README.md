@@ -527,6 +527,8 @@ response, descriptor and semantics with the read; the operation inventory tests 
 - **Advisory only.** The report changes no routing or response. Without an observer, the server does no extra work.
 - **No new operation.** The wire count is unchanged.
 
+The same patch adds an `operationAdmission` hook, for the embedding app's pause switch. The server asks it for every authorized request, after operation access is validated and before the target window is reported or anything is dispatched. It passes the operation and whether its result contract mutates the desktop. A returned message fails the request as a pre-dispatch `permissionDenied`, so it may not have completed and is recorded as `refused`. Without a hook, nothing changes.
+
 When updating Peekaboo, review the upstream fixes and these patches together. Update the revision
 guard and patches deliberately, or remove each patch when the dependency includes its fix.
 Revalidate real button clicks, changed-focus refusal, literal multiline insertion, clipboard
