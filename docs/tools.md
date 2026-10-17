@@ -1,6 +1,6 @@
 # Tools
 
-The [MCP server](mcp.md) and `desktopTools()` expose 45 tools, one per protocol operation. Each tool's description and argument schema in `src/tools.ts` is the full contract; this page is the map.
+The [MCP server](mcp.md) and `desktopTools()` expose 47 tools, one per protocol operation. Each tool's description in `src/tools.ts` says, in a few sentences, what it does, whether it is foreground or background input, when its result is `completed` rather than `unknown`, and its main refusal and recovery. Rules shared by every tool, such as single-use snapshots and never replaying input, are in the MCP server's instructions. This page holds the details. The client validates every argument, so the schemas name fields and keep only the limits that help choose values.
 
 [Recipes](recipes.md) give tool sequences, derived from the code, for tasks that take several calls, such as printing to PDF, installing from a DMG or filling a web form.
 
@@ -192,6 +192,57 @@ Listing runs in the client process and needs no permission. Selecting goes throu
 `desktop_notifications` inspects Notification Center's windows on screen: its banners and alerts, and its panel when open (click the clock with `desktop_menubar_click` to open it). Each notification has an `id`, its app, title, subtitle, body and time where they can be read, its raw `texts` and `description`, and its `actions`: `open`, plus the custom actions Notification Center lists for it by exact name, such as Close, Show, Options or the posting app's own. `desktop_notification_action` takes that `id` and one of those actions. `open` is the notification's default click (on a stack, it expands the group); `close` runs Close; any other name runs that one listed custom action through Accessibility. Only Notification Center's elements list or run custom actions, at most 8 per element, each one line of at most 64 characters, and a name listed twice is never offered. A notification that has gone or changed is refused before input. Afterwards the notifications are read again: the result is `completed` only when the notification is gone, and `unknown` otherwise. System alerts such as permission prompts are dialogs, so `desktop_notifications` lists them under `system_alerts` for `desktop_dialog` and `desktop_dialog_answer` and never acts on them. This is built against the Notification Center structure of macOS 11 to 15.
 
 An action refused because its window was minimized after inspection reports `WINDOW_MINIMIZED`, with the low-level reason as its `cause`. Restore the window with `desktop_restore`, then inspect it again.
+
+## Details by tool
+
+These are the rest of each tool's contract, beyond its description.
+
+**`desktop_clipboard_read`.**
+- **Text.** It returns the complete text, up to a 24 KB JSON result. An empty string is distinct from absent text (`present: false`).
+- **Image.** The preview is oriented, with separate source and preview metadata. A large preview may flatten transparency onto a white JPEG.
+- **Files.** It returns up to 32 advertised local file URLs and their decoded paths. It neither opens the files nor confirms they exist.
+- **Refused.** Text and image reads need exactly one clipboard item. File promises, legacy-only filename lists, items mixing files with other content, and unreadable or oversized content are refused.
+- **Side effects.** It needs macOS to allow clipboard reading. It never changes the clipboard or releases a pending paste reservation.
+
+**`desktop_clipboard_write`.**
+- **Image.** Its original bytes, orientation and transparency are kept. It may be at most 10 MiB and 64 million pixels.
+- **Files.** Each path must be an existing file, folder or symbolic link. The check reads only metadata, not contents, and doesn't resolve links. References keep their order and duplicates within the 24 KB read-result limit. `file_count` counts the references requested, not what a receiver copies or pastes.
+- **Persistence.** The write lasts until the next copy or write.
+
+**`desktop_launch` and `desktop_open`.**
+- **Choosing a copy.** A bundle ID lets macOS choose the installation; a path selects one copy. One launch can include several counted activation attempts.
+- **`desktop_open` limits.** Items are at most 4096 UTF-16 units, and the whole request at most 16 KiB. Paths keep Unicode and spaces, with no shell expansion. URLs must already be encoded and are never repaired. Any scheme, including `file` and custom schemes, has its receiving app's normal effects.
+- **Neither tool** batches items, creates extra instances or handles dialogs.
+
+**`desktop_menus` and `desktop_menu`.**
+- **Reading.** A read is bound to the same process generation before and after. Native results can come from a 2-second cache, so their time and completeness, including lazy or budget-limited submenus, are unknown. Result truncation is counted separately (`truncated`, `omitted`). Enabled and checked state are left out, because the native service substitutes defaults for attributes it can't read. Paths are for discovery, not reusable action targets. Accessibility reads are synchronous and can delay cancellation.
+- **Running a command.** `desktop_menu` resolves the path afresh. It refuses missing, ambiguous, disabled or unavailable lazy paths, and presses only the final item once. Its reads and the press run off the GUI actor, with a finite messaging timeout. Cancellation waits for the native call to return and can't undo delivered input.
+
+**`desktop_menubar_click`.** Before pressing, the host lists the menu bar again. It refuses if the item at that index no longer has the same owner generation, identifier, title, bounds or neighbours. Where an item has its own window, it is clicked through that window. The result lists the windows that appeared within about a second, front to back, with pid, window ID, owner, layer and bounds. It captures their region as an image without a snapshot.
+
+**`desktop_dock`.** Titles match exactly, including case, punctuation and Unicode. The right-click menu's submenus can't be reached.
+
+**`desktop_quit` and `desktop_close`.** A normal quit or close can open an unsaved-work dialog. The result is then `unknown`, with fresh inventory when available. The host never retries, force-closes or answers the dialog. `force: true` terminates that exact process immediately, with no save prompt.
+
+**`desktop_inspect`.**
+- **Accessibility mode** (the default) can return an action snapshot with element IDs.
+- **Pixels mode** returns a snapshot with no element IDs and no focused control. It authorizes only point clicks, point scrolls and drags in that exact window.
+- **After an action,** the automatic observation uses accessibility mode. If it fails, inspect again with pixels mode.
+
+**`desktop_click`.** A single left click on a supported editable text field, by element or point, also requests keyboard focus. The result says whether focus was verified; use `desktop_select` to choose a range or caret position. Points stay bound to the captured window, even when the returned screenshot was scaled.
+
+**`desktop_scroll`.** `amount` is in native scroll units. Their distance depends on the route the target supports, not on pixels.
+
+**`desktop_set_value`.**
+- **Dates.** A date is written as the control's date value and must read back to the second. The result shows it in UTC. A control that drops the time or seconds reports `unknown`. If a date control refuses, the result's `keyboard_route` explains entering it field by field.
+- **Toggles.** A toggle whose value is read-only but which advertises `AXPress` gets at most one press, and none when it already has the requested state.
+- **Pop-up buttons.** To pick an item, use `desktop_element_action` with `AXPick`, or `desktop_click`, on the item from the fresh observation.
+
+**`desktop_insert`, paste route.**
+- **Requirements.** The field's text and selection must be readable, and macOS must allow clipboard reading so the earlier contents can be restored. The original and resulting values must each fit 65,536 UTF-16 units.
+- **Delivery.** The paste is bound to the exact process, window and focused control. An exact receiver in the active frontmost app gets the paste chord directly. Any other target first gets a guarded click on a blank part of its title bar, which keeps the editor and selection; unsupported window chrome is refused. The route never changes after input begins, and the app isn't brought forward.
+- **Clipboard.** The clipboard is restored only after a meaningful observed edit. After uncertain delivery, the replacement may stay on the clipboard, and anything copied since is kept. The result reports delivery separately from `consumption`, `clipboard_cleanup` and `clipboard_ownership`.
+- **Reservation.** A reserved ownership refuses later automated clipboard writes until the edit is verified or the receiving process exits. Restarting the host doesn't clear it.
 
 ## Not supported
 
