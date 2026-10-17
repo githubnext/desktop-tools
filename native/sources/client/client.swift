@@ -148,7 +148,9 @@ private enum Client {
 				apps: inventory.items.map { App($0, metadata: matched[$0.processIdentifier], activityKnown: activityKnown) },
 				inventory_completeness: inventory.completeness.rawValue,
 				inventory_warnings: inventory.warnings,
-				metadata_warnings: warnings
+				metadata_warnings: warnings,
+				// Read after the inventory; its focus read has its own short limit.
+				system: await systemState(client, handshake: handshake)
 			))
 		case "windows":
 			let pid = try processID(args[2])
@@ -337,6 +339,7 @@ private struct Apps: Encodable {
 	let inventory_completeness: String
 	let inventory_warnings: [String]
 	let metadata_warnings: [String]
+	let system: SystemState
 }
 
 private struct App: Encodable {
