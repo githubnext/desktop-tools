@@ -19,7 +19,8 @@
 		"test": "node --test 'test/*.test.mjs'",
 		"check": "rm -rf .check && tsc --outDir .check && diff -r .check dist && rm -rf .check",
 		"build:native": "node dist/build.js --out build",
-		"build:app": "node dist/app.js --out build"
+		"build:app": "node dist/app.js --out build",
+		"live-check": "node scripts/live-check.mjs"
 	},
 	"devDependencies": {
 		"@types/node": "24.19.0",
