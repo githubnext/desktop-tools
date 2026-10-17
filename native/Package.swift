@@ -19,10 +19,12 @@ let package = Package(
 			path: "sources/identity",
 			linkerSettings: [.linkedFramework("Security")]
 		),
+		.target(name: "DesktopToolsCallers", path: "sources/callers"),
 		.target(
 			name: "DesktopTools",
 			dependencies: [
 				"DesktopToolsIdentity",
+				"DesktopToolsCallers",
 				.product(name: "PeekabooBridge", package: "Peekaboo"),
 				.product(name: "PeekabooAutomationKit", package: "Peekaboo"),
 			],
@@ -38,7 +40,8 @@ let package = Package(
 			],
 			path: "sources/client"
 		),
-		.executableTarget(name: "DesktopToolsApp", path: "sources/app"),
+		.executableTarget(name: "DesktopToolsApp", dependencies: ["DesktopToolsCallers"], path: "sources/app"),
+		.testTarget(name: "DesktopToolsCallersTests", dependencies: ["DesktopToolsCallers"], path: "tests/callers"),
 	],
 	swiftLanguageModes: [.v6]
 )

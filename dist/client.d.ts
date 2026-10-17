@@ -15,5 +15,14 @@ export type DesktopClientResult = DesktopResult & {
     data: unknown;
 };
 export type DesktopClient = (request: DesktopRequest, signal?: AbortSignal) => Promise<DesktopClientResult>;
+/**
+ * Gives a host refusal its own code and hint, in place of Peekaboo's generic permission code and its advice to grant
+ * a permission.
+ */
+export declare function hostRefusal<T extends {
+    code: string;
+    message: string;
+    hint?: unknown;
+}>(error: T): T;
 /** Creates a client bound to one host socket and signed client; calls are independent processes. */
 export declare function createDesktop(config: DesktopConfig): DesktopClient;
