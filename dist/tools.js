@@ -1,6 +1,6 @@
 import { DESKTOP_KEYS, DESKTOP_SYSTEM_KEYS, DESKTOP_WAIT_CONDITIONS } from "./protocol.js";
 import { TABLE_ROWS_DEFAULT, TABLE_ROWS_MAX } from "./table.js";
-import { WAIT_DEFAULT_MS, WAIT_MAX_MS } from "./wait.js";
+import { EXPECT_DEFAULT_MS, EXPECT_MAX_MS, WAIT_DEFAULT_MS, WAIT_MAX_MS } from "./wait.js";
 // Shared argument shapes; native checks bind each target to the process or window observed.
 const id = { type: "string", minLength: 1, maxLength: 256 };
 const windowTarget = {
@@ -85,6 +85,38 @@ const point = {
         y: { type: "number", minimum: 0, exclusiveMaximum: 1 },
     },
 };
+/** desktop_wait's condition arguments, which an action's expect also takes. */
+const waitCondition = {
+    until: { anyOf: DESKTOP_WAIT_CONDITIONS.map((until) => ({ type: "string", const: until })) },
+    bundle_id: { type: "string", minLength: 1, maxLength: 256, pattern: "^[A-Za-z0-9.-]+$" },
+    pid: { type: "integer", minimum: 1, maximum: 2_147_483_647 },
+    window: { type: "integer", minimum: 1, maximum: 4_294_967_295 },
+    title: { type: "string", maxLength: 512 },
+    title_contains: { type: "string", minLength: 1, maxLength: 512 },
+    element: {
+        type: "object",
+        required: ["role"],
+        properties: {
+            role: { type: "string", minLength: 1, maxLength: 128 },
+            title: { type: "string", maxLength: 8192 },
+            value: { type: "string", maxLength: 8192 },
+            identifier: { type: "string", maxLength: 8192 },
+        },
+        additionalProperties: false,
+    },
+    scope: scope,
+    text: { type: "string", maxLength: 8192 },
+};
+const expect = {
+    type: "object",
+    required: ["until"],
+    properties: {
+        ...waitCondition,
+        timeout_ms: { type: "integer", minimum: 100, maximum: EXPECT_MAX_MS },
+    },
+    additionalProperties: false,
+};
+const expectNote = `Optional expect names what the action should change, as one desktop_wait condition with its arguments (until, pid, window, element, text and so on), such as element_appears for a menu a click opens or app_frontmost for an app a shortcut brings forward. It is read once before any input and must not hold yet, or the action is refused with nothing sent. When the action's outcome is unknown, the condition is polled for timeout_ms (default ${EXPECT_DEFAULT_MS}, at most ${EXPECT_MAX_MS}): if it holds, the outcome becomes completed, with expectation showing the match; if not, the outcome stays unknown, with expectation.last_observation. A completed or refused outcome is returned as it is. The input is sent once and never repeated.`;
 const key = {
     anyOf: [
         ...DESKTOP_KEYS.map((key) => ({ type: "string", const: key })),
@@ -568,25 +600,7 @@ export function desktopTools({ place, app }) {
                 type: "object",
                 required: ["until"],
                 properties: {
-                    until: { anyOf: DESKTOP_WAIT_CONDITIONS.map((until) => ({ type: "string", const: until })) },
-                    bundle_id: { type: "string", minLength: 1, maxLength: 256, pattern: "^[A-Za-z0-9.-]+$" },
-                    pid: { type: "integer", minimum: 1, maximum: 2_147_483_647 },
-                    window: { type: "integer", minimum: 1, maximum: 4_294_967_295 },
-                    title: { type: "string", maxLength: 512 },
-                    title_contains: { type: "string", minLength: 1, maxLength: 512 },
-                    element: {
-                        type: "object",
-                        required: ["role"],
-                        properties: {
-                            role: { type: "string", minLength: 1, maxLength: 128 },
-                            title: { type: "string", maxLength: 8192 },
-                            value: { type: "string", maxLength: 8192 },
-                            identifier: { type: "string", maxLength: 8192 },
-                        },
-                        additionalProperties: false,
-                    },
-                    scope: scope,
-                    text: { type: "string", maxLength: 8192 },
+                    ...waitCondition,
                     timeout_ms: { type: "integer", minimum: 100, maximum: WAIT_MAX_MS },
                 },
                 additionalProperties: false,
@@ -595,7 +609,7 @@ export function desktopTools({ place, app }) {
         {
             name: "desktop_click",
             op: "click",
-            description: `Click one element or screenshot point from a fresh desktop_inspect result on ${place}. Pass snapshot_id as snapshot and exactly one of the literal element ID or point. A point uses normalized image coordinates: x is the fraction from the screenshot's left edge, y from its top edge, each >= 0 and < 1. kind defaults to single; double, right, middle, and triple are also supported. A single left click on a supported editable text field, by element or point, requests keyboard focus and reports whether it was verified; use desktop_select to choose a range or caret position. modifiers holds command, option and/or shift during a single, double or triple click, as for Command-click or Shift-click to add items to a selection; a Control-click is kind right without modifiers. A click with modifiers is foreground input, even on an element, because Accessibility presses ignore modifier keys: the host activates the app, moves the real pointer to the point (an element's observed center), holds the keys with real key events around a real click, then restores the pointer and the previously focused app and window. Its result is unknown, because nothing reads back what it selected; inspect to check. Coordinates stay bound to the captured window, even when the screenshot was resized. Stale or unsupported targets are refused without activation or global input. The snapshot is single-use; inspect again after the action and never blindly repeat interrupted input.`,
+            description: `Click one element or screenshot point from a fresh desktop_inspect result on ${place}. Pass snapshot_id as snapshot and exactly one of the literal element ID or point. A point uses normalized image coordinates: x is the fraction from the screenshot's left edge, y from its top edge, each >= 0 and < 1. kind defaults to single; double, right, middle, and triple are also supported. A single left click on a supported editable text field, by element or point, requests keyboard focus and reports whether it was verified; use desktop_select to choose a range or caret position. modifiers holds command, option and/or shift during a single, double or triple click, as for Command-click or Shift-click to add items to a selection; a Control-click is kind right without modifiers. A click with modifiers is foreground input, even on an element, because Accessibility presses ignore modifier keys: the host activates the app, moves the real pointer to the point (an element's observed center), holds the keys with real key events around a real click, then restores the pointer and the previously focused app and window. Its result is unknown, because nothing reads back what it selected; inspect to check. Coordinates stay bound to the captured window, even when the screenshot was resized. Stale or unsupported targets are refused without activation or global input. The snapshot is single-use; inspect again after the action and never blindly repeat interrupted input. ${expectNote}`,
             parameters: {
                 type: "object",
                 required: ["snapshot"],
@@ -625,6 +639,7 @@ export function desktopTools({ place, app }) {
                         maxItems: 3,
                         uniqueItems: true,
                     },
+                    expect,
                 },
             },
         },
@@ -658,7 +673,9 @@ export function desktopTools({ place, app }) {
 
 To drag into another window or app, such as a file from Finder into an app, inspect both windows and pass the destination's snapshot_id as to_snapshot; from is then a point in snapshot and to a point in to_snapshot. This is foreground input: it moves the user's real pointer, and pressing in the source may bring its app forward. Both points must be visible and uncovered, so arrange the windows first if needed. duration_ms defaults to 800 for these drags. A drop between windows can't be confirmed, so the result is unknown; inspect both windows to see what happened. A path can't be combined with to_snapshot.
 
-Optional modifiers (command, control, option and shift, each at most once) are held down for the whole drag, as for Option-drag to copy or Command-drag to move in Finder, or Shift to constrain. Held keys are system-wide, so a drag with modifiers is always foreground input like a drag into another window, even within one window: it moves the real pointer, holds the real keys until release, needs every point uncovered, defaults duration_ms to 800, and its result is unknown; inspect afterward to see what happened.`,
+Optional modifiers (command, control, option and shift, each at most once) are held down for the whole drag, as for Option-drag to copy or Command-drag to move in Finder, or Shift to constrain. Held keys are system-wide, so a drag with modifiers is always foreground input like a drag into another window, even within one window: it moves the real pointer, holds the real keys until release, needs every point uncovered, defaults duration_ms to 800, and its result is unknown; inspect afterward to see what happened.
+
+${expectNote}`,
             parameters: {
                 type: "object",
                 required: ["snapshot", "from", "to"],
@@ -669,6 +686,7 @@ Optional modifiers (command, control, option and shift, each at most once) are h
                     to_snapshot: id,
                     path: { type: "array", items: point, minItems: 1, maxItems: 16 },
                     modifiers,
+                    expect,
                     button: {
                         anyOf: [
                             { type: "string", const: "left" },
@@ -812,7 +830,7 @@ Optional modifiers (command, control, option and shift, each at most once) are h
         {
             name: "desktop_insert",
             op: "insert",
-            description: `Insert literal text at the current caret or replace the current selection in the window bound by a fresh desktop_inspect result, preserving surrounding text. When the snapshot reports a focused control, the GUI sends the entire Unicode/multiline string through one temporary clipboard paste bound to the exact process, window, and focused control (the paste route); it never turns newlines into Enter keys. Requires readable text/selection and allowed macOS clipboard reading to preserve prior contents. The caret/selection can change after inspection. Clipboard restoration requires a meaningful observed edit; after uncertain delivery, the replacement may remain on the clipboard and newer copied contents are preserved. Read consumption, clipboard_cleanup, and clipboard_ownership separately from delivery. Reserved ownership refuses later automated clipboard writes until the edit is verified or the exact receiving process exits; restarting ${app} does not silently clear it. An exact receiver in the active frontmost app uses the targeted paste chord directly. Other targets require a guarded blank native title-bar click that preserves the editor and selection; unsupported window chrome is refused. The chosen route never changes after input begins and does not bring the app to the front. Original and resulting field values must fit 65,536 UTF-16 units. When the snapshot reports no focused control, as in terminals, canvases, custom views and web editors that expose no Accessibility text, the text is typed instead (the type route) into whatever has keyboard focus in that window (receiver window_focus); before each character the app's focused element must still be inside the window and the window must be the app's key window, or typing stops. Pass route type to type into an observed control whose text can't be read, such as a terminal, or route paste to refuse typing. Typing leaves the clipboard untouched, takes at most 1,000 UTF-16 units, refuses newlines, tabs and other control characters (press those with desktop_key), and is refused while secure keyboard entry is on. Characters go to the window in the background, and nothing reads back what the receiver did, so a typed insertion is unknown unless the host confirms an observed control's new value; inspect the window before acting again. Pass snapshot_id as snapshot. The snapshot is single-use and input is never automatically replayed. Inspect after uncertain delivery before another action.`,
+            description: `Insert literal text at the current caret or replace the current selection in the window bound by a fresh desktop_inspect result, preserving surrounding text. When the snapshot reports a focused control, the GUI sends the entire Unicode/multiline string through one temporary clipboard paste bound to the exact process, window, and focused control (the paste route); it never turns newlines into Enter keys. Requires readable text/selection and allowed macOS clipboard reading to preserve prior contents. The caret/selection can change after inspection. Clipboard restoration requires a meaningful observed edit; after uncertain delivery, the replacement may remain on the clipboard and newer copied contents are preserved. Read consumption, clipboard_cleanup, and clipboard_ownership separately from delivery. Reserved ownership refuses later automated clipboard writes until the edit is verified or the exact receiving process exits; restarting ${app} does not silently clear it. An exact receiver in the active frontmost app uses the targeted paste chord directly. Other targets require a guarded blank native title-bar click that preserves the editor and selection; unsupported window chrome is refused. The chosen route never changes after input begins and does not bring the app to the front. Original and resulting field values must fit 65,536 UTF-16 units. When the snapshot reports no focused control, as in terminals, canvases, custom views and web editors that expose no Accessibility text, the text is typed instead (the type route) into whatever has keyboard focus in that window (receiver window_focus); before each character the app's focused element must still be inside the window and the window must be the app's key window, or typing stops. Pass route type to type into an observed control whose text can't be read, such as a terminal, or route paste to refuse typing. Typing leaves the clipboard untouched, takes at most 1,000 UTF-16 units, refuses newlines, tabs and other control characters (press those with desktop_key), and is refused while secure keyboard entry is on. Characters go to the window in the background, and nothing reads back what the receiver did, so a typed insertion is unknown unless the host confirms an observed control's new value; inspect the window before acting again. Pass snapshot_id as snapshot. The snapshot is single-use and input is never automatically replayed. Inspect after uncertain delivery before another action. ${expectNote}`,
             parameters: {
                 type: "object",
                 required: ["snapshot", "text"],
@@ -820,13 +838,14 @@ Optional modifiers (command, control, option and shift, each at most once) are h
                     snapshot: id,
                     text: { type: "string", minLength: 1, maxLength: 8192 },
                     route: { type: "string", enum: ["paste", "type"] },
+                    expect,
                 },
             },
         },
         {
             name: "desktop_key",
             op: "key",
-            description: `Press and release one key or shortcut in the exact window bound by a fresh desktop_inspect result. When the snapshot reports a focused control, the key is bound to that control (receiver observed_control). Otherwise, as in lists, outlines, tables, canvases and web areas, it goes to whatever has keyboard focus in that window (receiver window_focus); before each event the app's focused element must still be inside the window and the window must be the app's key window, or the key is refused. key is a named key or the one character a key types, such as , / [ or a; the key is found on the current keyboard layout. Optional modifiers are command, control, option, and shift; each may appear once. A character that needs Shift or Option, such as ? or an uppercase letter, is refused with the unmodified key and modifier to send instead, so the chord always holds exactly the modifiers given. enter means Return, backspace deletes backward, and delete deletes forward; help is the Insert key on PC keyboards. Command-W, Command-Q, Command-H and Command-M are refused because their effect can't be verified; use desktop_close, desktop_quit, desktop_hide or desktop_minimize. To press several keys against one snapshot, pass keys instead of key: up to 16 chords in order, each with its own modifiers, such as Tab, Tab, Space; or pass repeat with key to press it up to 32 times, such as down 5 times. Each key of a sequence goes to the window's keyboard focus, which may move as it runs, and before each one the host checks that focus is still in this window and that it is still the app's key window. The sequence stops at the first refused key; keys_sent says how many were sent, and a sequence that stopped early is unknown. Pass snapshot_id as snapshot. Unsupported shortcuts and stale targets are refused, without global input or activation. The snapshot is single-use; inspect again after the action and never blindly repeat interrupted input. No keys remain held across calls.`,
+            description: `Press and release one key or shortcut in the exact window bound by a fresh desktop_inspect result. When the snapshot reports a focused control, the key is bound to that control (receiver observed_control). Otherwise, as in lists, outlines, tables, canvases and web areas, it goes to whatever has keyboard focus in that window (receiver window_focus); before each event the app's focused element must still be inside the window and the window must be the app's key window, or the key is refused. key is a named key or the one character a key types, such as , / [ or a; the key is found on the current keyboard layout. Optional modifiers are command, control, option, and shift; each may appear once. A character that needs Shift or Option, such as ? or an uppercase letter, is refused with the unmodified key and modifier to send instead, so the chord always holds exactly the modifiers given. enter means Return, backspace deletes backward, and delete deletes forward; help is the Insert key on PC keyboards. Command-W, Command-Q, Command-H and Command-M are refused because their effect can't be verified; use desktop_close, desktop_quit, desktop_hide or desktop_minimize. To press several keys against one snapshot, pass keys instead of key: up to 16 chords in order, each with its own modifiers, such as Tab, Tab, Space; or pass repeat with key to press it up to 32 times, such as down 5 times. Each key of a sequence goes to the window's keyboard focus, which may move as it runs, and before each one the host checks that focus is still in this window and that it is still the app's key window. The sequence stops at the first refused key; keys_sent says how many were sent, and a sequence that stopped early is unknown. Pass snapshot_id as snapshot. Unsupported shortcuts and stale targets are refused, without global input or activation. The snapshot is single-use; inspect again after the action and never blindly repeat interrupted input. No keys remain held across calls. ${expectNote}`,
             parameters: {
                 type: "object",
                 required: ["snapshot"],
@@ -846,17 +865,18 @@ Optional modifiers (command, control, option and shift, each at most once) are h
                         },
                     },
                     repeat: { type: "integer", minimum: 1, maximum: 32 },
+                    expect,
                 },
             },
         },
         {
             name: "desktop_system_key",
             op: "system-key",
-            description: `Press and release one system-wide shortcut on ${place}, such as Command-Space for Spotlight, Command-Tab to switch apps, Control-Up for Mission Control, Command-Shift-5 for the screenshot toolbar, or Control-Space to change input source. Use desktop_key for keys meant for a window. This needs no snapshot and has no target: the keys go to whatever is frontmost, as if typed on the keyboard, and they usually move focus, activate apps or open system UI. key and modifiers work as in desktop_key, including refusing characters that need Shift or Option. Any chord with Command and W, Q, H or M is refused, because it would close, quit, hide or minimize whatever is frontmost, or log out; use desktop_close, desktop_quit, desktop_hide or desktop_minimize. The result is unknown even when the keys were delivered, because nothing reads back what they did: observe with desktop_screen, desktop_apps or desktop_windows, close what opened (often desktop_system_key escape), and never blindly repeat the shortcut, since many shortcuts toggle. No keys remain held across calls. It also presses the media, volume and brightness keys, with no modifiers: play_pause, next_track and previous_track go to whichever app macOS routes media keys to, usually the one playing; volume_up, volume_down and mute change the output volume; brightness_up and brightness_down change the main display's brightness; keyboard_brightness_up and keyboard_brightness_down change the keyboard backlight where there is one. They are sent like the hardware keys, nothing reads back what they changed, and the result is unknown.`,
+            description: `Press and release one system-wide shortcut on ${place}, such as Command-Space for Spotlight, Command-Tab to switch apps, Control-Up for Mission Control, Command-Shift-5 for the screenshot toolbar, or Control-Space to change input source. Use desktop_key for keys meant for a window. This needs no snapshot and has no target: the keys go to whatever is frontmost, as if typed on the keyboard, and they usually move focus, activate apps or open system UI. key and modifiers work as in desktop_key, including refusing characters that need Shift or Option. Any chord with Command and W, Q, H or M is refused, because it would close, quit, hide or minimize whatever is frontmost, or log out; use desktop_close, desktop_quit, desktop_hide or desktop_minimize. The result is unknown even when the keys were delivered, because nothing reads back what they did: observe with desktop_screen, desktop_apps or desktop_windows, close what opened (often desktop_system_key escape), and never blindly repeat the shortcut, since many shortcuts toggle. No keys remain held across calls. It also presses the media, volume and brightness keys, with no modifiers: play_pause, next_track and previous_track go to whichever app macOS routes media keys to, usually the one playing; volume_up, volume_down and mute change the output volume; brightness_up and brightness_down change the main display's brightness; keyboard_brightness_up and keyboard_brightness_down change the keyboard backlight where there is one. They are sent like the hardware keys, nothing reads back what they changed, and the result is unknown. ${expectNote}`,
             parameters: {
                 type: "object",
                 required: ["key"],
-                properties: { key: systemKey, modifiers },
+                properties: { key: systemKey, modifiers, expect },
             },
         },
         {

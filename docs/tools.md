@@ -14,7 +14,7 @@ Targets are exact: an app target binds a process generation, and a window target
 | `desktop_windows` | List one app's windows, each with whether it can be observed and acted on now, and why not |
 | `desktop_inspect` | Read one window's Accessibility elements and a screenshot, or only pixels when Accessibility is unavailable; returns the snapshot that input uses. `scope` lists one element's subtree from a much larger read, and `ocr` adds recognized text |
 | `desktop_read` | Read the text of one window, or of one inspected element's subtree, through Accessibility, up to 96 KB including content scrolled out of view; or, with `table`, one table's columns and rows; read only, with no snapshot |
-| `desktop_wait` | Wait, up to 45 seconds, until a window, dialog, element, text or app condition holds, then return what matched; read only |
+| `desktop_wait` | Wait, up to 45 seconds, until a window, dialog, element, text or app condition holds, then return what matched; read only. Some actions take the same condition as `expect` |
 | `desktop_screen` | Capture one whole display and list the displays and the windows on it, front to back; observation only, with no input snapshot. `ocr` adds recognized text |
 | `desktop_menus` | Read an app's menu bar structure without opening it |
 | `desktop_dialog` | Read the open dialog or sheet in an app or window: its buttons, text fields and labels |
@@ -46,6 +46,15 @@ Captures go through ScreenCaptureKit, which every Peekaboo process for the user 
 - `app_running`, `app_frontmost`, `app_quit`: an app, by `bundle_id` or `pid`, is running, is the active app, or no longer runs.
 
 The wait polls with backoff, from 200 ms up to 2 seconds between polls, for `timeout_ms` (10 seconds by default, 45 at most), and returns `matched` with what matched or `timed_out` with the last observation. It sends no input and never activates an app. Each poll is a separate read, so the wait holds no lock between polls, and other agents' operations run in between. Element and text polls read the window through Accessibility only, with `desktop_read`'s budget and no screenshot, so they don't use ScreenCaptureKit. Absence is reported only when it is certain: a traversal cut short never counts as an element being gone, a partial inventory never counts as a window or app being gone, and a dialog counts as gone only when Accessibility reached every window of the app. Matched windows and apps come as `desktop_windows` and `desktop_apps` rows with their targets. When an element appears, the wait inspects the window once more (with the `scope`, if given) and returns that snapshot's ID and the matching elements' IDs, which the action tools accept; when the inspection doesn't list the element, its `snapshot_id` is null and the agent must inspect before acting.
+
+`desktop_click`, `desktop_key`, `desktop_system_key`, `desktop_drag` and `desktop_insert` take an optional `expect`: one `desktop_wait` condition with its arguments, naming what the action should change. Examples are `element_appears` for a menu that a click opens, `app_frontmost` for an app that Command-Tab brings forward, `window_appears` for Spotlight, or `text_changes` for a terminal that typed text goes to.
+- **Before input.** The condition is read once. If it already holds, the action is refused with nothing sent, because a match afterward couldn't show what the action did. If the condition can't be read reliably, the action is likewise refused.
+- **Unknown outcome.** The host polls the condition for `timeout_ms`: 3 seconds by default, 10 at most.
+  - If the condition holds, the outcome becomes `completed`. `action.native_outcome` keeps `unknown`, and `expectation` shows the match, including a fresh snapshot for `element_appears`.
+  - If it doesn't hold in time, the outcome stays `unknown`, with `expectation.last_observation`.
+- **Completed or refused outcome.** The result comes back as it is, with no polling.
+
+The input is sent once and never repeated. Another action opts in by adding its op to `DESKTOP_EXPECT_OPS` and `expect` to its schema.
 
 ## Apps and windows
 
