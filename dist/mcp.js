@@ -14,7 +14,8 @@ const { values } = parseArgs({
 // Desktop Tools.app links its client and serves its socket here; pass all three to use another host app.
 const state = process.env.DESKTOP_TOOLS_STATE || join(homedir(), ".local", "state", "desktop-tools");
 const { client = join(state, "desktop-client"), socket = join(state, "desktop.sock"), name: host = "Desktop Tools", } = values;
-const desktop = createDesktop({ client, socket, name: host });
+const config = { client, socket, name: host };
+const desktop = createDesktop(config);
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 // Newest first; an unsupported client version gets the newest, as the MCP lifecycle requires.
 const VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
@@ -41,6 +42,21 @@ const listed = tools.map(({ name, op, description, parameters }) => ({
     inputSchema: parameters,
     annotations: { readOnlyHint: !isDesktopAction({ op }) },
 }));
+// The host labels the window in use with the agent's name; unknown clients show as "Agent".
+const AGENTS = [
+    [/claude/i, "Claude"],
+    [/codex/i, "Codex"],
+    [/cursor/i, "Cursor"],
+    [/gemini/i, "Gemini"],
+    [/copilot/i, "Copilot"],
+];
+function agentName(info) {
+    const { name, title } = (info ?? {});
+    const known = AGENTS.find(([pattern]) => typeof name === "string" && pattern.test(name));
+    if (known)
+        return known[1];
+    return typeof title === "string" && title.trim() ? title.trim().slice(0, 40) : undefined;
+}
 const send = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 const fail = (id, code, message) => send({ jsonrpc: "2.0", id, error: { code, message } });
 const running = new Map();
@@ -74,6 +90,7 @@ async function handle(message) {
     }
     if (method === "initialize") {
         const requested = String(params.protocolVersion);
+        config.agent = agentName(params.clientInfo);
         return send({
             jsonrpc: "2.0",
             id,

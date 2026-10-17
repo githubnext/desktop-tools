@@ -7,6 +7,8 @@ export type DesktopConfig = {
     socket: string;
     /** Host app name used in permission guidance. */
     name?: string;
+    /** Agent named in the host's window label, such as "Claude"; read at each call, so it can be set later. */
+    agent?: string;
 };
 /** `data` is the parsed final bounded `text`; image bytes stay only in `image`. */
 export type DesktopClientResult = DesktopResult & {

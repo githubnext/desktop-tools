@@ -60,6 +60,8 @@ A status item is pressed through Accessibility in its owner process without movi
 
 Pointer input is delivered to the exact window without moving the physical pointer. When the host turns on the agent cursor, an orange arrow first glides to each click, scroll or drag point, about a third of a second before the input is sent. It then shows a ripple for clicks, chevrons for scrolls and a trail for drags, and fades after a few seconds idle. The cursor never takes clicks or focus and is left out of `desktop_inspect` and `desktop_screen` captures. It is decoration only: if it fails or is slow, input proceeds unchanged after at most 600 ms. Keyboard input, `desktop_type` and `desktop_select` don't show it.
 
+When the host turns on the window highlight, the window an inspection or action targets gets an orange outline and a label such as "Claude is using TextEdit". It shows from the moment the request reaches the host, moves to a new window when the target changes, and fades about four seconds after the last request. The outline follows the window as it moves or resizes and stays directly above it in the window order, so windows in front of the target also cover the outline. It hides while the window is minimized, off screen or on another Space. Like the cursor, it never takes clicks or focus and is left out of captures. Requests without one exact window, such as `desktop_screen`, menus or the clipboard, don't show it.
+
 ## Not supported
 
 - **Keys outside text fields.** `desktop_key` and `desktop_insert` need a focused text control, so Escape, arrows, Return and shortcuts in lists, the Finder or canvases are refused ([#13](https://github.com/githubnext/desktop-tools/issues/13)).

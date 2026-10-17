@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 
-import { createDesktop } from "./client.js";
+import { type DesktopConfig, createDesktop } from "./client.js";
 import { type DesktopRequest, isDesktopAction } from "./protocol.js";
 import { type DesktopTool, desktopRequest, desktopTools } from "./tools.js";
 
@@ -20,7 +20,8 @@ const {
 	socket = join(state, "desktop.sock"),
 	name: host = "Desktop Tools",
 } = values;
-const desktop = createDesktop({ client, socket, name: host });
+const config: DesktopConfig = { client, socket, name: host };
+const desktop = createDesktop(config);
 const { version } = JSON.parse(
 	readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 ) as { version: string };
@@ -52,6 +53,21 @@ const listed = tools.map(({ name, op, description, parameters }) => ({
 	inputSchema: parameters,
 	annotations: { readOnlyHint: !isDesktopAction({ op } as DesktopRequest) },
 }));
+
+// The host labels the window in use with the agent's name; unknown clients show as "Agent".
+const AGENTS: [RegExp, string][] = [
+	[/claude/i, "Claude"],
+	[/codex/i, "Codex"],
+	[/cursor/i, "Cursor"],
+	[/gemini/i, "Gemini"],
+	[/copilot/i, "Copilot"],
+];
+function agentName(info: unknown): string | undefined {
+	const { name, title } = (info ?? {}) as { name?: unknown; title?: unknown };
+	const known = AGENTS.find(([pattern]) => typeof name === "string" && pattern.test(name));
+	if (known) return known[1];
+	return typeof title === "string" && title.trim() ? title.trim().slice(0, 40) : undefined;
+}
 
 type Id = string | number;
 type Message = { jsonrpc: "2.0"; id?: Id; method?: string; params?: Record<string, unknown> };
@@ -90,6 +106,7 @@ async function handle(message: Message) {
 	}
 	if (method === "initialize") {
 		const requested = String(params.protocolVersion);
+		config.agent = agentName(params.clientInfo);
 		return send({
 			jsonrpc: "2.0",
 			id,

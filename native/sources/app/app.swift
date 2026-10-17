@@ -9,6 +9,7 @@ private struct Runtime {
 	let free: @convention(c) (UnsafeMutableRawPointer?) -> Void
 	let permission: @convention(c) (UnsafePointer<CChar>) -> Void
 	let setCursor: @convention(c) (Bool) -> Void
+	let setHighlight: @convention(c) (Bool) -> Void
 
 	init(_ path: String) {
 		guard let handle = dlopen(path, RTLD_NOW) else { fatalError(String(cString: dlerror())) }
@@ -22,6 +23,7 @@ private struct Runtime {
 		free = symbol("desktop_tools_free")
 		permission = symbol("desktop_tools_permission")
 		setCursor = symbol("desktop_tools_set_cursor")
+		setHighlight = symbol("desktop_tools_set_highlight")
 	}
 }
 
@@ -41,8 +43,9 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 	private let menu = NSMenu()
 	private var serving = true
-	// The app shows the agent cursor unless the user turned it off; embedding apps start with it off.
+	// The app shows the agent cursor and window outline unless the user turned them off; embedding apps start with them off.
 	private var cursor = UserDefaults.standard.object(forKey: "agentCursor") as? Bool ?? true
+	private var highlight = UserDefaults.standard.object(forKey: "agentWindow") as? Bool ?? true
 
 	override init() {
 		let bin = Bundle.main.executableURL!.deletingLastPathComponent()
@@ -71,6 +74,7 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		menu.delegate = self
 		item.menu = menu
 		runtime.setCursor(cursor)
+		runtime.setHighlight(highlight)
 		runtime.start(socket, client)
 		render()
 	}
@@ -120,6 +124,10 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		pointer.target = self
 		pointer.state = cursor ? .on : .off
 		menu.addItem(pointer)
+		let outline = NSMenuItem(title: "Highlight agent's window", action: #selector(toggleHighlight), keyEquivalent: "")
+		outline.target = self
+		outline.state = highlight ? .on : .off
+		menu.addItem(outline)
 		menu.addItem(.separator())
 		menu.addItem(withTitle: "Quit Desktop Tools", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 	}
@@ -137,6 +145,12 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		cursor.toggle()
 		UserDefaults.standard.set(cursor, forKey: "agentCursor")
 		runtime.setCursor(cursor)
+	}
+
+	@objc private func toggleHighlight() {
+		highlight.toggle()
+		UserDefaults.standard.set(highlight, forKey: "agentWindow")
+		runtime.setHighlight(highlight)
 	}
 }
 

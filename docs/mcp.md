@@ -25,6 +25,8 @@ args = ["<path>/dist/mcp.js"]
 
 The tool names, descriptions, and argument schemas come from `@githubnext/desktop-tools/tools` (`desktopTools`, `desktopRequest`), which Ace's `desktop_*` tools also use. [Tools](tools.md) lists them.
 
+The server names the agent in the host's window highlight from the MCP client's `clientInfo`: Claude, Codex, Cursor, Gemini or Copilot when the client name contains one, otherwise the client's `title`, otherwise "Agent".
+
 Action results start with `Outcome: completed`, `refused`, or `unknown`. Actions run one at a time, and `notifications/cancelled` aborts a call; cancellation does not undo input already delivered.
 
 **Warning:** the server acts with the host app's macOS Accessibility, Screen Recording, and clipboard permissions. It asks for no approval per call beyond what the MCP client itself requires, so any session that can call it can read the screen and clipboard and send input to any app.

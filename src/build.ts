@@ -44,6 +44,7 @@ const patches = [
 	"peekaboo-agent-cursor.patch",
 	"peekaboo-dock-exact.patch",
 	"peekaboo-menubar-ax.patch",
+	"peekaboo-agent-window.patch",
 ].map((name) => join(native, "patches", name));
 
 function spawn(command: string[], env?: NodeJS.ProcessEnv) {

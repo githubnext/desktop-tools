@@ -36,6 +36,8 @@ export type DesktopConfig = {
 	socket: string;
 	/** Host app name used in permission guidance. */
 	name?: string;
+	/** Agent named in the host's window label, such as "Claude"; read at each call, so it can be set later. */
+	agent?: string;
 };
 /** `data` is the parsed final bounded `text`; image bytes stay only in `image`. */
 export type DesktopClientResult = DesktopResult & { data: unknown };
@@ -79,11 +81,14 @@ async function run(
 	signal: AbortSignal,
 	errorJson = false,
 	input?: string,
+	agent?: string,
 ): Promise<string> {
 	signal.throwIfAborted();
 	try {
 		const pending = exec(path, args, {
 			encoding: "utf8",
+			// The host reads this from the client while a request is pending, to label the window in use.
+			env: agent ? { ...process.env, DESKTOP_TOOLS_AGENT: agent } : process.env,
 			signal,
 			killSignal: "SIGKILL",
 			maxBuffer: MAX_OUTPUT,
@@ -114,7 +119,7 @@ const caller = (config: DesktopConfig): Native => async (args, signal, options =
 	}
 	signal.throwIfAborted();
 	options.onDispatch?.();
-	const output = await run(client, [socket, ...args], signal, true, options.input);
+	const output = await run(client, [socket, ...args], signal, true, options.input, config.agent);
 	let value: Reply;
 	try {
 		value = JSON.parse(output) as Reply;
