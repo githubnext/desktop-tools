@@ -30,6 +30,7 @@ private struct ActionRequest: Decodable {
 	let duration_ms: Int?
 	let action: String?
 	let value: UIElementValue?
+	let to_snapshot: String?
 
 	func validate() throws {
 		guard !snapshot.isEmpty, snapshot.utf16.count <= 256 else {
@@ -47,7 +48,7 @@ private struct ActionRequest: Decodable {
 		if op != .scroll, direction != nil || amount != nil {
 			throw ActionError("Only scrolling accepts direction or amount.")
 		}
-		if op != .drag, from != nil || to != nil {
+		if op != .drag, from != nil || to != nil || to_snapshot != nil {
 			throw ActionError("Only dragging accepts endpoints.")
 		}
 		if op != .elementAction, action != nil {
@@ -94,7 +95,12 @@ private struct ActionRequest: Decodable {
 				else { throw ActionError("Choose up, down, left, or right and 1 to 20 native scroll units.") }
 			}
 		case .drag:
-			guard element == nil, text == nil, key == nil, let from, let to, from != to else {
+			if let to_snapshot {
+				guard !to_snapshot.isEmpty, to_snapshot.utf16.count <= 256, to_snapshot != snapshot else {
+					throw ActionError("Use another window's snapshot ID from desktop_inspect as to_snapshot, or omit it to drag within one window.")
+				}
+			}
+			guard element == nil, text == nil, key == nil, let from, let to, from != to || to_snapshot != nil else {
 				throw ActionError("Choose distinct normalized screenshot points for the drag endpoints.")
 			}
 			try from.validate()
@@ -274,6 +280,7 @@ private struct ActionResult: Encodable {
 	var clipboard_ownership: String?
 	var consumption: String?
 	var pointer_moved: Bool?
+	var destination_receipt: Receipt?
 	var release: String?
 	var requires_fresh_observation = false
 	var error: ActionMessage?
@@ -294,6 +301,9 @@ private struct ActionReply: Encodable {
 
 func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHandshakeResponse) async throws -> Data {
 	let request = try readAction()
+	if request.op == .drag, request.to_snapshot != nil {
+		return try await dragAcross(client, request, host: handshake.hostIdentity?.processIdentifier)
+	}
 	var result = ActionResult(outcome: "refused", action: request.op.rawValue, snapshot_id: request.snapshot)
 	var receipt: Receipt?
 	var lease: SnapshotMutationLease?
@@ -533,6 +543,90 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 		// Unknown completion leaves the host's pending lease in place, including client death or response loss.
 	}
 	return try JSONEncoder().encode(ActionReply(data: result, target_receipt: receipt))
+}
+
+/// Drags from one window into another, in the same app or another one.
+///
+/// Exact-window delivery can't leave its window, so this moves the real pointer with global events, and
+/// pressing in the source may activate its app. Nothing can confirm a drop, so a dispatched drag is unknown.
+private func dragAcross(_ client: PeekabooBridgeClient, _ request: ActionRequest, host: pid_t?) async throws -> Data {
+	var result = ActionResult(outcome: "refused", action: "drag", snapshot_id: request.snapshot)
+	var receipt: Receipt?
+	var leases: [SnapshotMutationLease] = []
+	var invoked = false
+	do {
+		try request.validate()
+		result.requires_fresh_observation = true
+		let source = try await dragEnd(client, snapshot: request.snapshot, point: request.from!)
+		let destination = try await dragEnd(client, snapshot: request.to_snapshot!, point: request.to!)
+		receipt = source.receipt
+		result.destination_receipt = destination.receipt
+		guard exposes(source.point, in: source.window, ignoring: host) else {
+			throw ActionError("Another window covers the start point, or its window moved since the snapshot. Inspect it again; bring it forward with desktop_focus if it is covered.")
+		}
+		guard exposes(destination.point, in: destination.window, ignoring: host) else {
+			throw ActionError("Another window covers the end point, or its window moved since the snapshot. Arrange the windows so both points are visible, then inspect both again.")
+		}
+		leases.append(try await client.beginSnapshotMutation(snapshotId: request.snapshot))
+		leases.append(try await client.beginSnapshotMutation(snapshotId: request.to_snapshot!))
+		invoked = true
+		// Rest on the source first, as a person would; some views only start a drag from a hovered item.
+		_ = try await client.moveMouseWithOutcome(to: source.point, duration: 200, steps: 12, profile: .linear)
+		let duration = request.duration_ms ?? 800
+		let dragged = try await client.dragWithOutcome(PeekabooBridgeDragRequest(DragOperationRequest(
+			from: source.point, to: destination.point, duration: duration,
+			steps: max(10, min(120, duration / 16)), modifiers: nil,
+			button: request.button.flatMap(DragButton.init(rawValue:)) ?? .left, profile: .linear
+		)))
+		result.native_outcome = dragged.outcome
+		let location = CGEvent(source: nil)?.location
+		result.pointer_moved = location.map { hypot($0.x - destination.point.x, $0.y - destination.point.y) <= 1 } ?? false
+		for lease in leases {
+			try await client.finishSnapshotMutation(lease, requiresFreshObservation: true)
+		}
+		leases = []
+		result.outcome = "unknown"
+		result.error = ActionMessage(
+			code: "DESKTOP_ACTION_UNVERIFIED",
+			message: "The drag was sent as real pointer input, which moved the pointer and may have activated the source app. A drop between windows can't be confirmed.",
+			hint: "Inspect both windows to see whether the drop happened. Never repeat the drag blindly."
+		)
+	} catch {
+		result.outcome = invoked ? "unknown" : "refused"
+		if !invoked {
+			for lease in leases {
+				try? await client.finishSnapshotMutation(lease, requiresFreshObservation: false)
+			}
+		}
+		let failure = error as? DesktopActionFailure
+		let envelope = error as? PeekabooBridgeErrorEnvelope
+		result.native_outcome = failure?.outcome
+		result.error = ActionMessage(
+			code: failure?.standardErrorCode?.rawValue ?? envelope?.code.rawValue ?? "DESKTOP_ACTION_FAILED",
+			message: failure?.message ?? error.localizedDescription,
+			hint: invoked ? "Inspect both windows before retrying; part of the drag may already have happened." : failure?.hint
+		)
+		// Unknown completion leaves the host's pending leases in place, as for other actions.
+	}
+	return try JSONEncoder().encode(ActionReply(data: result, target_receipt: receipt))
+}
+
+/// One end of a drag between windows: its exact window and the global point in it.
+private func dragEnd(
+	_ client: PeekabooBridgeClient, snapshot: String, point: PointerPoint
+) async throws -> (window: UIAutomationTarget.ExactWindow, point: CGPoint, receipt: Receipt) {
+	guard try await client.ownsSnapshot(snapshotId: snapshot) else {
+		throw ActionError("An observation no longer belongs to the running desktop. Inspect both windows again.")
+	}
+	let detection = try await client.getDetectionResult(snapshotId: snapshot)
+	let (_, identity, bounds) = try snapshotWindow(detection)
+	let window = try UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
+	let authority = try coordinateAuthority(snapshot, detection, window: window)
+	return (window, try point.mapped(in: authority), Receipt(
+		pid: identity.ownerProcessIdentifier,
+		window_id: identity.windowID,
+		process_start_identity_decimal: String(identity.ownerProcessStartIdentity)
+	))
 }
 
 /// Holds the button for the duration, then releases it; the owner is always disconnected afterward.

@@ -306,6 +306,14 @@ also records each element's advertised standard action names, at most 16 of up t
 `actions` attribute; custom actions, which carry app text, are omitted. Tests whose resolver returns a stand-in AX element inject a
 matcher that accepts it; two new tests cover a mismatched live element and a label in place of an element ID.
 
+`peekaboo-drag-settle.patch` makes the global drag usable for drag and drop between windows and apps, for
+`desktop_drag` with `to_snapshot`. `GestureService` posted the press and its first drag event back to
+back, and released on the last path point at once, so AppKit drag sessions often never started or the
+destination never accepted the drop. The drag now waits 150 ms after the press, then rests over the end
+point for 150 ms, posting three drag events there, before releasing. The release still runs on every
+exit, including cancellation. Path, steps, timing between steps and modifiers are unchanged, and the
+exact-window drag doesn't use this path.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.

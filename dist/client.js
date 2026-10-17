@@ -451,7 +451,13 @@ function validateAction(request) {
     if (request.op === "drag") {
         validatePoint(request.from);
         validatePoint(request.to);
-        if (request.from.x === request.to.x && request.from.y === request.to.y) {
+        if (request.to_snapshot !== undefined
+            && (typeof request.to_snapshot !== "string" || !request.to_snapshot
+                || request.to_snapshot.length > 256 || request.to_snapshot === request.snapshot)) {
+            throw new Error("Use another window's snapshot_id as to_snapshot, or omit it to drag within one window.");
+        }
+        if (request.to_snapshot === undefined
+            && request.from.x === request.to.x && request.from.y === request.to.y) {
             throw new Error("Choose distinct start and end points for a drag.");
         }
         if (request.button !== undefined && !DESKTOP_BUTTONS.includes(request.button)) {
