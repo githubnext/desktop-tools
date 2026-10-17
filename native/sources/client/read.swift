@@ -119,12 +119,11 @@ func textNodes(_ elements: ArraySlice<OrderedElement>) -> [TextNode] {
 	elements.map { item in
 		let element = item.element
 		let role = element.attributes["role"] ?? ""
-		let secure = role == "AXSecureTextField" || element.attributes["subrole"] == "AXSecureTextField"
 		return TextNode(
 			role: role,
 			depth: item.depth,
 			label: element.label,
-			value: secure ? nil : element.value,
+			value: isSecure(element) ? nil : element.value,
 			bounds: element.bounds
 		)
 	}

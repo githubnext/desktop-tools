@@ -107,9 +107,8 @@ func nativeTable(_ client: PeekabooBridgeClient) async throws -> Data {
 		let element = item.element
 		let attributes = element.attributes
 		let role = attributes["role"] ?? element.type.rawValue
-		let secure = role == "AXSecureTextField" || attributes["subrole"] == "AXSecureTextField"
 		let (label, a) = clipped(element.label)
-		let (value, b) = clipped(secure ? nil : element.value)
+		let (value, b) = clipped(isSecure(element) ? nil : element.value)
 		let (title, c) = clipped(attributes["title"])
 		let (description, d) = clipped(attributes["description"])
 		clippedText = clippedText || a || b || c || d
