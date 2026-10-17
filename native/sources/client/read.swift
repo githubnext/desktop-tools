@@ -152,6 +152,7 @@ private struct Reading: Encodable {
 	let application_name: String?
 	let window_title: String?
 	let web_accessibility: WebAccessibility?
+	let web_accessibility_via: WebAccessibilityVia?
 	let scope: ReadScope?
 	let text: String
 	let text_bytes: Int
@@ -221,6 +222,7 @@ func nativeRead(
 		application_name: result.target.app?.name,
 		window_title: detection.metadata.windowContext?.windowTitle ?? result.target.window?.title,
 		web_accessibility: web,
+		web_accessibility_via: policy.via,
 		scope: readScope,
 		text: reading.text,
 		text_bytes: reading.text.utf8.count,

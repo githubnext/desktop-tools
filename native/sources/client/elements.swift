@@ -48,6 +48,7 @@ private struct Found: Encodable {
 	let truncated: Bool
 	let truncation: [String]
 	let web_accessibility: WebAccessibility?
+	let web_accessibility_via: WebAccessibilityVia?
 }
 
 private struct FoundReply: Encodable {
@@ -158,7 +159,8 @@ func nativeElements(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHan
 		traversed_element_count: elements.count,
 		truncated: !truncation.isEmpty,
 		truncation: truncation,
-		web_accessibility: after.state
+		web_accessibility: after.state,
+		web_accessibility_via: web.via
 	)
 	return try JSONEncoder().encode(FoundReply(data: reply, target_receipt: .init(
 		pid: pid,
