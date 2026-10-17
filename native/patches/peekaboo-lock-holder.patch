@@ -1,0 +1,130 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/DesktopOperationLaneCoordinator.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/DesktopOperationLaneCoordinator.swift
+index d29ab3584..fc4ede7d2 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/DesktopOperationLaneCoordinator.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/DesktopOperationLaneCoordinator.swift
+@@ -234,9 +234,18 @@ public actor DesktopOperationLaneCoordinator {
+     private nonisolated func checkLockDeadline(_ deadline: ContinuousClock.Instant, path: String) throws {
+         try Task.checkCancellation()
+         guard self.now() < deadline else {
++            // flock records no owner, so name every process with the file open; the holder is among them.
++            let holders = LockFileHolders.describe(path: path)
++            let message = DesktopOperationLaneError.lockTimeout(path: path).localizedDescription
+             throw DesktopActionFailure.preDispatchRefusal(
+                 reason: .targetUnavailable,
+-                message: DesktopOperationLaneError.lockTimeout(path: path).localizedDescription,
++                message: holders.isEmpty
++                    ? message
++                    : message + " Processes with it open, one of which holds it: " + holders.joined(separator: "; ") + ".",
++                hint: holders.isEmpty
++                    ? "Another desktop operation is still running. Wait, then observe again before retrying."
++                    : "Another process holds the desktop lock. If one listed is stuck, such as a test run, tell the user which one; " +
++                    "do not retry in a loop.",
+                 standardErrorCode: .timeout)
+         }
+     }
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/LockFileHolders.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/LockFileHolders.swift
+new file mode 100644
+index 000000000..b4f167895
+--- /dev/null
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/LockFileHolders.swift
+@@ -0,0 +1,50 @@
++import Darwin
++import Foundation
++
++/// Finds the processes that have a lock file open, so a lock timeout can name what is blocking it.
++enum LockFileHolders {
++    static let maximumListed = 8
++
++    /// Processes of this user with the file open, as "name (pid N, executable)". Others' processes are unreadable.
++    static func describe(path: String) -> [String] {
++        var target = stat()
++        guard stat(path, &target) == 0 else { return [] }
++        let count = proc_listallpids(nil, 0)
++        guard count > 0 else { return [] }
++        var pids = [pid_t](repeating: 0, count: Int(count) + 64)
++        let filled = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.stride))
++        guard filled > 0 else { return [] }
++        var result: [String] = []
++        for pid in pids.prefix(Int(filled))
++            where pid > 0 && self.hasOpen(pid: pid, device: target.st_dev, inode: target.st_ino)
++        {
++            var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
++            let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
++            let executable = length > 0 ? String(cString: buffer) : "unknown executable"
++            let name = (executable as NSString).lastPathComponent
++            result.append("\(name) (pid \(pid)\(pid == getpid() ? ", this process" : ""), \(executable))")
++            if result.count == self.maximumListed { break }
++        }
++        return result
++    }
++
++    private static func hasOpen(pid: pid_t, device: dev_t, inode: ino_t) -> Bool {
++        let size = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
++        guard size > 0 else { return false }
++        let stride = MemoryLayout<proc_fdinfo>.stride
++        var descriptors = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(size) / stride + 16)
++        let filled = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, &descriptors, Int32(descriptors.count * stride))
++        guard filled > 0 else { return false }
++        let infoSize = Int32(MemoryLayout<vnode_fdinfowithpath>.stride)
++        for descriptor in descriptors.prefix(Int(filled) / stride)
++            where descriptor.proc_fdtype == UInt32(PROX_FDTYPE_VNODE)
++        {
++            var info = vnode_fdinfowithpath()
++            guard proc_pidfdinfo(pid, descriptor.proc_fd, PROC_PIDFDVNODEPATHINFO, &info, infoSize) == infoSize
++            else { continue }
++            let stat = info.pvip.vip_vi.vi_stat
++            if UInt64(stat.vst_ino) == UInt64(inode), Int64(stat.vst_dev) == Int64(device) { return true }
++        }
++        return false
++    }
++}
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/LockFileHoldersTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/LockFileHoldersTests.swift
+new file mode 100644
+index 000000000..f6f294691
+--- /dev/null
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/LockFileHoldersTests.swift
+@@ -0,0 +1,44 @@
++import Darwin
++import Foundation
++import PeekabooFoundation
++import Testing
++@testable import PeekabooAutomationKit
++
++extension DesktopOperationLaneCoordinatorTests {
++    @Test
++    func `A lock timeout names the processes that have the lock open`() async throws {
++        let root = Self.temporaryDirectory(named: "lock-holders")
++        defer { try? FileManager.default.removeItem(at: root) }
++        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
++        let path = root.appendingPathComponent("global.lock").path
++        let holder = open(path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, S_IRUSR | S_IWUSR)
++        try #require(holder >= 0)
++        defer { close(holder) }
++        try #require(flock(holder, LOCK_EX | LOCK_NB) == 0)
++        defer { _ = flock(holder, LOCK_UN) }
++        let instant = ContinuousClock.now
++        let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root, lockWait: .zero, now: { instant })
++
++        do {
++            try await coordinator.run(scope: .global, access: .write) {}
++            Issue.record("Expected an admission timeout")
++        } catch let failure as DesktopActionFailure {
++            Self.expectAdmissionTimeout(failure, path: path)
++            #expect(failure.message.contains("one of which holds it"))
++            #expect(failure.message.contains("pid \(getpid()), this process"))
++            #expect(failure.hint?.contains("holds the desktop lock") == true)
++        }
++    }
++
++    @Test
++    func `A lock file nobody has open has no listed holders`() throws {
++        let root = Self.temporaryDirectory(named: "lock-holders-none")
++        defer { try? FileManager.default.removeItem(at: root) }
++        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
++        let path = root.appendingPathComponent("global.lock").path
++        #expect(FileManager.default.createFile(atPath: path, contents: nil))
++
++        #expect(LockFileHolders.describe(path: path).isEmpty)
++        #expect(LockFileHolders.describe(path: root.appendingPathComponent("missing.lock").path).isEmpty)
++    }
++}

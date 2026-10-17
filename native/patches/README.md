@@ -321,6 +321,15 @@ one at its depth or above. `desktop_read` uses this to read one element's text i
 `desktop_inspect` to list one subtree. The traversal, its budgets, element IDs and snapshot authority are
 unchanged; the attribute is observation metadata and no action reads it.
 
+`peekaboo-lock-holder.patch` names what is blocking a desktop operation lane. When a lane lock wait
+times out, the refusal now lists up to eight processes of the same user that have the lock file open,
+each with its pid and executable path, and marks the timed-out process itself. The holder is among them;
+the rest are other waiters. `flock` records no owner, and `F_GETLK` reports a held flock with pid -1, so
+the list comes from each process's open file descriptors (`proc_pidinfo`), matched by device and inode.
+Other users' processes can't be read and are left out. With no process found, the message is unchanged
+and the hint says to wait and observe again. The refusal stays a pre-dispatch timeout. Two tests in
+`LockFileHoldersTests.swift` use a temporary coordination root.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.
