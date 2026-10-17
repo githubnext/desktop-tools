@@ -314,6 +314,13 @@ point for 150 ms, posting three drag events there, before releasing. The release
 exit, including cancellation. Path, steps, timing between steps and modifiers are unchanged, and the
 exact-window drag doesn't use this path.
 
+`peekaboo-element-depth.patch` records each observed element's depth below its window in a `depth`
+attribute. Element IDs already follow the traversal's pre-order, so with depth a reader recovers each
+element's subtree from the flat result: the elements after it with a greater depth, up to the next
+one at its depth or above. `desktop_read` uses this to read one element's text in order, and a scoped
+`desktop_inspect` to list one subtree. The traversal, its budgets, element IDs and snapshot authority are
+unchanged; the attribute is observation metadata and no action reads it.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.

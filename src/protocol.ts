@@ -32,6 +32,9 @@ export type DesktopOpen = {
 	application?: DesktopApplication;
 };
 
+/** One element ID from an earlier accessibility snapshot of the same window. */
+export type DesktopScope = { snapshot: string; element: string };
+
 export type DesktopRequest =
 	| DesktopManagement
 	| DesktopLaunch
@@ -49,8 +52,16 @@ export type DesktopRequest =
 	| { op: "menubar-items" }
 	| { op: "menubar-click"; target: DesktopStatusItemTarget }
 	| { op: "dock"; title?: string; menu_item?: string }
-	| { op: "inspect"; pid: number; window: number; mode?: "accessibility" | "pixels" }
-	| { op: "screen"; display?: number }
+	| {
+		op: "inspect";
+		pid: number;
+		window: number;
+		mode?: "accessibility" | "pixels";
+		ocr?: boolean;
+		scope?: DesktopScope;
+	}
+	| { op: "read"; pid: number; window: number; scope?: DesktopScope }
+	| { op: "screen"; display?: number; ocr?: boolean }
 	| {
 		op: "click";
 		snapshot: string;

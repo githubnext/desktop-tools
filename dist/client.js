@@ -7,6 +7,10 @@ import { promisify } from "node:util";
 import { DESKTOP_BUTTONS, DESKTOP_CLICKS, DESKTOP_DIRECTIONS, DESKTOP_ELEMENT_ACTIONS, DESKTOP_MODIFIERS, DESKTOP_SELECTIONS, isDesktopAction, isDesktopKey, isDesktopManagement, } from "./protocol.js";
 const exec = promisify(execFile);
 const MAX_TEXT = 32_000;
+/** A scoped inspection lists more elements; recognized text has its own native line and byte limits. */
+const MAX_SCOPED_TEXT = 64_000;
+const MAX_RECOGNIZED_TEXT = 64_000;
+const MAX_READ_TEXT = 128_000;
 const MAX_IMAGE = 900_000;
 const MAX_OUTPUT = 2_000_000;
 const MAX_CLIPBOARD_IMAGE = 10 * 1024 * 1024;
@@ -97,14 +101,14 @@ const caller = (config) => async (args, signal, options = {}) => {
         ...(value.target_receipt ? { target_receipt: value.target_receipt } : {}),
     };
 };
-function bounded(data, field) {
+function bounded(data, field, limit = MAX_TEXT) {
     const source = data[field];
     if (!Array.isArray(source))
         throw new Error(`Native inspection returned no ${field} array.`);
     const values = [...source];
     const value = { ...data, [field]: values };
     let text = JSON.stringify(value);
-    while (Buffer.byteLength(text) > MAX_TEXT && values.length) {
+    while (Buffer.byteLength(text) > limit && values.length) {
         values.pop();
         text = JSON.stringify({
             ...value,
@@ -112,10 +116,30 @@ function bounded(data, field) {
             omitted: source.length - values.length,
         });
     }
-    if (Buffer.byteLength(text) > MAX_TEXT) {
+    if (Buffer.byteLength(text) > limit) {
         throw new Error("Native inspection metadata exceeds the result limit.");
     }
     return text;
+}
+function validateScope(scope) {
+    if (!scope || typeof scope !== "object" || Object.keys(scope).length !== 2
+        || !("snapshot" in scope) || !("element" in scope)
+        || [scope.snapshot, scope.element].some((value) => typeof value !== "string" || !value || value.length > 256 || /\s/.test(value))) {
+        throw new Error("Choose scope as the snapshot_id and an element ID from an earlier desktop_inspect of this window.");
+    }
+}
+/** Recognized text must arrive within its native limits, or it is dropped from the result. */
+function recognizedLimit(data, requested) {
+    if (!requested) {
+        if (data.recognized_text !== undefined)
+            throw new Error("Native observation returned unrequested recognized text.");
+        return 0;
+    }
+    const size = Buffer.byteLength(JSON.stringify(data.recognized_text ?? null));
+    if (data.recognized_text === undefined || size > MAX_RECOGNIZED_TEXT) {
+        data.recognized_text = { error: "Recognized text was missing or exceeded its result limit." };
+    }
+    return MAX_RECOGNIZED_TEXT;
 }
 function positive(value) {
     if (!Number.isSafeInteger(value) || value < 1) {
@@ -213,13 +237,26 @@ async function inspect(native, request, signal) {
     if (mode !== "accessibility" && mode !== "pixels") {
         throw new Error("Choose accessibility or pixels inspection mode.");
     }
+    if (request.ocr !== undefined && typeof request.ocr !== "boolean")
+        throw new Error("Choose ocr true or false.");
+    if (request.scope !== undefined) {
+        validateScope(request.scope);
+        if (mode !== "accessibility")
+            throw new Error("A scope needs accessibility mode.");
+    }
     const directory = await mkdtemp(join(tmpdir(), "desktop-tools-"));
     try {
         const path = join(directory, "capture.png");
-        const args = ["inspect", pid, window, path];
-        if (mode === "pixels")
-            args.push(mode);
+        const args = ["inspect", pid, window, path, mode];
+        if (request.ocr)
+            args.push("ocr");
+        if (request.scope)
+            args.push("scope", request.scope.snapshot, request.scope.element);
         const data = await native(args, signal, { target: request });
+        if (request.scope && data.scope?.from_element !== request.scope.element) {
+            throw new Error("Native inspection did not honor the requested scope.");
+        }
+        const limit = (request.scope ? MAX_SCOPED_TEXT : MAX_TEXT) + recognizedLimit(data, request.ocr);
         const { image, width, height } = await screenshot(path, join(directory, "image.jpg"), signal);
         const { screenshot_raw: _raw, screenshot_annotated: _annotated, ...observation } = data;
         const text = bounded({
@@ -229,7 +266,7 @@ async function inspect(native, request, signal) {
                 height,
                 note: "Screenshot resized; Accessibility bounds remain in their original coordinate system. Pointer points use fractions of this image: x from the left edge and y from the top, each >= 0 and < 1.",
             },
-        }, "ui_elements");
+        }, "ui_elements", limit);
         return { text, image };
     }
     catch (error) {
@@ -239,7 +276,12 @@ async function inspect(native, request, signal) {
             isError: true,
             text: JSON.stringify({
                 inspection_error: { code: error.code, message: error.message.slice(0, 4000) },
-                requested_target: { pid: request.pid, window_id: request.window, mode },
+                requested_target: {
+                    pid: request.pid,
+                    window_id: request.window,
+                    mode,
+                    ...(request.scope ? { scope: request.scope } : {}),
+                },
                 target_availability: await availability(native, request, signal),
                 guidance: "This inspection dispatched no input and returned no observation snapshot. Availability was read after the failure and does not establish its cause. Refresh desktop_apps and desktop_windows if the target changed. Retry an incomplete Accessibility read once; pixels mode can inspect the same exact window without Accessibility, with point-only action authority. Native capture already retries a changed capture receipt once. Neither mode activates a window. Do not loop on an unavailable target or repeat an earlier action to recover an observation.",
             }),
@@ -254,13 +296,18 @@ async function screen(native, request, signal) {
     if (display !== undefined && (!Number.isInteger(display) || display < 0 || display > 63)) {
         throw new Error("Choose a display index from 0 to 63 from the returned displays list.");
     }
+    if (request.ocr !== undefined && typeof request.ocr !== "boolean")
+        throw new Error("Choose ocr true or false.");
     const directory = await mkdtemp(join(tmpdir(), "desktop-tools-"));
     try {
         const path = join(directory, "capture.png");
         const args = ["screen", path];
         if (display !== undefined)
             args.push(String(display));
+        if (request.ocr)
+            args.push("ocr");
         const data = await native(args, signal);
+        const limit = MAX_TEXT + recognizedLimit(data, request.ocr);
         const { image, width, height } = await screenshot(path, join(directory, "image.jpg"), signal);
         const text = bounded({
             ...data,
@@ -269,12 +316,47 @@ async function screen(native, request, signal) {
                 height,
                 note: "Whole-display screenshot, resized. Observation only: there is no snapshot_id and no input can target this image. Window and display bounds are global desktop points; pass a window's pid and window_id to desktop_inspect to act on it.",
             },
-        }, "windows");
+        }, "windows", limit);
         return { text, image };
     }
     finally {
         await rm(directory, { recursive: true, force: true });
     }
+}
+async function read(native, request, signal) {
+    const args = ["read", positive(request.pid), positive(request.window)];
+    if (request.scope !== undefined) {
+        validateScope(request.scope);
+        args.push(request.scope.snapshot, request.scope.element);
+    }
+    let data;
+    try {
+        data = await native(args, signal, { target: request });
+    }
+    catch (error) {
+        if (!(error instanceof NativeError))
+            throw error;
+        return {
+            isError: true,
+            text: JSON.stringify({
+                read_error: { code: error.code, message: error.message.slice(0, 4000) },
+                requested_target: {
+                    pid: request.pid,
+                    window_id: request.window,
+                    ...(request.scope ? { scope: request.scope } : {}),
+                },
+                guidance: "This read sent no input. Refresh desktop_windows if the target changed, and retry once if Accessibility was incomplete. A window without Accessibility, such as a canvas, game or remote desktop, has no text to read; use desktop_inspect with mode pixels and ocr true to recognize its text from pixels.",
+            }),
+        };
+    }
+    const scope = data.scope;
+    if (typeof data.text !== "string" || typeof data.truncated !== "boolean"
+        || (request.scope ? scope?.element !== request.scope.element : scope !== undefined))
+        throw new Error("The native read returned an unsupported response.");
+    const text = JSON.stringify(data);
+    if (Buffer.byteLength(text) > MAX_READ_TEXT)
+        throw new Error("The native read exceeds the result limit.");
+    return { text };
 }
 function validatePoint(point) {
     if (!point || typeof point !== "object" || !("x" in point) || !("y" in point)) {
@@ -1035,6 +1117,7 @@ async function execute(native, request, abort) {
             "menubar-click",
             "dock",
             "inspect",
+            "read",
             "screen",
             "click",
             "type",
@@ -1089,6 +1172,8 @@ async function execute(native, request, abort) {
             return await inspect(native, request, signal);
         if (request.op === "screen")
             return await screen(native, request, signal);
+        if (request.op === "read")
+            return await read(native, request, signal);
         if (request.op === "menus") {
             validateAppOnly(request.target);
             if (request.path !== undefined)

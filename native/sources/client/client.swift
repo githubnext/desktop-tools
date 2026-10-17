@@ -7,6 +7,7 @@ import PeekabooBridge
 @main
 private enum Client {
 	static func main() async {
+		clientStarted = Date()
 		do {
 			write(try await execute(Array(CommandLine.arguments.dropFirst())))
 		} catch ClientError.dialect {
@@ -30,8 +31,9 @@ private enum Client {
 		let operation = args[1]
 		guard (operation == "apps" && args.count == 2)
 			|| (operation == "windows" && args.count == 3)
-			|| (operation == "inspect" && (args.count == 5 || args.count == 6))
-			|| (operation == "screen" && (args.count == 3 || args.count == 4))
+			|| (operation == "inspect" && args.count >= 5 && args.count <= 10)
+			|| (operation == "read" && (args.count == 4 || args.count == 6))
+			|| (operation == "screen" && args.count >= 3 && args.count <= 5)
 			|| (operation == "action" && args.count == 2)
 			|| (operation == "management" && args.count == 2)
 			|| (operation == "launch" && args.count == 2)
@@ -91,12 +93,20 @@ private enum Client {
 			return try await nativeLaunch(client, handshake: handshake, opensItem: true)
 		case "screen":
 			guard args[2].hasPrefix("/") else { throw ClientError.usage }
+			var rest = args[3...]
+			let ocr = rest.last == "ocr"
+			if ocr { rest = rest.dropLast() }
 			var display: Int?
-			if args.count == 4 {
-				guard let index = Int(args[3]), index >= 0 else { throw ClientError.usage }
+			if let value = rest.first {
+				guard rest.count == 1, let index = Int(value), index >= 0 else { throw ClientError.usage }
 				display = index
 			}
-			return try await nativeScreen(client, path: args[2], index: display)
+			return try await nativeScreen(client, path: args[2], index: display, ocr: ocr)
+		case "read":
+			let pid = try processID(args[2])
+			guard let window = UInt32(args[3]), window > 0 else { throw ClientError.usage }
+			let scope = args.count == 6 ? ScopeRequest(snapshot: args[4], element: args[5]) : nil
+			return try await nativeRead(client, pid: pid, window: window, scope: scope)
 		case "apps":
 			let inventory = try await client.listApplicationMutationInventory()
 			var metadata: [ServiceApplicationInfo] = []
@@ -143,20 +153,35 @@ private enum Client {
 			let pid = try processID(args[2])
 			guard let window = UInt32(args[3]), window > 0 else { throw ClientError.usage }
 			guard args[4].hasPrefix("/") else { throw ClientError.usage }
-			guard let mode = InspectionMode(rawValue: args.count == 6 ? args[5] : "accessibility")
-			else { throw ClientError.usage }
-			return try await inspect(client, pid: pid, window: window, path: args[4], mode: mode)
+			var rest = args[5...]
+			let mode = rest.first.flatMap(InspectionMode.init(rawValue:)) ?? .accessibility
+			if rest.first.flatMap(InspectionMode.init(rawValue:)) != nil { rest = rest.dropFirst() }
+			let ocr = rest.first == "ocr"
+			if ocr { rest = rest.dropFirst() }
+			var scope: ScopeRequest?
+			if rest.first == "scope" {
+				guard rest.count == 3, mode == .accessibility else { throw ClientError.usage }
+				scope = ScopeRequest(snapshot: rest[rest.startIndex + 1], element: rest[rest.startIndex + 2])
+				rest = []
+			}
+			guard rest.isEmpty else { throw ClientError.usage }
+			return try await inspect(
+				client, pid: pid, window: window, path: args[4], mode: mode, options: .init(ocr: ocr, scope: scope)
+			)
 		}
 	}
 
 	private static func inspect(
-		_ client: PeekabooBridgeClient, pid: Int32, window: UInt32, path: String, mode: InspectionMode
+		_ client: PeekabooBridgeClient, pid: Int32, window: UInt32, path: String, mode: InspectionMode,
+		options: InspectionOptions
 	) async throws -> Data {
-		guard mode == .pixels else { return try await observe(client, pid: pid, window: window, path: path, pixels: nil) }
+		guard mode == .pixels else {
+			return try await observe(client, pid: pid, window: window, path: path, pixels: nil, options: options)
+		}
 		// Screenshot-only results have no detection ID, so the request pins its publication explicitly.
 		let snapshot = try await client.createSnapshot()
 		do {
-			return try await observe(client, pid: pid, window: window, path: path, pixels: snapshot)
+			return try await observe(client, pid: pid, window: window, path: path, pixels: snapshot, options: options)
 		} catch {
 			try? await client.cleanSnapshot(snapshotId: snapshot)
 			throw error
@@ -164,19 +189,24 @@ private enum Client {
 	}
 
 	private static func observe(
-		_ client: PeekabooBridgeClient, pid: Int32, window: UInt32, path: String, pixels: String?
+		_ client: PeekabooBridgeClient, pid: Int32, window: UInt32, path: String, pixels: String?,
+		options: InspectionOptions
 	) async throws -> Data {
 		let accessibility = pixels == nil
+		// The scope element comes from an earlier snapshot; read it before this observation publishes another.
+		var source: ScopeSource?
+		if let scope = options.scope { source = try await scopeSource(client, scope, pid: pid, window: window) }
 		let observation = try await client.desktopObservationWithOutcome(.init(
 			target: .pid(pid, window: .id(window)),
 			capture: .init(scale: .logical1x, focus: .background),
 			detection: .init(
 				mode: accessibility ? .accessibility : .none,
-				traversalBudget: .init(maxDepth: 15, maxElementCount: 200, maxChildrenPerNode: 100),
+				traversalBudget: source == nil
+					? .init(maxDepth: 15, maxElementCount: 200, maxChildrenPerNode: 100) : wideTraversal,
 				requiresFreshAccessibilityTree: accessibility
 			),
 			output: .init(path: path, saveSnapshot: true, snapshotID: pixels, includeImageData: true),
-			timeout: .init(overall: 20, detection: 15)
+			timeout: source == nil ? .init(overall: 20, detection: 15) : .init(overall: 22, detection: 18)
 		))
 		guard let target = observation.targetIdentity,
 			target.processIdentity.processIdentifier == pid,
@@ -200,6 +230,31 @@ private enum Client {
 		guard !image.isEmpty, image.count <= 32 * 1024 * 1024 else { throw ClientError.image }
 		// Reusable snapshots keep Bridge-owned artifact copies; the host removes this caller-visible file after resizing.
 		try image.write(to: URL(fileURLWithPath: path), options: [.atomic])
+		var elements = openMenusFirst(result.elements?.elements.all ?? [])
+		var scope: InspectionScope?
+		var traversed: Int?
+		if let request = options.scope, let source {
+			// Only the subtree is listed; its IDs still belong to this new snapshot, like every element it stored.
+			let ordered: [OrderedElement]
+			let position: Int
+			do {
+				ordered = try preorder(result.elements?.elements.all ?? [])
+				position = try locateScope(
+					source, in: ordered, processStartIdentity: target.processIdentity.processStartIdentity
+				)
+			} catch {
+				if let published = result.files.publishedSnapshotID { try? await client.cleanSnapshot(snapshotId: published) }
+				throw error
+			}
+			elements = subtree(ordered, at: position).map(\.element)
+			let root = ordered[position].element
+			scope = InspectionScope(
+				from_snapshot: request.snapshot, from_element: request.element, element: root.id,
+				role: root.attributes["role"], label: root.label
+			)
+			traversed = ordered.count
+		}
+		let recognized = options.ocr ? await recognizeText(at: path, seconds: recognitionSeconds()) : nil
 		let data = Inspection(
 			inspection_mode: accessibility ? InspectionMode.accessibility.rawValue : InspectionMode.pixels.rawValue,
 			note: accessibility ? nil : "Pixel snapshot: no Accessibility elements or focused control. Its snapshot_id authorizes only screenshot-point clicks, point scrolls, and drags in this exact window; element, text, key, and insertion actions are refused.",
@@ -207,12 +262,15 @@ private enum Client {
 			// The traversal reads the title after target resolution, so a live title is newer there.
 			window_title: result.elements?.metadata.windowContext?.windowTitle ?? result.target.window?.title,
 			snapshot_id: result.files.publishedSnapshotID,
-			element_count: result.elements?.metadata.elementCount ?? 0,
-			ui_elements: openMenusFirst(result.elements?.elements.all ?? []).map(Element.init),
+			element_count: scope == nil ? result.elements?.metadata.elementCount ?? 0 : elements.count,
+			scope: scope,
+			traversed_element_count: traversed,
+			ui_elements: elements.map(Element.init),
 			coordinate_context: result.elements?.metadata.captureCoordinateContext
 				?? CaptureCoordinateContext(metadata: result.capture.metadata),
 			capture_warning: result.capture.warning,
 			detection_metadata: result.elements?.metadata,
+			recognized_text: recognized,
 			diagnostics: result.diagnostics,
 			timings: result.timings
 		)
@@ -349,12 +407,29 @@ private struct Inspection: Encodable {
 	let window_title: String?
 	let snapshot_id: String?
 	let element_count: Int
+	let scope: InspectionScope?
+	let traversed_element_count: Int?
 	let ui_elements: [Element]
 	let coordinate_context: CaptureCoordinateContext
 	let capture_warning: String?
 	let detection_metadata: DetectionMetadata?
+	let recognized_text: RecognizedText?
 	let diagnostics: DesktopObservationDiagnostics
 	let timings: ObservationTimings
+}
+
+private struct InspectionOptions {
+	let ocr: Bool
+	let scope: ScopeRequest?
+}
+
+/// The scope element as found in this snapshot; `element` is its ID here.
+private struct InspectionScope: Encodable {
+	let from_snapshot: String
+	let from_element: String
+	let element: String
+	let role: String?
+	let label: String?
 }
 
 /// An open menu's items come first, so a bounded result keeps the choices a click just revealed.
@@ -401,7 +476,7 @@ private enum ClientError: LocalizedError {
 	var errorDescription: String? {
 		switch self {
 		case .usage:
-			"Usage: desktop-tools-client <socket> apps | windows <pid> | inspect <pid> <window> <absolute-output-path> [accessibility|pixels] | screen <absolute-output-path> [display] | menubar | menubar-click <absolute-output-path> < JSON | menus|menu|dialog|dock|action|management|launch|open|clipboard < JSON"
+			"Usage: desktop-tools-client <socket> apps | windows <pid> | inspect <pid> <window> <absolute-output-path> [accessibility|pixels] [ocr] [scope <snapshot> <element>] | read <pid> <window> [<snapshot> <element>] | screen <absolute-output-path> [display] [ocr] | menubar | menubar-click <absolute-output-path> < JSON | menus|menu|dialog|dock|action|management|launch|open|clipboard < JSON"
 		case .target:
 			"The native observation did not confirm the requested process and window. Refresh the window list and try again."
 		case .image:
