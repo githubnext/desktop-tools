@@ -16,6 +16,7 @@ jobs:
       - run: npm ci
       # dist/ is checked in for Git installs; it must match a fresh compile exactly.
       - run: npm run check
+      - run: npm test
       # Hosted consumers import the protocol and client modules off macOS.
       - run: >-
           node --input-type=module -e "const p = await import('@githubnext/desktop-tools/protocol');

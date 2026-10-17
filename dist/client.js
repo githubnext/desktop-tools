@@ -4,6 +4,7 @@ import { lstat, mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { failureAvailability, windowAvailability } from "./availability.js";
 import { DESKTOP_BUTTONS, DESKTOP_CLICKS, DESKTOP_DIRECTIONS, DESKTOP_ELEMENT_ACTIONS, DESKTOP_MODIFIERS, DESKTOP_SELECTIONS, isDesktopAction, isDesktopKey, isDesktopManagement, } from "./protocol.js";
 import { waitFor } from "./wait.js";
 const exec = promisify(execFile);
@@ -290,8 +291,8 @@ async function inspect(native, request, signal) {
                     mode,
                     ...(request.scope ? { scope: request.scope } : {}),
                 },
-                target_availability: await availability(native, request, signal),
-                guidance: "This inspection dispatched no input and returned no observation snapshot. Availability was read after the failure and does not establish its cause. Refresh desktop_apps and desktop_windows if the target changed. Retry an incomplete Accessibility read once; pixels mode can inspect the same exact window without Accessibility, with point-only action authority. Native capture already retries a changed capture receipt once. Neither mode activates a window. Do not loop on an unavailable target or repeat an earlier action to recover an observation.",
+                target_availability: await availability(native, request, error.message, signal),
+                guidance: "This inspection dispatched no input and returned no observation snapshot. target_availability.availability classifies the likely cause from a window listing read after the failure; follow its hint, but it can't prove the cause. Refresh desktop_apps and desktop_windows if the target changed. Retry an incomplete Accessibility read once; pixels mode can inspect the same exact window without Accessibility, with point-only action authority. Native capture already retries a changed capture receipt once. Neither mode activates a window. Do not loop on an unavailable target or repeat an earlier action to recover an observation.",
             }),
         };
     }
@@ -353,7 +354,8 @@ async function read(native, request, signal) {
                     window_id: request.window,
                     ...(request.scope ? { scope: request.scope } : {}),
                 },
-                guidance: "This read sent no input. Refresh desktop_windows if the target changed, and retry once if Accessibility was incomplete. A window without Accessibility, such as a canvas, game or remote desktop, has no text to read; use desktop_inspect with mode pixels and ocr true to recognize its text from pixels.",
+                target_availability: await availability(native, request, error.message, signal),
+                guidance: "This read sent no input. target_availability.availability classifies the likely cause from a window listing read after the failure. Refresh desktop_windows if the target changed, and retry once if Accessibility was incomplete. A window without Accessibility, such as a canvas, game or remote desktop, has no text to read; use desktop_inspect with mode pixels and ocr true to recognize its text from pixels.",
             }),
         };
     }
@@ -376,7 +378,8 @@ function validatePoint(point) {
         }
     }
 }
-async function availability(native, request, signal) {
+/** Reads the target's app and window after a failure, and classifies why the window may be unavailable. */
+async function availability(native, request, message, signal) {
     if (signal.aborted)
         return { error: "The desktop call ended before availability could be read." };
     const deadline = new AbortController();
@@ -403,6 +406,10 @@ async function availability(native, request, signal) {
                     "is_on_screen",
                     "is_minimized",
                     "is_key",
+                    "space_ids",
+                    "display_index",
+                    "display_current_space_id",
+                    "display_asleep",
                     "observation_capability",
                     "observation_reason",
                     "process_start_identity_decimal",
@@ -423,6 +430,8 @@ async function availability(native, request, signal) {
                 inventory_completeness: value.value.inventory_completeness,
                 target: item ? Object.fromEntries(fields.map((field) => [field, item[field]])) : null,
             };
+            if (field === "windows")
+                result.availability = failureAvailability(message, item, value.value);
         }
         return result;
     }
@@ -767,6 +776,25 @@ function validateManagement(request) {
         }
     }
 }
+/** Adds the target window's availability to a refusal when it explains one; the window is only listed, never touched. */
+async function explainRefusal(native, data, signal) {
+    const receipt = data.target_receipt;
+    if (receipt?.window_id && !signal.aborted) {
+        try {
+            const listing = await native(["windows", String(receipt.pid)], signal);
+            const rows = Array.isArray(listing.windows) ? listing.windows : [];
+            const row = rows.find((row) => row.window_id === receipt.window_id);
+            const message = String(data.error?.message ?? "");
+            const availability = failureAvailability(message, row, listing);
+            if (availability.state !== "available")
+                return actionResult({ ...data, target_availability: availability }, "refused");
+        }
+        catch {
+            // Availability only explains a refusal; failing to read it leaves the refusal as it was.
+        }
+    }
+    return actionResult(data, "refused");
+}
 function actionResult(data, outcome) {
     let text = JSON.stringify({ action: data });
     if (Buffer.byteLength(text) > MAX_TEXT) {
@@ -912,6 +940,8 @@ async function act(native, request, signal) {
             || ((request.op === "close" || request.op === "dialog-answer") && data.target_receipt))) {
         return await observeManagement(native, request, data, signal);
     }
+    if (outcome === "refused")
+        return await explainRefusal(native, data, signal);
     if (outcome !== "completed" || request.op === "clipboard-write") {
         return actionResult(data, outcome);
     }
@@ -1318,6 +1348,9 @@ async function execute(native, request, abort) {
                 total: apps.length,
                 matched: matches.length,
             };
+        }
+        if (request.op === "windows" && Array.isArray(data.windows)) {
+            data.windows = data.windows.map((row) => ({ ...row, availability: windowAvailability(row, data) }));
         }
         return { text: bounded(data, request.op === "apps" ? "apps" : "windows") };
     }

@@ -187,7 +187,7 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 			name: "desktop_windows",
 			op: "windows",
 			description:
-				`List the native windows belonging to an application returned by desktop_apps. This does not activate the application or change focus.`,
+				`List the native windows belonging to an application returned by desktop_apps. Each row has an availability object: state available, limited or unavailable; a reason (visible, session_locked, display_asleep, minimized, app_hidden, other_space with its space_id, off_screen, not_on_screen, or accessibility_unavailable); and a recovery hint, such as desktop_restore, desktop_unhide, desktop_switch_space, desktop_move, or inspecting with mode pixels. Check it before acting; nothing is recovered automatically. Rows also carry space_ids, the display holding the window and that display's current Space. This does not activate the application or change focus.`,
 			parameters: {
 				type: "object",
 				required: ["pid"],

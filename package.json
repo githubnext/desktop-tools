@@ -16,6 +16,7 @@
 	"files": ["dist", "native/Package.swift", "native/Package.resolved", "native/sources", "native/patches", "LICENSE", "README.md"],
 	"scripts": {
 		"build:js": "tsc",
+		"test": "node --test 'test/*.test.mjs'",
 		"check": "rm -rf .check && tsc --outDir .check && diff -r .check dist && rm -rf .check",
 		"build:native": "node dist/build.js --out build",
 		"build:app": "node dist/app.js --out build"
