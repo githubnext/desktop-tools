@@ -1,6 +1,9 @@
 import Carbon
 import CoreGraphics
 import Foundation
+import PeekabooAutomationKit
+import PeekabooBridge
+import PeekabooFoundation
 
 /// Lists the enabled keyboard input sources, or selects one by ID when select is given.
 private struct InputSourceRequest: Decodable {
@@ -37,6 +40,7 @@ private struct InputSourceResult: Encodable {
 	var current: String?
 	var keyboard_layout: String?
 	var changed: Bool?
+	var native_outcome: DesktopActionOutcome?
 	var requires_fresh_observation = false
 	var message: String?
 	var error: InputSourceMessage?
@@ -86,9 +90,10 @@ private func currentLayout() -> String? {
 	TISCopyCurrentKeyboardLayoutInputSource().map { sourceID($0.takeRetainedValue()) } ?? nil
 }
 
-/// Text Input Sources must be read and changed on the main thread, where the run loop delivers their changes.
+/// Lists in this process; the host selects, so pause and the activity list cover the change.
+/// Text Input Sources must be read on the main thread, where the run loop delivers their changes.
 @MainActor
-func nativeInputSource() async throws -> Data {
+func nativeInputSource(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHandshakeResponse) async throws -> Data {
 	var data = Data()
 	while let chunk = try FileHandle.standardInput.read(upToCount: 4096), !chunk.isEmpty {
 		guard data.count + chunk.count <= 4096 else { throw ActionError("The input source request exceeds 4 KiB.") }
@@ -143,9 +148,21 @@ func nativeInputSource() async throws -> Data {
 			result.message = "The input source was already selected; nothing was changed."
 			return try JSONEncoder().encode(InputSourceReply(data: result))
 		}
+		guard (handshake.enabledOperations ?? handshake.supportedOperations).contains(.selectInputSource) else {
+			throw ActionError("The native runtime does not allow selecting an input source. Update the desktop runtime before acting.")
+		}
 		try Task.checkCancellation()
 		invoked = true
-		let status = TISSelectInputSource(source)
+		var failure: DesktopActionFailure?
+		do {
+			_ = try await client.selectInputSourceWithOutcome(id: requested)
+		} catch let refused as DesktopActionFailure where !refused.outcome.dispatchState.mutationDispatched {
+			// Refused before dispatch, such as while the user has paused input: nothing changed.
+			invoked = false
+			throw refused
+		} catch let dispatched as DesktopActionFailure {
+			failure = dispatched
+		}
 		let clock = ContinuousClock()
 		let deadline = clock.now + selectionReadback
 		var now = currentSource()
@@ -161,11 +178,12 @@ func nativeInputSource() async throws -> Data {
 			if kind(source) != "keyboard_layout" {
 				result.message = "The input method reads back as selected. An app may pick up an input method's mode only after its next focus change; inspect before typing."
 			}
-		} else if status != noErr && now == current {
+		} else if let failure, now == current {
 			result.outcome = "refused"
+			result.native_outcome = failure.outcome
 			result.error = InputSourceMessage(
-				code: "DESKTOP_ACTION_FAILED",
-				message: "macOS refused to select the input source (status \(status)); the current source is unchanged.",
+				code: failure.standardErrorCode?.rawValue ?? "DESKTOP_ACTION_FAILED",
+				message: "\(failure.message); the current source is unchanged.",
 				hint: "Secure keyboard entry can restrict input sources; check desktop_apps system.session.secure_keyboard_entry."
 			)
 		} else {
@@ -173,6 +191,15 @@ func nativeInputSource() async throws -> Data {
 			result.requires_fresh_observation = true
 			result.message = "The selected input source did not read back within 1 second. Read it with desktop_input_source before typing, and don't blindly select again."
 		}
+	} catch let failure as DesktopActionFailure {
+		result.native_outcome = failure.outcome
+		result.outcome = invoked ? "unknown" : "refused"
+		result.requires_fresh_observation = invoked
+		result.error = InputSourceMessage(
+			code: failure.standardErrorCode?.rawValue ?? "DESKTOP_ACTION_FAILED",
+			message: failure.message,
+			hint: failure.hint
+		)
 	} catch {
 		result.outcome = invoked ? "unknown" : "refused"
 		result.requires_fresh_observation = invoked

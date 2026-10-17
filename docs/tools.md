@@ -178,14 +178,16 @@ With `ocr: true`, `desktop_inspect` (in either mode) and `desktop_screen` also r
 
 `desktop_input_source` lists the enabled keyboard input sources that can be selected, as the input menu shows them. Each source has an `id`, `name`, `kind` (`keyboard_layout`, `input_mode` for one mode of an input method such as Hiragana, or `input_method`), its first 8 `languages` and whether it is selected. The result also gives `current` and the `keyboard_layout` that `desktop_key` maps characters through.
 
-With `select` set to a listed `id`, it selects that source with Text Input Sources (`TISSelectInputSource`), with no keys pressed, then reads the current source back for up to a second:
+With `select` set to a listed `id`, the host selects that source with Text Input Sources (`TISSelectInputSource`), with no keys pressed, and the client then reads the current source back for up to a second:
 - **`completed`** means the source reads back as selected, with `before` and `current`.
 - **Already selected:** the result is `completed` with `changed: false`, and nothing is changed.
 - **Not enabled:** the request is refused.
 - **Locked session:** the request is refused.
+- **Input paused** in the app: the request is refused, and nothing is changed.
+- **macOS refuses the selection:** if the source still reads back unchanged, the result is `refused`.
 - **No readback:** the result is `unknown`.
 
-It runs in the client process, which is in the user's GUI session, so it needs no Accessibility or host operation. The switch applies to every app until it is changed again. An input method's new mode may reach the frontmost app only after its next focus change.
+Listing runs in the client process and needs no permission. Selecting goes through the host like other input, so the app's pause and activity list cover it; it needs no Accessibility either. The switch applies to every app until it is changed again. An input method's new mode may reach the frontmost app only after its next focus change.
 
 `desktop_notifications` inspects Notification Center's windows on screen: its banners and alerts, and its panel when open (click the clock with `desktop_menubar_click` to open it). Each notification has an `id`, its app, title, subtitle, body and time where they can be read, its raw `texts` and `description`, and its `actions`: `open`, plus the custom actions Notification Center lists for it by exact name, such as Close, Show, Options or the posting app's own. `desktop_notification_action` takes that `id` and one of those actions. `open` is the notification's default click (on a stack, it expands the group); `close` runs Close; any other name runs that one listed custom action through Accessibility. Only Notification Center's elements list or run custom actions, at most 8 per element, each one line of at most 64 characters, and a name listed twice is never offered. A notification that has gone or changed is refused before input. Afterwards the notifications are read again: the result is `completed` only when the notification is gone, and `unknown` otherwise. System alerts such as permission prompts are dialogs, so `desktop_notifications` lists them under `system_alerts` for `desktop_dialog` and `desktop_dialog_answer` and never acts on them. This is built against the Notification Center structure of macOS 11 to 15.
 
