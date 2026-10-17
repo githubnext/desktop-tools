@@ -8,7 +8,7 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ### Added
 
-- `npm run peekaboo-test` runs Peekaboo's Swift tests without signing credentials, and stops only that run's test helpers. ([#112](https://github.com/githubnext/desktop-tools/pull/112))
+- `npm run peekaboo-test` runs Peekaboo's Swift tests without AI provider credentials in the environment, which its agent tests refuse, and stops only that run's test helpers. ([#112](https://github.com/githubnext/desktop-tools/pull/112))
 
 ### Changed
 
