@@ -97,7 +97,8 @@ export type DesktopRequest =
 		suffix?: string;
 		selection?: DesktopSelection;
 	}
-	| { op: "key"; snapshot: string; key: DesktopKey; modifiers?: DesktopModifier[] };
+	| { op: "key"; snapshot: string; key: DesktopKey; modifiers?: DesktopModifier[] }
+	| { op: "system-key"; key: DesktopKey; modifiers?: DesktopModifier[] };
 
 export type DesktopPoint = { x: number; y: number };
 export const DESKTOP_CLICKS = ["single", "double", "right", "middle", "triple"] as const;
@@ -189,6 +190,7 @@ export type DesktopAction = Extract<
 			| "click"
 			| "type"
 			| "key"
+			| "system-key"
 			| "insert"
 			| "select"
 			| "element-action"
@@ -229,6 +231,7 @@ export type DesktopResult = {
 
 export function isDesktopAction(request: DesktopRequest): request is DesktopAction {
 	return request.op === "click" || request.op === "type" || request.op === "key"
+		|| request.op === "system-key"
 		|| request.op === "insert" || request.op === "select" || request.op === "scroll"
 		|| request.op === "drag" || request.op === "hover" || request.op === "press"
 		|| request.op === "clipboard-write" || request.op === "launch"

@@ -203,10 +203,10 @@ private let textValueRoles: Set<String> = [
 ]
 
 private let pointerClicks: Set<String> = ["single", "double", "right", "middle", "triple"]
-private let semanticShortcuts = [
+let semanticShortcuts = [
 	"w": "desktop_close", "q": "desktop_quit", "h": "desktop_hide", "m": "desktop_minimize",
 ]
-private let keyboardModifiers: [String: String] = [
+let keyboardModifiers: [String: String] = [
 	"command": "cmd", "control": "ctrl", "option": "alt", "shift": "shift",
 ]
 // This contract keeps delete as forward delete; Peekaboo's unqualified delete means backspace.
@@ -225,7 +225,7 @@ private let keyboardKeys: [String: String] = {
 }()
 
 /// Peekaboo's name for a key. A character names the key that types it on the host's current layout.
-private func serviceKey(_ key: String) -> String? {
+func serviceKey(_ key: String) -> String? {
 	if let name = keyboardKeys[key] { return name }
 	guard key.unicodeScalars.count == 1, let scalar = key.unicodeScalars.first, !scalar.properties.isWhitespace
 	else { return nil }
@@ -237,7 +237,7 @@ private func serviceKey(_ key: String) -> String? {
 	}
 }
 
-private struct ActionError: LocalizedError {
+struct ActionError: LocalizedError {
 	let message: String
 	var hint: String?
 	init(_ message: String, hint: String? = nil) {
