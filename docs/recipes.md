@@ -94,17 +94,17 @@ Through Finder:
 
 A shell `cp` is simpler. Use this when the copy must go through Finder.
 
-1. `desktop_clipboard_read` first if the user's clipboard matters, because the next step replaces it.
-2. `desktop_clipboard_write` with `format: "files"` and `paths: ["/Users/me/a.txt", "/Users/me/b.txt"]`. Expect `completed`.
-3. `desktop_focus` the destination Finder window target. Keys are refused unless the window is the app's key window and holds its focus.
-4. inspect the destination window.
-5. `desktop_key` with `key: "v"` and `modifiers: ["command"]`. **Command-Option-V** moves instead of copying.
+1. `desktop_clipboard_write` with `format: "files"` and the `paths`. It replaces the clipboard, so read it first if it matters.
+2. `desktop_focus` the destination window target, then inspect it. Keys go only to the app's key window.
+3. `desktop_key` with `key: "v"` and `modifiers: ["command"]`. Add `option` to move instead of copy.
 
-**Verify:** `ls` the destination folder in a shell, or `desktop_wait` with `until: "element_appears"` for the new item's row *(unverified: Finder's row roles differ between list, icon and column views)*.
+To copy files picked in Finder instead, `desktop_click` the first one and the rest with `modifiers: ["command"]` (foreground, `unknown`; inspect to check the selection), then `desktop_key` `c` with `command` before step 2.
+
+**Verify:** `ls` the destination folder.
 
 **Goes wrong:**
 
-- A name that already exists opens a Replace / Keep Both / Stop dialog. `desktop_wait` with `until: "dialog_appears"`, read it, and answer deliberately.
+- A name that already exists opens a Replace / Keep Both / Stop dialog. `desktop_wait` with `until: "dialog_appears"`, then answer it deliberately.
 - A drag between Finder windows also copies, but its result is always `unknown`.
 
 ## Open something with Spotlight
@@ -126,17 +126,17 @@ A shell `cp` is simpler. Use this when the copy must go through Finder.
 
 ## Switch the input source
 
-1. `desktop_apps`, and read `system.input.keyboard_layout` (`id` and `name`) as the starting point.
-2. `desktop_system_key` with `key: "space"` and `modifiers: ["control"]`. That selects the previous input source; with **Option** added, it selects the next one. The result is `unknown`.
-3. `desktop_apps` again, and compare `system.input.keyboard_layout.id`. Repeat step 2 until it shows the wanted layout, but stop after as many presses as there are sources.
+1. `desktop_apps`, and note `system.input.keyboard_layout.id`.
+2. `desktop_system_key` with `key: "space"` and `modifiers: ["control"]` for the previous source, with `option` added for the next. The result is `unknown`.
+3. `desktop_apps` again. Repeat step 2 until the wanted ID shows, at most once per installed source.
 
 **Verify:** `system.input.keyboard_layout.id` equals the wanted ID, such as `com.apple.keylayout.US`.
 
 **Goes wrong:**
 
-- `keyboard_layout` is the keyboard layout in use. An input method such as Pinyin types through an underlying layout, so the ID may not change. Check the input menu instead: in `desktop_menubar_items`, it's the item owned by `TextInputMenuAgent` *(unverified owner)*. Click it with `desktop_menubar_click`, inspect the opened menu, and pick the source by name, which is also how to choose a specific source directly.
-- The shortcut can be turned off or rebound in Keyboard Shortcuts > Input Sources, or taken by Spotlight.
-- `desktop_key` maps characters through the current layout, so switch before typing characters with it.
+- An input method such as Pinyin types through an underlying layout, so the ID may not change. Pick the source by name from the input menu instead: `desktop_menubar_click` the `TextInputMenuAgent` item *(unverified owner)*, then inspect the menu.
+- The shortcut can be off, rebound, or taken by Spotlight.
+- `desktop_key` maps characters through the current layout, so switch before typing with it.
 
 ## Use the share sheet
 
@@ -151,19 +151,18 @@ A shell `cp` is simpler. Use this when the copy must go through Finder.
 - Apps differ in where Share lives: in **File**, in a toolbar button, or in a context menu. A toolbar Share button opens the same popover as **Share…**.
 - The popover closes when focus moves elsewhere. Act on it right after opening it.
 
-## Set volume or brightness in Control Center
+## Set volume or brightness
 
-1. `desktop_menubar_items`. Find the Control Center item: owner bundle ID `com.apple.controlcenter`. Pick it by owner and identifier, not by title.
-2. `desktop_menubar_click` with that item's `target`. The result lists and captures the windows that opened.
-3. inspect the Control Center window from step 2 with its `pid` and `window_id`. Find the **Display** or **Sound** slider *(unverified: `AXSlider`, with titles that vary by language and macOS version)*. Note its current value, which tells the range: 0 to 1 or 0 to 100.
-4. `desktop_set_value` with the slider and a number in that range. Expect `completed` with the value read back.
+To nudge the level, `desktop_system_key` with `volume_up`, `volume_down`, `mute`, `brightness_up` or `brightness_down`. Each press is one step and the result is `unknown`; `mute` toggles, so don't repeat it blindly. For an exact level, use Control Center:
 
-**Verify:** the readback in step 4's result, and the slider's value in the fresh observation.
+1. `desktop_menubar_items`, then `desktop_menubar_click` the item owned by `com.apple.controlcenter`. Pick it by owner, not title.
+2. inspect the window the click opened. Find the **Sound** or **Display** slider *(unverified: `AXSlider`, titles vary)*; its current value shows the range, 0 to 1 or 0 to 100.
+3. `desktop_set_value` the slider. Expect `completed` with the value read back.
 
 **Goes wrong:**
 
 - Control Center closes when another app takes focus, which makes the snapshot stale. Reopen it and inspect again.
-- Some modules, such as Display on a Mac with an external monitor, open a detail view first: click the module, then inspect again.
+- Some modules open a detail view first, such as Display with an external monitor: click it, then inspect again.
 
 ## Zoom or rotate instead of pinching
 
