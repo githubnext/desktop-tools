@@ -165,6 +165,23 @@ A shell `cp` is simpler. Use this when the copy must go through Finder.
 - Control Center closes when another app takes focus, which makes the snapshot stale. Reopen it and inspect again.
 - Some modules, such as Display on a Mac with an external monitor, open a detail view first: click the module, then inspect again.
 
+## Zoom or rotate instead of pinching
+
+There is no pinch or rotate gesture. Use the app's own command: it acts on an exact target, and you can read the result back.
+
+1. `desktop_menus` with the app target, and look for zoom and rotate items in **View**, and rotate items in **Tools** or **Image**. Common items are **Zoom In**, **Zoom Out**, **Actual Size** and **Zoom to Fit** in Preview, Safari, Maps and Photos, and **Rotate Left** and **Rotate Right** in Preview and Photos *(unverified: titles and menus vary by app and macOS version)*. Each item shows its shortcut.
+2. `desktop_menu` with the app target and that item's exact `path`. Expect `completed`. Repeat it to zoom further, observing between steps.
+3. If the app has no menu item, use the shortcut on the window: inspect, then `desktop_key` with `=` and `command` to zoom in, `-` and `command` to zoom out, and `0` and `command` for actual size, against that snapshot. In Preview, `l` with `command` rotates left and `r` with `command` rotates right *(unverified)*. Pass `repeat` to press a key several times against one snapshot.
+
+**Verify:** inspect the window. The zoom level often shows in a toolbar control, in the window title or in a status bar, and a rotated image changes its bounds. A menu item that became disabled, such as **Zoom In** at the largest size, means there is nothing further to do.
+
+**Goes wrong:**
+
+- Some apps use Command-Shift-= or Command-+ for Zoom In. Read the shortcut from `desktop_menus` rather than guessing it.
+- Command-scroll and Control-scroll zoom only in some apps and only with the feature turned on, so they aren't a general substitute.
+- Maps and other canvas views may not report the zoom level anywhere. Compare screenshots with `desktop_inspect` in pixels mode instead.
+- Safari's View > Zoom In zooms the page. Pinch zoom in Safari magnifies the view instead, and no tool reproduces that.
+
 ## Fill a web form end to end
 
 1. `desktop_open` with `item: {url: "https://example.com/form"}` and optionally `application: {bundle_id: "com.apple.Safari"}`.
