@@ -23,7 +23,13 @@ final class AgentCursor: AutomationFeedbackClient {
 		didSet { if !enabled { reset() } }
 	}
 
+	/// The exact window of the latest request, which the Bridge reports before dispatch.
+	var window: CGWindowID?
+
 	private var overlays: [Overlay] = []
+	/// The window the cursor is over, which it stays directly above so windows covering it cover the cursor too.
+	private var anchor: CGWindowID?
+	private var tracking: Timer?
 	private var position: CGPoint?
 	private var fade: Task<Void, Never>?
 	private var holding = false
@@ -88,6 +94,9 @@ final class AgentCursor: AutomationFeedbackClient {
 	private func reset() {
 		fade?.cancel()
 		fade = nil
+		tracking?.invalidate()
+		tracking = nil
+		anchor = nil
 		discard()
 		holding = false
 		position = nil
@@ -102,16 +111,20 @@ final class AgentCursor: AutomationFeedbackClient {
 		if overlays.isEmpty { overlays = NSScreen.screens.map(Overlay.init) }
 		let start = currentPosition() ?? realPointer() ?? point
 		position = point
+		anchor(at: point)
 		let distance = hypot(point.x - start.x, point.y - start.y)
 		if distance < 1, overlays.first?.isVisible == true {
 			// Already there, as when a held button is released: arrive at once so the input isn't delayed.
-			for overlay in overlays { overlay.place(at: point) }
+			for overlay in overlays {
+				overlay.show(above: anchor)
+				overlay.place(at: point)
+			}
 			return true
 		}
 		let duration = 0.25 + min(distance / 1600, 1) * 0.15
 		let path = Self.curve(from: start, to: point)
 		for overlay in overlays {
-			overlay.show()
+			overlay.show(above: anchor)
 			let motion = CAKeyframeAnimation(keyPath: "position")
 			motion.path = path.copy(using: [overlay.transform])
 			motion.duration = duration
@@ -122,6 +135,42 @@ final class AgentCursor: AutomationFeedbackClient {
 		}
 		try? await Task.sleep(for: .seconds(duration))
 		return true
+	}
+
+	/// Anchors the cursor to the request's window when `point` is inside it, or keeps it above everything for
+	/// input outside any one window, such as the Dock or the menu bar, and follows the window's order meanwhile.
+	private func anchor(at point: CGPoint) {
+		anchor = window.flatMap { window in
+			guard let info = Self.info(window), info.onScreen, info.bounds.contains(point) else { return nil }
+			return window
+		}
+		guard anchor != nil, tracking == nil else { return }
+		let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { _ in
+			MainActor.assumeIsolated { AgentCursor.shared.follow() }
+		}
+		RunLoop.main.add(timer, forMode: .common)
+		tracking = timer
+	}
+
+	/// Keeps every overlay directly above the anchor window, hidden while the window is off screen.
+	private func follow() {
+		guard let anchor, overlays.first?.isVisible == true else {
+			tracking?.invalidate()
+			tracking = nil
+			return
+		}
+		let info = Self.info(anchor)
+		for overlay in overlays {
+			if let info, info.onScreen { overlay.order(above: anchor, level: info.level) } else { overlay.conceal() }
+		}
+	}
+
+	private static func info(_ window: CGWindowID) -> (bounds: CGRect, onScreen: Bool, level: Int)? {
+		guard let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], window) as? [[String: Any]])?.first,
+			let frame = info[kCGWindowBounds as String] as? NSDictionary,
+			let bounds = CGRect(dictionaryRepresentation: frame)
+		else { return nil }
+		return (bounds, info[kCGWindowIsOnscreen as String] as? Bool ?? false, info[kCGWindowLayer as String] as? Int ?? 0)
 	}
 
 	/// Peekaboo's agent-cursor path: a quadratic Bézier bent to one side by up to 54 points.
@@ -353,7 +402,8 @@ private final class Overlay {
 		Self.draw(cursor, scale: screen.backingScaleFactor)
 	}
 
-	var isVisible: Bool { panel.isVisible && cursor.opacity > 0 }
+	/// Whether the cursor is up, even while hidden with its window off screen.
+	var isVisible: Bool { cursor.opacity > 0 }
 
 	/// The arrow's tip is the layer's anchor, so scaling presses toward the hotspot.
 	private static func draw(_ cursor: CALayer, scale: CGFloat) {
@@ -380,13 +430,32 @@ private final class Overlay {
 		cursor.addSublayer(shape)
 	}
 
-	func show() {
-		panel.orderFrontRegardless()
+	/// Shows the cursor directly above `window`, or above everything without one.
+	func show(above window: CGWindowID?) {
+		if let window {
+			let level = (CGWindowListCopyWindowInfo([.optionIncludingWindow], window) as? [[String: Any]])?
+				.first?[kCGWindowLayer as String] as? Int ?? 0
+			order(above: window, level: level)
+		} else {
+			panel.level = .screenSaver
+			panel.orderFrontRegardless()
+		}
 		CATransaction.begin()
 		CATransaction.setDisableActions(true)
 		cursor.removeAnimation(forKey: "fade")
 		cursor.opacity = 1
 		CATransaction.commit()
+	}
+
+	func order(above window: CGWindowID, level: Int) {
+		if panel.level.rawValue != level { panel.level = NSWindow.Level(rawValue: level) }
+		if !panel.isVisible || !isOrderedAbove(panel.windowNumber, window) {
+			panel.order(.above, relativeTo: Int(window))
+		}
+	}
+
+	func conceal() {
+		if panel.isVisible { panel.orderOut(nil) }
 	}
 
 	func place(at point: CGPoint) {

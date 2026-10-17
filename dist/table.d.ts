@@ -19,6 +19,8 @@ export type TableElement = {
     selected?: boolean | null;
     disclosure_level?: number | null;
     disclosing?: boolean | null;
+    /** A web table lists this cell among its column headers. */
+    column_header?: boolean | null;
 };
 type TableRow = {
     index: number;

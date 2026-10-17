@@ -1,0 +1,47 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/WindowManagementService+StateOperations.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/WindowManagementService+StateOperations.swift
+index d0c57fa06..54d4df044 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/WindowManagementService+StateOperations.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/WindowManagementService+StateOperations.swift
+@@ -858,7 +858,9 @@ func pinnedWindowClosePresenceDisposition(
+         case .present: .present
+         case .missing: .missing
+         case .replacement: .replacement
+-        case .unverifiable: .unverifiable
++        // An on-screen window keeps its window server entry until it closes, so that entry decides when AX
++        // lists windows without IDs, as Finder's desktop window does: one with other bounds is still animating.
++        case .unverifiable: expectedMinimized ? .unverifiable : windowServerEntryPresent ? .present : .missing
+         }
+     }
+     guard expectedMinimized || windowServerEntryPresent else {
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/WindowStateMutationPolicyTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/WindowStateMutationPolicyTests.swift
+index 5e912832f..3edff9b6e 100644
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/WindowStateMutationPolicyTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/WindowStateMutationPolicyTests.swift
+@@ -106,6 +106,27 @@ struct WindowStateMutationPolicyTests {
+             expectedMinimized: true) == .unverifiable)
+     }
+ 
++    @Test
++    func `on-screen close follows its window server entry over an incomplete AX scan`() {
++        #expect(pinnedWindowClosePresenceDisposition(
++            windowServerEntryPresent: false,
++            minimizedAXPresence: .unverifiable,
++            expectedMinimized: false) == .missing)
++        #expect(pinnedWindowClosePresenceDisposition(
++            windowServerEntryPresent: false,
++            minimizedAXPresence: .present,
++            expectedMinimized: false) == .present)
++        #expect(pinnedWindowClosePresenceDisposition(
++            windowServerEntryPresent: true,
++            windowServerEntryMatchesReceipt: false,
++            minimizedAXPresence: .unverifiable,
++            expectedMinimized: false) == .present)
++        #expect(pinnedWindowClosePresenceDisposition(
++            windowServerEntryPresent: false,
++            minimizedAXPresence: .unverifiable,
++            expectedMinimized: true) == .unverifiable)
++    }
++
+     @Test
+     func `successful minimized close accepts complete AX disappearance scan`() {
+         let presence = pinnedMinimizedWindowAXPresence(

@@ -62,6 +62,20 @@ test("a web table inside a scoped web area takes its header row as columns", () 
 	assert.deepEqual(table.rows.map((row) => row.index), [0, 1]);
 });
 
+test("a web table whose header cells are plain cells, as in Safari on macOS 27, still takes them as columns", () => {
+	const web = structuredClone(fixtures.web);
+	for (const element of web) {
+		if (/header/i.test(element.role_description ?? "")) {
+			element.role_description = "cell";
+			element.column_header = true;
+		}
+	}
+	assert.ok(web.some((element) => element.column_header));
+	const table = buildTable(web);
+	assert.deepEqual(table.columns, ["Plan", "Price"]);
+	assert.deepEqual(table.rows.map((row) => row.cells[0]), ["Basic", "Pro"]);
+});
+
 test("pages are bounded by row_offset and max_rows", () => {
 	const table = buildTable(fixtures.finder, { rowOffset: 1, maxRows: 1 });
 	assert.equal(table.row_count, 3);

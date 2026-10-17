@@ -81,8 +81,14 @@ final class AgentWindow {
 		let onScreen = info[kCGWindowIsOnscreen as String] as? Bool ?? false
 		let visible = NSScreen.screens.contains { Self.flipped($0.frame).intersects(bounds) }
 		guard onScreen, visible, !bounds.isEmpty else { return overlay.conceal() }
+		// The display showing most of the window keeps the outline and label on it when the window fills it.
+		let screen = NSScreen.screens.max { area(of: $0) < area(of: $1) }?.frame ?? .null
+		func area(of screen: NSScreen) -> CGFloat {
+			let shared = Self.flipped(screen.frame).intersection(bounds)
+			return shared.isNull ? 0 : shared.width * shared.height
+		}
 		overlay.follow(target, frame: Self.flipped(bounds.insetBy(dx: -Self.margin, dy: -Self.margin)),
-			level: info[kCGWindowLayer as String] as? Int ?? 0)
+			screen: screen, level: info[kCGWindowLayer as String] as? Int ?? 0)
 	}
 
 	/// Converts between Cocoa screen frames (bottom-left origin) and global Core Graphics ones; the flip is its own inverse.
@@ -107,6 +113,8 @@ final class AgentWindow {
 		private let text = CATextLayer()
 		private let root = CALayer()
 		private var shown = false
+		/// The Cocoa frame of the display the window is on.
+		private var screen = CGRect.null
 
 		var label: String {
 			get { text.string as? String ?? "" }
@@ -175,13 +183,14 @@ final class AgentWindow {
 		}
 
 		/// Places the panel over `window`'s frame, plus the margin, directly above it in the window order.
-		func follow(_ window: CGWindowID, frame: CGRect, level: Int) {
-			if panel.frame != frame {
+		func follow(_ window: CGWindowID, frame: CGRect, screen: CGRect, level: Int) {
+			if panel.frame != frame || self.screen != screen {
+				self.screen = screen
 				panel.setFrame(frame, display: false)
 				layout()
 			}
 			if panel.level.rawValue != level { panel.level = NSWindow.Level(rawValue: level) }
-			if !shown || !Self.isDirectlyAbove(panel.windowNumber, window) {
+			if !shown || !isOrderedAbove(panel.windowNumber, window) {
 				panel.order(.above, relativeTo: Int(window))
 				shown = true
 			}
@@ -219,23 +228,40 @@ final class AgentWindow {
 			let size = panel.frame.size
 			root.frame = CGRect(origin: .zero, size: size)
 			let window = root.bounds.insetBy(dx: AgentWindow.margin, dy: AgentWindow.margin)
-			let edge = window.insetBy(dx: -2, dy: -2)
+			// The display in the panel's flipped coordinates, inset so the whole stroke stays on it.
+			let frame = panel.frame
+			let display = screen.isNull ? root.bounds
+				: CGRect(x: screen.minX - frame.minX, y: frame.maxY - screen.maxY, width: screen.width, height: screen.height)
+					.insetBy(dx: 2, dy: 2)
+			let outside = window.insetBy(dx: -2, dy: -2)
+			let clamped = outside.intersection(display)
+			let edge = clamped.isNull || clamped.isEmpty ? outside : clamped
 			outline.path = CGPath(roundedRect: edge, cornerWidth: 14, cornerHeight: 14, transform: nil)
 			let measured = (label as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold)])
 			let width = min(ceil(measured.width) + 24, max(window.width - 32, 60))
-			pill.frame = CGRect(x: window.midX - width / 2, y: edge.maxY - 11, width: width, height: 22)
+			// The label straddles the bottom edge, or sits just inside it when the window reaches the display's bottom.
+			let top = clamped.isNull || clamped.isEmpty ? edge.maxY - 11 : min(edge.maxY - 11, display.maxY - 24)
+			pill.frame = CGRect(x: window.midX - width / 2, y: top, width: width, height: 22)
 			text.frame = pill.bounds.insetBy(dx: 12, dy: 3)
 			text.contentsScale = panel.backingScaleFactor
 			CATransaction.commit()
 		}
-
-		/// Whether `panel` is the nearest window above `window`, so nothing can sit between them.
-		private static func isDirectlyAbove(_ panel: Int, _ window: CGWindowID) -> Bool {
-			guard let above = CGWindowListCopyWindowInfo([.optionOnScreenAboveWindow], window) as? [[String: Any]]
-			else { return false }
-			return above.last?[kCGWindowNumber as String] as? Int == panel
-		}
 	}
+}
+
+/// Whether `panel` is above `window` with only this process's windows between them, so no other app's window
+/// can sit between. The agent cursor and the window outline both order themselves above the same window.
+@MainActor
+func isOrderedAbove(_ panel: Int, _ window: CGWindowID) -> Bool {
+	guard let above = CGWindowListCopyWindowInfo([.optionOnScreenAboveWindow], window) as? [[String: Any]]
+	else { return false }
+	let own = Int(getpid())
+	// Nearest first: the list runs from the front down to just above `window`.
+	for info in above.reversed() {
+		if info[kCGWindowNumber as String] as? Int == panel { return true }
+		guard info[kCGWindowOwnerPID as String] as? Int == own else { return false }
+	}
+	return false
 }
 
 /// The agent name an MCP server passed to the requesting client in `DESKTOP_TOOLS_AGENT`.

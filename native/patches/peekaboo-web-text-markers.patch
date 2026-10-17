@@ -1,0 +1,34 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/WebTextSelection.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/WebTextSelection.swift
+index b435a0486..0aef4acbe 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/WebTextSelection.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/WebTextSelection.swift
+@@ -36,7 +36,8 @@ enum WebTextSelectionPlanner {
+         in span: WebTextSpan,
+         markers: any WebTextMarkerAccess) -> CFTypeRef?
+     {
+-        if let base = markers.index(of: span.start),
++        // An engine can answer NSNotFound for a marker's index; stepping below doesn't need one.
++        if let base = markers.index(of: span.start), (0...Int(Int32.max)).contains(base),
+            let start = markers.marker(atIndex: base + range.location),
+            let end = markers.marker(atIndex: base + range.location + range.length),
+            let candidate = markers.range(from: start, to: end),
+@@ -162,10 +163,15 @@ struct AXWebTextMarkers: WebTextMarkerAccess {
+     }
+ 
+     func bounds(of range: CFTypeRef) -> (start: CFTypeRef, end: CFTypeRef)? {
+-        guard let start = self.copy("AXStartTextMarkerForTextMarkerRange", range),
+-              let end = self.copy("AXEndTextMarkerForTextMarkerRange", range)
+-        else { return nil }
+-        return (start, end)
++        // Safari on macOS 27 dropped these parameterized attributes; the range itself still holds both ends.
++        if let start = self.copy("AXStartTextMarkerForTextMarkerRange", range),
++           let end = self.copy("AXEndTextMarkerForTextMarkerRange", range)
++        {
++            return (start, end)
++        }
++        guard CFGetTypeID(range) == AXTextMarkerRangeGetTypeID() else { return nil }
++        let markers = unsafeDowncast(range, to: AXTextMarkerRange.self)
++        return (AXTextMarkerRangeCopyStartMarker(markers), AXTextMarkerRangeCopyEndMarker(markers))
+     }
+ 
+     func selectedRange() -> CFTypeRef? {
