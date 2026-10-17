@@ -4,17 +4,19 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-17
+
 ### Fixed
 
-- The agent cursor sits directly above the window the agent is using instead of above every window, so a window covering that app covers the cursor too. Input outside any one window, such as on the Dock or the menu bar, still shows it on top.
-- The agent window outline and its label stay on the display when the window fills it; they were drawn just outside the window and ran off the screen's edges.
-- `desktop_close` on a Finder window is `completed` again instead of `unknown`: Accessibility lists Finder's desktop as a window without an ID, which made every close unverifiable on macOS 27, even after the window was gone.
-- `desktop_wait` and `expect` app conditions with `bundle_id` find the app when many apps are running; the app list cut to fit a result could drop it, and a cut list no longer counts as proof that an app quit.
-- `desktop_read` with `table: true` finds the column titles of web tables in Safari 27, which reports `<th>` cells as plain cells.
-- `desktop_select` in Safari 27 web text no longer crashes the Desktop Tools app, and finds text bounds without the text marker attributes Safari dropped.
-- Pasting files with `desktop_insert` into a Finder window on macOS 27 finds the window's folder from its path bar, since Finder no longer reports it otherwise; without the path bar, the refusal says to turn on View > Show Path Bar.
-- `desktop_set_value` on a Safari 27 date input is refused before input, with a hint to type the date, instead of `unknown`; it accepts an ISO 8601 date where a date can be set.
-- Management failures, such as an unverified `desktop_close`, include the native `cause`, as action failures do.
+- The agent cursor sits directly above the window the agent is using instead of above every window, so a window covering that app covers the cursor too. Input outside any one window, such as on the Dock or the menu bar, still shows it on top. ([#133](https://github.com/githubnext/desktop-tools/pull/133))
+- The agent window outline and its label stay on the display when the window fills it; they were drawn just outside the window and ran off the screen's edges. ([#133](https://github.com/githubnext/desktop-tools/pull/133))
+- `desktop_close` on a Finder window is `completed` again instead of `unknown`: Accessibility lists Finder's desktop as a window without an ID, which made every close unverifiable on macOS 27, even after the window was gone. ([#133](https://github.com/githubnext/desktop-tools/pull/133))
+- `desktop_wait` and `expect` app conditions with `bundle_id` find the app when many apps are running; the app list cut to fit a result could drop it, and a cut list no longer counts as proof that an app quit. ([#133](https://github.com/githubnext/desktop-tools/pull/133))
+- `desktop_read` with `table: true` finds the column titles of web tables in Safari 27, which reports `<th>` cells as plain cells. ([#133](https://github.com/githubnext/desktop-tools/pull/133))
+- `desktop_select` in Safari 27 web text no longer crashes the Desktop Tools app, and finds text bounds without the text marker attributes Safari dropped. ([#133](https://github.com/githubnext/desktop-tools/pull/133))
+- Pasting files with `desktop_insert` into a Finder window on macOS 27 finds the window's folder from its path bar, since Finder no longer reports it otherwise; without the path bar, the refusal says to turn on View > Show Path Bar. ([#133](https://github.com/githubnext/desktop-tools/pull/133))
+- `desktop_set_value` on a Safari 27 date input is refused before input, with a hint to type the date, instead of `unknown`; it accepts an ISO 8601 date where a date can be set. ([#133](https://github.com/githubnext/desktop-tools/pull/133))
+- Management failures, such as an unverified `desktop_close`, include the native `cause`, as action failures do. ([#133](https://github.com/githubnext/desktop-tools/pull/133))
 
 ## [0.14.0] - 2026-10-17
 
@@ -203,7 +205,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The first release: a signed, notarized Desktop Tools menu bar app, and the desktop tools served over MCP. ([#28](https://github.com/githubnext/desktop-tools/pull/28), [#29](https://github.com/githubnext/desktop-tools/pull/29), [#12](https://github.com/githubnext/desktop-tools/pull/12))
 
-[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/githubnext/desktop-tools/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/githubnext/desktop-tools/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/githubnext/desktop-tools/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/githubnext/desktop-tools/compare/v0.12.0...v0.13.0
