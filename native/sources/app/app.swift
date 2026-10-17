@@ -44,8 +44,10 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		let bin = Bundle.main.executableURL!.deletingLastPathComponent()
 		runtime = Runtime(bin.appendingPathComponent("libDesktopTools.dylib").path)
 		// A development build takes another state directory so it never relinks the installed app's client.
-		let home = ProcessInfo.processInfo.environment["DESKTOP_TOOLS_STATE"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
-			?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/state/desktop-tools")
+		let state = ProcessInfo.processInfo.environment["DESKTOP_TOOLS_STATE"] ?? ""
+		let home = state.isEmpty
+			? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/state/desktop-tools")
+			: URL(fileURLWithPath: state)
 		try! FileManager.default.createDirectory(
 			at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
 		// Consumers find the signed client through a stable link that follows the app wherever it is installed.
