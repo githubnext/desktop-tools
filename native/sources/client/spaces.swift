@@ -453,3 +453,13 @@ struct WindowPlaces {
 		return (index, current[display.display_id], CGDisplayIsAsleep(display.display_id) != 0)
 	}
 }
+
+/// The Space WindowServer assigns a window to, with its kind; nil when it is on none or on several.
+func windowSpace(_ window: Int) -> (id: UInt64, kind: String)? {
+	let ids = spaceIDs(window: window)
+	guard ids.count == 1, let id = ids.first else { return nil }
+	for display in managedDisplays() {
+		if let space = display.spaces.first(where: { $0.id == id }) { return space }
+	}
+	return (id, "other")
+}

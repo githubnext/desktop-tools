@@ -100,8 +100,8 @@ export function isDesktopAction(request) {
 export function isDesktopManagement(request) {
     return request.op === "activate" || request.op === "quit" || request.op === "hide"
         || request.op === "unhide" || request.op === "focus" || request.op === "minimize"
-        || request.op === "restore" || request.op === "maximize" || request.op === "close"
-        || request.op === "move" || request.op === "resize";
+        || request.op === "restore" || request.op === "maximize" || request.op === "fullscreen"
+        || request.op === "close" || request.op === "move" || request.op === "resize";
 }
 /** Whether a key is named or is one printable, non-space character; native checks the current layout has it. */
 export function isDesktopKey(key) {

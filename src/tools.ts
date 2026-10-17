@@ -485,6 +485,17 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 			},
 		},
 		{
+			name: "desktop_fullscreen",
+			op: "fullscreen",
+			description:
+				`Enter (enabled true) or exit (enabled false) macOS native full screen for one exact window on ${place}, as its green button does. Pass its target object from desktop_windows unchanged. This sets the window's AXFullScreen through Accessibility, or presses its full screen button when that attribute can't be set, without synthesized input; the window animates into a Space of its own, which macOS switches the display to, and exiting returns it to a desktop. Native checks bind the process generation, window ID and original bounds, and the result is completed only when the window reads back in the requested state; a window already in it completes with no change. The result names the window's Space as space_id and space_kind (fullscreen or desktop), as desktop_spaces lists it. A window whose app doesn't support full screen is refused, and a minimized window must be restored first. Use the refreshed inventory target afterwards, since its bounds change, and inspect before input. Never blindly repeat an interrupted or unknown change: the green button toggles.`,
+			parameters: {
+				type: "object",
+				required: ["target", "enabled"],
+				properties: { target: windowTarget, enabled: { type: "boolean" } },
+			},
+		},
+		{
 			name: "desktop_move",
 			op: "move",
 			description:

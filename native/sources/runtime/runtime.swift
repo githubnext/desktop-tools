@@ -89,7 +89,7 @@ private final class Desktop {
 						.createExactWindowHeldPointerOwner, .beginExactWindowHeldPointer, .releaseExactWindowHeldPointer,
 						.revokeExactWindowHeldPointer, .disconnectExactWindowHeldPointerOwner,
 						.launchApplicationWithOptions, .activateApplication, .quitApplication, .hideApplication, .backgroundCloseWindow,
-						.focusWindow, .minimizeWindow, .restoreWindow, .maximizeWindow,
+						.focusWindow, .minimizeWindow, .restoreWindow, .maximizeWindow, .setWindowFullScreen,
 						.moveWindow, .resizeWindow,
 						.targetedDialogListElements, .prepareDialogAction, .exactDialogClickButton, .exactDialogEnterText, .exactFileDialogPath,
 						.listMenuBarItems, .clickMenuBarItemIndex, .listDockItems, .launchDockItem, .rightClickDockItem,

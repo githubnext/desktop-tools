@@ -767,6 +767,9 @@ function validateManagement(request) {
         return;
     }
     validateWindowTarget(request.target);
+    if (request.op === "fullscreen" && typeof request.enabled !== "boolean") {
+        throw new Error("Full screen enabled must be true to enter or false to exit.");
+    }
     if (request.op === "move") {
         const position = request.position;
         if (!position || ![position.x, position.y].every(Number.isFinite)) {
@@ -1224,6 +1227,7 @@ async function execute(native, request, abort) {
             "minimize",
             "restore",
             "maximize",
+            "fullscreen",
             "move",
             "resize",
         ].includes(request.op)) {

@@ -13,6 +13,7 @@ export type DesktopManagement =
 	| { op: "activate" | "hide" | "unhide"; target: DesktopAppTarget }
 	| { op: "quit"; target: DesktopAppTarget; force?: boolean }
 	| { op: "focus" | "minimize" | "restore" | "maximize" | "close"; target: DesktopWindowTarget }
+	| { op: "fullscreen"; target: DesktopWindowTarget; enabled: boolean }
 	| { op: "move"; target: DesktopWindowTarget; position: { x: number; y: number } }
 	| { op: "resize"; target: DesktopWindowTarget; size: { width: number; height: number } };
 /** Press one button by its exact title, replace one text field's value by its listed index, or choose a path in a file panel. */
@@ -267,6 +268,7 @@ export type DesktopAction = Extract<
 			| "hide"
 			| "unhide"
 			| "maximize"
+			| "fullscreen"
 			| "menubar-click"
 			| "dock"
 			| "notification-action";
@@ -297,8 +299,8 @@ export function isDesktopAction(request: DesktopRequest): request is DesktopActi
 export function isDesktopManagement(request: DesktopRequest): request is DesktopManagement {
 	return request.op === "activate" || request.op === "quit" || request.op === "hide"
 		|| request.op === "unhide" || request.op === "focus" || request.op === "minimize"
-		|| request.op === "restore" || request.op === "maximize" || request.op === "close"
-		|| request.op === "move" || request.op === "resize";
+		|| request.op === "restore" || request.op === "maximize" || request.op === "fullscreen"
+		|| request.op === "close" || request.op === "move" || request.op === "resize";
 }
 
 /** Whether a key is named or is one printable, non-space character; native checks the current layout has it. */

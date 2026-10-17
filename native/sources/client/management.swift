@@ -66,7 +66,7 @@ struct ManagementTarget: Codable {
 
 private struct ManagementRequest: Decodable {
 	enum Operation: String, Decodable {
-		case activate, quit, hide, unhide, close, focus, minimize, restore, maximize, move, resize
+		case activate, quit, hide, unhide, close, focus, minimize, restore, maximize, fullscreen, move, resize
 
 		var targetsApplication: Bool { self == .activate || self == .quit || self == .hide || self == .unhide }
 	}
@@ -83,9 +83,13 @@ private struct ManagementRequest: Decodable {
 	let position: Position?
 	let size: Size?
 	let force: Bool?
+	let enabled: Bool?
 
 	func validate() throws {
 		guard force == nil || op == .quit else { throw ManagementError("Only quit accepts force.") }
+		guard (enabled != nil) == (op == .fullscreen) else {
+			throw ManagementError("Full screen takes enabled, true to enter or false to exit; no other action does.")
+		}
 		switch op {
 		case .move:
 			guard let position, size == nil, position.x.isFinite, position.y.isFinite else {
@@ -120,6 +124,8 @@ private struct ManagementResult: Encodable {
 	var action = "management"
 	var native_outcome: DesktopActionOutcome?
 	var terminated: Bool?
+	var space_id: UInt64?
+	var space_kind: String?
 	var message: String?
 	var requires_fresh_observation = false
 	var error: ManagementMessage?
@@ -154,6 +160,7 @@ func nativeManagement(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeH
 		let required: PeekabooBridgeOperation? = switch request.op {
 		case .hide: .hideApplication
 		case .maximize: .maximizeWindow
+		case .fullscreen: .setWindowFullScreen
 		default: nil
 		}
 		if let required {
@@ -242,6 +249,11 @@ func nativeManagement(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeH
 		case .maximize:
 			operation = .maximizeWindow
 			outcome = try await client.maximizeWindowResult(target: .windowId(window!.windowID), expectedIdentity: window!).outcome
+		case .fullscreen:
+			operation = .setWindowFullScreen
+			outcome = try await client.setWindowFullScreenResult(
+				target: .windowId(window!.windowID), expectedIdentity: window!, fullScreen: request.enabled!
+			).outcome
 		case .move:
 			operation = .moveWindow
 			let position = request.position!
@@ -272,6 +284,12 @@ func nativeManagement(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeH
 		}
 		result.requires_fresh_observation = outcome.dispatchState.mutationDispatched
 		result.terminated = terminated
+		if request.op == .fullscreen, let window {
+			// A full-screen window gets its own Space; leaving puts it back on a desktop.
+			let space = windowSpace(window.windowID)
+			result.space_id = space?.id
+			result.space_kind = space?.kind
+		}
 		if terminated == false {
 			result.message = request.force == true
 				? "The force quit was sent, but termination was not confirmed. Refresh desktop_apps before any further action; do not blindly repeat it."

@@ -446,6 +446,16 @@ export function desktopTools({ place, app }) {
             },
         },
         {
+            name: "desktop_fullscreen",
+            op: "fullscreen",
+            description: `Enter (enabled true) or exit (enabled false) macOS native full screen for one exact window on ${place}, as its green button does. Pass its target object from desktop_windows unchanged. This sets the window's AXFullScreen through Accessibility, or presses its full screen button when that attribute can't be set, without synthesized input; the window animates into a Space of its own, which macOS switches the display to, and exiting returns it to a desktop. Native checks bind the process generation, window ID and original bounds, and the result is completed only when the window reads back in the requested state; a window already in it completes with no change. The result names the window's Space as space_id and space_kind (fullscreen or desktop), as desktop_spaces lists it. A window whose app doesn't support full screen is refused, and a minimized window must be restored first. Use the refreshed inventory target afterwards, since its bounds change, and inspect before input. Never blindly repeat an interrupted or unknown change: the green button toggles.`,
+            parameters: {
+                type: "object",
+                required: ["target", "enabled"],
+                properties: { target: windowTarget, enabled: { type: "boolean" } },
+            },
+        },
+        {
             name: "desktop_move",
             op: "move",
             description: `Move one exact native window using its unchanged target from desktop_windows. position is the window's top-left origin in global desktop logical points, not normalized screenshot coordinates; negative x/y are allowed. Uses background Accessibility without activating the app. Native checks bind the process generation, window ID and original bounds, then verify the resulting geometry. Use the refreshed inventory target after moving and inspect before input. An app may constrain its geometry; read the actual bounds and outcome. Never blindly repeat an interrupted move.`,
