@@ -442,6 +442,23 @@ fail on unpatched Peekaboo 4.8.0 on some hosts:
 WindowServer window 42 exists, and the PeekabooBridge test "Cancellation reaps the exact child
 without a zombie".
 
+`peekaboo-fullscreen.patch` adds `setWindowFullScreen`, which enters or leaves native full screen for one
+exact window. Upstream has no full screen operation; `maximizeWindow` only sets the frame to the visible
+work area. The request carries the window target, its process-generation receipt with capture-time bounds,
+and the wanted state. The host checks the receipt against the live window, reads `AXFullScreen` (a window
+without it is refused as unsupported, a minimized one as invalid) and completes with no change when it
+already matches. Otherwise it chooses one route from read-only evidence: it sets `AXFullScreen` when the
+attribute is settable, or else presses the window's `AXFullScreenButton`, which toggles, so it is pressed only
+when the state differs. A native failure never selects the other route. The host then polls `AXFullScreen` for
+up to four seconds, pinning only the window ID and process generation, since the bounds change during the
+animation: `confirmedChange` when it reads the wanted state, `suspectedNoop` when it never does, and
+`dispatchedUnverified` when the window can't be read. The operation shares maximize's descriptor, scope,
+pinned-window plan and target evidence, and admits one value or one action dispatch in the background.
+`WindowMutationPostconditionEvidence` gains `isFullScreen`, which the mutation proof reads back from the
+exact window, and a signed confirmed response must carry the requested state. Tests cover the delivery
+rules and the signed postcondition for both states; the operation inventory counts rise to 128.
+
+
 When updating Peekaboo, review the upstream fixes and these patches together. Update the revision
 guard and patches deliberately, or remove each patch when the dependency includes its fix.
 Revalidate real button clicks, changed-focus refusal, literal multiline insertion, clipboard

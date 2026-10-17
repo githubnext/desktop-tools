@@ -1,6 +1,6 @@
 # Tools
 
-The [MCP server](mcp.md) and `desktopTools()` expose 44 tools, one per protocol operation. Each tool's description and argument schema in `src/tools.ts` is the full contract; this page is the map.
+The [MCP server](mcp.md) and `desktopTools()` expose 45 tools, one per protocol operation. Each tool's description and argument schema in `src/tools.ts` is the full contract; this page is the map.
 
 Targets are exact: an app target binds a process generation, and a window target binds its window ID and bounds. Input acts on a single-use snapshot from the latest `desktop_inspect`. A stale or changed target is refused rather than redirected. Action results report `completed`, `refused`, or `unknown`, and nothing is retried automatically.
 
@@ -57,10 +57,11 @@ The wait polls with backoff, from 200 ms up to 2 seconds between polls, for `tim
 | `desktop_focus` | Bring one window to the front |
 | `desktop_minimize`, `desktop_restore` | Minimize or unminimize one window |
 | `desktop_maximize` | Zoom one window to fill the visible screen area, without entering full screen |
+| `desktop_fullscreen` | Enter or exit native full screen for one window, which gives it a Space of its own |
 | `desktop_move`, `desktop_resize` | Set one window's origin or size in desktop points |
 | `desktop_close` | Ask one window to close normally |
 
-Window operations other than focus use background Accessibility and don't activate the app. `desktop_unhide` activates the app, because macOS has no exact background unhide.
+Window operations other than focus use background Accessibility and don't activate the app. `desktop_fullscreen` sends no input either, but macOS switches the display to the window's new full-screen Space, and back when it exits; the result names that Space as in `desktop_spaces`, and is `completed` only when the window reads back in the requested state. `desktop_unhide` activates the app, because macOS has no exact background unhide.
 
 `desktop_launch`, `desktop_open` and `desktop_menu` report `created_windows`: the app's windows that weren't there just before the request was sent, each with its target for `desktop_inspect`. They wait up to about one second for a menu command and two for a launch or open. `attribution` is `exclusive` when exactly one window appeared, `ambiguous` when several did, and `none` when none did in time. When two agents work in the same app at once, `exclusive` is very likely but not certain to be the agent's own window, since the other agent's window can appear in the same interval; `ambiguous` means nothing tells them apart.
 

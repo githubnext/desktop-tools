@@ -926,6 +926,9 @@ function validateManagement(request: DesktopManagement) {
 		return;
 	}
 	validateWindowTarget(request.target as DesktopWindowTarget);
+	if (request.op === "fullscreen" && typeof request.enabled !== "boolean") {
+		throw new Error("Full screen enabled must be true to enter or false to exit.");
+	}
 	if (request.op === "move") {
 		const position = request.position;
 		if (!position || ![position.x, position.y].every(Number.isFinite)) {
@@ -1441,6 +1444,7 @@ async function execute(
 			"minimize",
 			"restore",
 			"maximize",
+			"fullscreen",
 			"move",
 			"resize",
 		].includes(
