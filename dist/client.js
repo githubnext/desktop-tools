@@ -17,11 +17,13 @@ class NativeError extends Error {
         this.code = code;
     }
 }
-async function run(path, args, signal, errorJson = false, input) {
+async function run(path, args, signal, errorJson = false, input, agent) {
     signal.throwIfAborted();
     try {
         const pending = exec(path, args, {
             encoding: "utf8",
+            // The host reads this from the client while a request is pending, to label the window in use.
+            env: agent ? { ...process.env, DESKTOP_TOOLS_AGENT: agent } : process.env,
             signal,
             killSignal: "SIGKILL",
             maxBuffer: MAX_OUTPUT,
@@ -55,7 +57,7 @@ const caller = (config) => async (args, signal, options = {}) => {
     }
     signal.throwIfAborted();
     options.onDispatch?.();
-    const output = await run(client, [socket, ...args], signal, true, options.input);
+    const output = await run(client, [socket, ...args], signal, true, options.input, config.agent);
     let value;
     try {
         value = JSON.parse(output);

@@ -15,6 +15,7 @@ private struct Status: Encodable {
 	var eventSynthesizing = false
 	var clipboardRead = ClipboardPolicy()
 	var cursor = false
+	var highlight = false
 }
 
 private final class State: @unchecked Sendable {
@@ -45,6 +46,12 @@ private final class State: @unchecked Sendable {
 		lock.unlock()
 	}
 
+	func setHighlight(_ enabled: Bool) {
+		lock.lock()
+		value.highlight = enabled
+		lock.unlock()
+	}
+
 	func recordEventSynthesizing(_ granted: Bool) {
 		lock.lock()
 		value.eventSynthesizing = value.eventSynthesizing || granted
@@ -69,7 +76,7 @@ private final class Desktop {
 			state.set("starting")
 			do {
 				let identity = try SigningIdentity.current()
-				let next = PeekabooEmbeddedBridgeRuntime.make(configuration: .init(
+				var configuration = PeekabooEmbeddedBridgeRuntime.Configuration(
 					socketPath: socket,
 					allowlistedTeams: [identity.team],
 					allowlistedBundles: [client],
@@ -88,7 +95,15 @@ private final class Desktop {
 					hostKind: .gui,
 					hostCapabilities: [PeekabooBridgeHostCapability.backgroundBridgeHost, desktopToolsProtocol],
 					requestTimeoutSeconds: 25
-				), feedbackClient: AgentCursor.shared)
+				)
+				configuration.targetWindowObserver = { target in
+					// The requesting client is still waiting for its reply, so its environment is readable now.
+					let agent = agentName(of: target.clientProcessIdentifier)
+					DispatchQueue.main.async {
+						AgentWindow.shared.target(window: target.windowID, process: target.processIdentifier, agent: agent)
+					}
+				}
+				let next = PeekabooEmbeddedBridgeRuntime.make(configuration: configuration, feedbackClient: AgentCursor.shared)
 				runtime = next
 				try await next.startChecked()
 				state.set("ready")
@@ -143,6 +158,13 @@ public func stop() {
 public func setCursor(_ enabled: Bool) {
 	state.setCursor(enabled)
 	DispatchQueue.main.async { AgentCursor.shared.enabled = enabled }
+}
+
+/// Shows or hides the outline and label on the window the agent is using; it is off until an embedding app turns it on.
+@_cdecl("desktop_tools_set_highlight")
+public func setHighlight(_ enabled: Bool) {
+	state.setHighlight(enabled)
+	DispatchQueue.main.async { AgentWindow.shared.enabled = enabled }
 }
 
 @_cdecl("desktop_tools_free")

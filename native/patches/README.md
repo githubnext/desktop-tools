@@ -256,6 +256,16 @@ delivered only when a new overlay window appears near the bar within 500 ms, and
 unsafe unknown. The receipt targets the owner process. Hosts without `MenuBarAgent`, and items that
 have their own window, keep the upstream window-routed path.
 
+`peekaboo-agent-window.patch` tells the embedding app which window each request targets, so it can
+outline that window. The embedded runtime's configuration gains a `targetWindowObserver`, passed
+through the bootstrap to the Bridge server. After a request passes authorization and before it is
+dispatched, the server reports the requesting peer's PID with the owner PID and window ID of an exact
+window: a desktop observation pinned to a window ID, the window recorded in the snapshot whose
+mutation lease or literal insertion it begins, or a window-scoped mutation such as a move, resize or
+drag. Requests for screens, apps, menus or the clipboard report nothing, and nothing is reported for
+refused peers. The report is advisory: it cannot fail the request and changes no target check, route
+or outcome. Without an observer the server does no extra work.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.
