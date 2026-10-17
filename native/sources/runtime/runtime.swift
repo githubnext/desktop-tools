@@ -14,6 +14,7 @@ private struct Status: Encodable {
 	var screenRecording = false
 	var eventSynthesizing = false
 	var clipboardRead = ClipboardPolicy()
+	var cursor = false
 }
 
 private final class State: @unchecked Sendable {
@@ -36,6 +37,12 @@ private final class State: @unchecked Sendable {
 		result.eventSynthesizing = result.eventSynthesizing || CGPreflightPostEventAccess()
 		result.clipboardRead = ClipboardPolicy.current()
 		return result
+	}
+
+	func setCursor(_ enabled: Bool) {
+		lock.lock()
+		value.cursor = enabled
+		lock.unlock()
 	}
 
 	func recordEventSynthesizing(_ granted: Bool) {
@@ -79,7 +86,7 @@ private final class Desktop {
 					hostKind: .gui,
 					hostCapabilities: [PeekabooBridgeHostCapability.backgroundBridgeHost, desktopToolsProtocol],
 					requestTimeoutSeconds: 25
-				))
+				), feedbackClient: AgentCursor.shared)
 				runtime = next
 				try await next.startChecked()
 				state.set("ready")
@@ -127,6 +134,13 @@ public func status() -> UnsafeMutablePointer<CChar>? {
 public func stop() {
 	state.set("stopping")
 	DispatchQueue.main.async { Desktop.shared.stop() }
+}
+
+/// Shows or hides the agent cursor drawn for pointer input; it is off until an embedding app turns it on.
+@_cdecl("desktop_tools_set_cursor")
+public func setCursor(_ enabled: Bool) {
+	state.setCursor(enabled)
+	DispatchQueue.main.async { AgentCursor.shared.enabled = enabled }
 }
 
 @_cdecl("desktop_tools_free")
