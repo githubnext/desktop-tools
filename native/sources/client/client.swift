@@ -64,7 +64,7 @@ private enum Client {
 		guard handshake.hostCapabilities?.contains(desktopToolsProtocol) == true else { throw ClientError.dialect }
 		switch operation {
 		case "action":
-			return try await nativeAction(client)
+			return try await nativeAction(client, handshake: handshake)
 		case "clipboard":
 			return try await nativeClipboard(client)
 		case "menu":

@@ -514,6 +514,41 @@ export function desktopTools({ place, app }) {
             },
         },
         {
+            name: "desktop_hover",
+            op: "hover",
+            description: `Move the real pointer over one element or screenshot point from a fresh desktop_inspect result, to reveal tooltips, hover menus, or hover states. Pass snapshot_id as snapshot and exactly one of the literal element ID or a normalized point (x from the screenshot's left edge, y from its top edge, each >= 0 and < 1); an element is hovered at the center of its observed frame. This is foreground input: hover effects follow the physical pointer, so it moves the user's pointer and leaves it there, without clicking or switching windows. It is refused when another window covers the point or the window moved since the snapshot. The result is unknown when the pointer cannot be confirmed over the exact window afterward. On completion the result includes a fresh observation; tooltips can take a second to appear, so inspect again if one is expected but missing. The snapshot is single-use.`,
+            parameters: {
+                type: "object",
+                required: ["snapshot"],
+                properties: {
+                    snapshot: id,
+                    element: id,
+                    point: point,
+                },
+            },
+        },
+        {
+            name: "desktop_press",
+            op: "press",
+            description: `Press and hold one element or screenshot point from a fresh desktop_inspect result, then release in place. Use it for long presses such as a toolbar button's held menu, press-and-hold accents, or a hold-to-confirm control. Pass snapshot_id as snapshot and exactly one of the literal element ID or a normalized point (x from the screenshot's left edge, y from its top edge, each >= 0 and < 1); an element is pressed at the center of its observed frame. duration_ms is how long the button stays down, 1 to 10000, defaulting to 1000; button defaults to left, with right also supported. Uses exact-window background delivery without moving the physical pointer, and the native bridge always releases the button, even when the call is interrupted. The result is unknown if the hold ended early, for example because the window changed. Accepted delivery does not prove an effect; inspect afterward. The snapshot is single-use; never blindly repeat an interrupted press.`,
+            parameters: {
+                type: "object",
+                required: ["snapshot"],
+                properties: {
+                    snapshot: id,
+                    element: id,
+                    point: point,
+                    button: {
+                        anyOf: [
+                            { type: "string", const: "left" },
+                            { type: "string", const: "right" },
+                        ],
+                    },
+                    duration_ms: { type: "integer", minimum: 1, maximum: 10000 },
+                },
+            },
+        },
+        {
             name: "desktop_type",
             op: "type",
             description: `Replace the entire string value of one editable Accessibility element from a fresh desktop_inspect result. This sets that exact field's value; it does not append text or send keystrokes. Pass snapshot_id as snapshot and its element ID as element. The snapshot binds the action to that application process and window and is single-use. Inspect again after the action; never repeat an interrupted action without checking the current state.`,

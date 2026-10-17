@@ -1,0 +1,124 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ExactWindowHeldPointerLifecycle.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ExactWindowHeldPointerLifecycle.swift
+index 8eaf25737..2e61a84ab 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ExactWindowHeldPointerLifecycle.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ExactWindowHeldPointerLifecycle.swift
+@@ -857,7 +857,8 @@ extension UIAutomationService: ExactWindowHeldPointerLifecycleServiceProtocol {
+         request: ExactWindowHeldPointerRequest) async throws
+         -> UIAutomationActionResult<ExactWindowHeldPointerReceipt>
+     {
+-        try await self.heldPointerLifecycle.begin(owner: owner, request: request)
++        await self.showAgentCursorHold(request)
++        return try await self.heldPointerLifecycle.begin(owner: owner, request: request)
+     }
+ 
+     public func releaseExactWindowPointerHold(
+@@ -866,6 +867,7 @@ extension UIAutomationService: ExactWindowHeldPointerLifecycleServiceProtocol {
+         -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
+     {
+         let termination = try await self.heldPointerLifecycle.release(owner: owner, receipt: receipt)
++        await self.showAgentCursorRelease(termination)
+         return try UIAutomationActionResult(
+             payload: termination,
+             outcome: termination.cleanupOutcome,
+@@ -880,6 +882,7 @@ extension UIAutomationService: ExactWindowHeldPointerLifecycleServiceProtocol {
+         -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
+     {
+         let termination = try await self.heldPointerLifecycle.revoke(owner: owner, receipt: receipt)
++        await self.showAgentCursorRelease(termination)
+         return try UIAutomationActionResult(
+             payload: termination,
+             outcome: termination.cleanupOutcome,
+@@ -893,6 +896,7 @@ extension UIAutomationService: ExactWindowHeldPointerLifecycleServiceProtocol {
+         -> UIAutomationActionResult<ExactWindowHeldPointerTermination?>
+     {
+         let termination = try await self.heldPointerLifecycle.disconnect(owner: owner)
++        await self.showAgentCursorRelease(termination)
+         let identity = try termination.map {
+             try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
+                 identity: $0.receipt.windowIdentity,
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+AgentCursor.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+AgentCursor.swift
+index e45c99924..00b6c4d06 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+AgentCursor.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+AgentCursor.swift
+@@ -58,6 +58,21 @@ extension UIAutomationService {
+         }
+     }
+ 
++    /// A held button shows as a long press that lasts until `showAgentCursorRelease`.
++    func showAgentCursorHold(_ request: ExactWindowHeldPointerRequest) async {
++        await self.showAgentCursorFeedback {
++            _ = await self.feedbackClient.showClickFeedback(at: request.point, type: .longPress, target: nil)
++        }
++    }
++
++    /// Ends a held button's long press with a single click at the same point, however the hold ended.
++    func showAgentCursorRelease(_ termination: ExactWindowHeldPointerTermination?) async {
++        guard let termination else { return }
++        await self.showAgentCursorFeedback {
++            _ = await self.feedbackClient.showClickFeedback(at: termination.receipt.point, type: .single, target: nil)
++        }
++    }
++
+     /// An element target's center in its snapshot, in global screen coordinates.
+     private func agentCursorPoint(element: String?, snapshotId: String?) async -> CGPoint? {
+         guard let element, let snapshotId,
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/UIAutomationServiceAgentCursorTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/UIAutomationServiceAgentCursorTests.swift
+index 85ff22b78..1b749124d 100644
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/UIAutomationServiceAgentCursorTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/UIAutomationServiceAgentCursorTests.swift
+@@ -45,6 +45,36 @@ struct UIAutomationServiceAgentCursorTests {
+         feedback.release()
+     }
+ 
++    @Test
++    @MainActor
++    func `a held pointer shows a long press, then a single click where it is released`() async throws {
++        let feedback = StallingAgentCursorFeedbackClient(stalls: false)
++        let service = UIAutomationService(feedbackClient: feedback)
++        let point = CGPoint(x: 50, y: 60)
++        let request = ExactWindowHeldPointerRequest(
++            point: point,
++            windowIdentity: WindowMutationIdentity(windowID: 7, ownerProcessIdentifier: 42, ownerProcessStartIdentity: 9),
++            windowBounds: CGRect(x: 0, y: 0, width: 100, height: 100),
++            button: .left,
++            expiresAfterSeconds: 2)
++        let receipt = ExactWindowHeldPointerReceipt(
++            token: UUID(),
++            owner: ExactWindowHeldPointerOwner(),
++            request: request,
++            expiresAt: Date().addingTimeInterval(2))
++
++        await service.showAgentCursorHold(request)
++        await service.showAgentCursorRelease(nil)
++        await service.showAgentCursorRelease(ExactWindowHeldPointerTermination(
++            receipt: receipt,
++            reason: .expired,
++            cleanupOutcome: .confirmedNoChange(),
++            lifecycleDispatchedUnitCount: 2))
++
++        #expect(feedback.clicks == [point, point])
++        #expect(feedback.clickTypes == [.longPress, .single])
++    }
++
+     @Test
+     @MainActor
+     func `no feedback client adds no wait`() async {
+@@ -67,6 +97,7 @@ private final class StallingAgentCursorFeedbackClient: AutomationFeedbackClient
+     private let stalls: Bool
+     private var waiting: [CheckedContinuation<Void, Never>] = []
+     private(set) var clicks: [CGPoint] = []
++    private(set) var clickTypes: [ClickType] = []
+     private(set) var scrolls: [CGPoint] = []
+ 
+     init(stalls: Bool) {
+@@ -81,8 +112,9 @@ private final class StallingAgentCursorFeedbackClient: AutomationFeedbackClient
+         }
+     }
+ 
+-    func showClickFeedback(at point: CGPoint, type _: ClickType, target _: VisualizerTargetWindow?) async -> Bool {
++    func showClickFeedback(at point: CGPoint, type: ClickType, target _: VisualizerTargetWindow?) async -> Bool {
+         self.clicks.append(point)
++        self.clickTypes.append(type)
+         if self.stalls {
+             await withCheckedContinuation { self.waiting.append($0) }
+         }
