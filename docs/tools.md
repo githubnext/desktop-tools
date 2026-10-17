@@ -98,7 +98,7 @@ A status item is pressed through Accessibility in its owner process without movi
 
 | Tool | Does |
 | --- | --- |
-| `desktop_click` | Single, double, right, middle or triple click on an element or a screenshot point |
+| `desktop_click` | Single, double, right, middle or triple click on an element or a screenshot point, optionally holding Command, Option or Shift |
 | `desktop_scroll` | Scroll an element or point up, down, left or right |
 | `desktop_drag` | Press, move in a straight line or along a path of up to 16 points, and release inside one window, or into another window or app; optionally hold modifier keys |
 | `desktop_hover` | Move the real pointer over an element or point, to show tooltips and hover states |
@@ -108,7 +108,7 @@ A status item is pressed through Accessibility in its owner process without movi
 | `desktop_set_value` | Set a slider, stepper or level indicator to a number, a checkbox, switch or disclosure triangle on or off, or a date or time picker to an ISO 8601 date, and read it back |
 | `desktop_element_action` | Perform one Accessibility action an element lists, such as `AXShowMenu`, `AXIncrement`, `AXDecrement`, `AXPick` or `AXCancel` |
 | `desktop_insert` | Insert text at the caret or over the selection with one temporary paste, then restore the clipboard; where no text control can be observed, type it into the window's keyboard focus |
-| `desktop_key` | Press one key with optional Command, Control, Option and Shift: any character key, such as `,` or `/`, or a named key |
+| `desktop_key` | Press one key with optional Command, Control, Option and Shift: any character key, such as `,` or `/`, or a named key; or a sequence of up to 16 keys, or one key up to 32 times |
 | `desktop_system_key` | Press one system-wide shortcut, such as Command-Space or Control-Up, on whatever is frontmost |
 | `desktop_menu` | Run one menu command by its exact title path |
 | `desktop_dialog_answer` | Press one dialog button by its exact title, replace one dialog text field's value, or choose a path in an Open or Save panel |
@@ -119,6 +119,10 @@ Pointer input is delivered to the exact window without moving the physical point
 When the host turns on the window highlight, the window an inspection or action targets gets an orange outline and a label such as "Claude is using TextEdit". It shows from the moment the request reaches the host, moves to a new window when the target changes, and fades about four seconds after the last request. The outline follows the window as it moves or resizes and stays directly above it in the window order, so windows in front of the target also cover the outline. It hides while the window is minimized, off screen or on another Space. Like the cursor, it never takes clicks or focus and is left out of captures. Requests without one exact window, such as `desktop_screen`, menus or the clipboard, don't show it.
 
 `desktop_key` goes to the control the snapshot reports as focused. When there is none, as in Finder lists, outlines, tables, canvases and many web areas, it goes to whatever has keyboard focus in that window; the result's `receiver` is `observed_control` or `window_focus`. Either way the key is sent in the background, and is refused unless the app's focused element is still inside the window, and the window is still the app's key window, before each event.
+
+A `desktop_click` with `modifiers` (any of `command`, `option` and `shift`), such as Command-click or Shift-click to extend a selection in Finder or Mail, is foreground input even on an element, because an Accessibility press ignores modifier keys. The host activates the app, moves the real pointer to the point (an element's observed center), holds the keys with real key events around a real click, then restores the pointer and the previously focused app and window; the result reports `cursor_restoration` and `focus_restoration`. Nothing reads back what the click selected, so its result is `unknown`. A Control-click is a right click: use `kind: "right"` without modifiers. Modifiers work with single, double and triple clicks.
+
+`desktop_key` takes `keys`, a sequence of up to 16 chords each with its own modifiers, or `repeat` with one `key` to press it up to 32 times, all against one snapshot. Every key of a sequence goes to the window's keyboard focus, since focus may move as it runs (as Tab does), and before each one the host checks that the app's focused element is still in this window and that it is still the app's key window. The sequence stops at the first refused key; `keys_sent` says how many went, and a sequence that stopped early is `unknown`.
 
 `desktop_key` takes a character key as the character it types, and finds that key on the current keyboard layout, so `,` is the comma key on any layout. A character that needs Shift or Option, such as `?` or `A`, is refused with the key and modifier to send instead (`/` with `shift` on a US layout); the key press never holds a modifier that wasn't asked for. The named keys are `enter`, `tab`, `escape`, `space`, `backspace`, `delete` (forward delete), `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `help` (Insert on PC keyboards), `f1` to `f20`, and the keypad keys `keypad0` to `keypad9`, `keypaddecimal`, `keypadplus`, `keypadminus`, `keypadmultiply`, `keypaddivide`, `keypadequals`, `keypadenter` and `keypadclear`. Dead keys, such as `´` on some layouts, can't be pressed alone; use `desktop_insert` for text. Command-W, Command-Q, Command-H and Command-M are refused before anything is sent; `desktop_close`, `desktop_quit`, `desktop_hide` and `desktop_minimize` do the same and report the result.
 

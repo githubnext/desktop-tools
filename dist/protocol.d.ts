@@ -189,6 +189,7 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     element?: string;
     point?: DesktopPoint;
     kind?: DesktopClick;
+    modifiers?: DesktopModifier[];
 } | {
     op: "scroll";
     snapshot: string;
@@ -249,8 +250,15 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
 } | {
     op: "key";
     snapshot: string;
-    key: DesktopKey;
+    key?: DesktopKey;
     modifiers?: DesktopModifier[];
+    /** Up to 16 chords pressed in order, instead of key. */
+    keys?: {
+        key: DesktopKey;
+        modifiers?: DesktopModifier[];
+    }[];
+    /** Presses key this many times, up to 32. */
+    repeat?: number;
 } | {
     op: "system-key";
     key: DesktopKey;

@@ -37,6 +37,26 @@ private struct ActionRequest: Decodable {
 	let to_snapshot: String?
 	let path: [PointerPoint]?
 	var route: String?
+	let keys: [KeyChord]?
+	let `repeat`: Int?
+
+	/// One key of a sequence: a named key or the one character a key types, with optional modifiers.
+	struct KeyChord: Decodable {
+		let key: String
+		let modifiers: [String]?
+	}
+
+	/// A click holding modifier keys is real pointer input; Accessibility presses ignore modifiers.
+	var clicksWithModifiers: Bool {
+		op == .click && !(modifiers ?? []).isEmpty
+	}
+
+	/// The chords a key request presses in order: one, a sequence, or one repeated.
+	var chords: [KeyChord] {
+		if let keys { return keys }
+		guard let key else { return [] }
+		return Array(repeating: KeyChord(key: key, modifiers: modifiers), count: `repeat` ?? 1)
+	}
 
 	/// Modifier keys and drags between windows need real global input; other drags stay in the background.
 	var dragsInForeground: Bool {
@@ -47,8 +67,11 @@ private struct ActionRequest: Decodable {
 		guard !snapshot.isEmpty, snapshot.utf16.count <= 256 else {
 			throw ActionError("Use a snapshot ID returned by desktop_inspect.")
 		}
-		if op != .key, op != .drag, modifiers != nil {
-			throw ActionError("Only key presses and drags accept modifiers.")
+		if op != .key, op != .drag, op != .click, modifiers != nil {
+			throw ActionError("Only key presses, clicks and drags accept modifiers.")
+		}
+		if op != .key, keys != nil || `repeat` != nil {
+			throw ActionError("Only key presses accept keys or repeat.")
 		}
 		if op != .select, prefix != nil || suffix != nil || selection != nil {
 			throw ActionError("Only text selection accepts prefix, suffix, or selection.")
@@ -102,6 +125,18 @@ private struct ActionRequest: Decodable {
 			if op == .click {
 				guard kind == nil || pointerClicks.contains(kind!) else {
 					throw ActionError("Choose single, double, right, middle, or triple click.")
+				}
+				if let modifiers {
+					guard !modifiers.isEmpty, modifiers.count <= 3, Set(modifiers).count == modifiers.count,
+						modifiers.allSatisfy({ PointerModifier(rawValue: $0) != nil && $0 != "control" })
+					else {
+						throw ActionError(modifiers.contains("control")
+							? "A Control-click is a right click; use kind right without modifiers."
+							: "Hold each of command, option, and shift at most once.")
+					}
+					guard ["single", "double", "triple"].contains(kind ?? "single") else {
+						throw ActionError("Modifier keys can be held only for single, double, or triple clicks.")
+					}
 				}
 			} else {
 				guard let direction, ScrollDirection(rawValue: direction) != nil,
@@ -195,21 +230,19 @@ private struct ActionRequest: Decodable {
 				}
 			}
 		case .key:
-			guard element == nil, text == nil, let key, serviceKey(key) != nil else {
-				throw ActionError("Choose a named key or the one printable character a key types, such as , or a.")
+			guard element == nil, text == nil, (key == nil) != (keys == nil) else {
+				throw ActionError("Choose one key, or a sequence of keys.")
 			}
-			let modifiers = modifiers ?? []
-			guard modifiers.count <= 4, Set(modifiers).count == modifiers.count,
-				modifiers.allSatisfy({ keyboardModifiers[$0] != nil })
-			else {
-				throw ActionError("Use each of command, control, option, and shift at most once.")
+			if let keys {
+				guard (1...maximumKeySequence).contains(keys.count), modifiers == nil, `repeat` == nil else {
+					throw ActionError("Give 1 to \(maximumKeySequence) keys, each with its own modifiers, and no repeat.")
+				}
 			}
-			// Peekaboo refuses these background chords after admission, which reads as possible dispatch.
-			if modifiers == ["command"], let tool = semanticShortcuts[key] {
-				throw ActionError(
-					"Command-\(key.uppercased()) can't be verified when sent to a background window, so it isn't sent.",
-					hint: "Use \(tool) instead; it reports whether it took effect."
-				)
+			if let count = `repeat`, !(1...maximumKeyRepeat).contains(count) {
+				throw ActionError("Repeat a key 1 to \(maximumKeyRepeat) times.")
+			}
+			for chord in chords {
+				try validateChord(chord)
 			}
 		}
 	}
@@ -260,6 +293,31 @@ private let textValueRoles: Set<String> = [
 ]
 
 let dateKeyboardRoute = "To enter the date from the keyboard instead, click the control's first field (such as the month) with desktop_click, type its digits with desktop_key, and press Tab to move to the next field, or Up and Down to step the focused field; then inspect to read the value back."
+
+private let maximumKeySequence = 16
+/// Lets the receiver handle one key, such as moving focus, before the next.
+private let keySequenceGap = 30
+private let maximumKeyRepeat = 32
+
+/// One chord's key and modifiers, as a single key press accepts them.
+private func validateChord(_ chord: ActionRequest.KeyChord) throws {
+	guard serviceKey(chord.key) != nil else {
+		throw ActionError("Choose a named key or the one printable character a key types, such as , or a.")
+	}
+	let modifiers = chord.modifiers ?? []
+	guard modifiers.count <= 4, Set(modifiers).count == modifiers.count,
+		modifiers.allSatisfy({ keyboardModifiers[$0] != nil })
+	else {
+		throw ActionError("Use each of command, control, option, and shift at most once.")
+	}
+	// Peekaboo refuses these background chords after admission, which reads as possible dispatch.
+	if modifiers == ["command"], let tool = semanticShortcuts[chord.key] {
+		throw ActionError(
+			"Command-\(chord.key.uppercased()) can't be verified when sent to a background window, so it isn't sent.",
+			hint: "Use \(tool) instead; it reports whether it took effect."
+		)
+	}
+}
 
 private let pointerClicks: Set<String> = ["single", "double", "right", "middle", "triple"]
 let semanticShortcuts = [
@@ -342,6 +400,10 @@ private struct ActionResult: Encodable {
 	var destination_receipt: Receipt?
 	var release: String?
 	var receiver: String?
+	var cursor_restoration: String?
+	var focus_restoration: String?
+	var keys_requested: Int?
+	var keys_sent: Int?
 	var requires_fresh_observation = false
 	var error: ActionMessage?
 }
@@ -370,8 +432,8 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 	var invoked = false
 	do {
 		try request.validate()
-		let chord = request.key.map { key in
-			((request.modifiers ?? []).map { keyboardModifiers[$0]! } + [serviceKey(key)!]).joined(separator: ",")
+		let chords = request.chords.map { chord in
+			((chord.modifiers ?? []).map { keyboardModifiers[$0]! } + [serviceKey(chord.key)!]).joined(separator: ",")
 		}
 		result.requires_fresh_observation = true
 		guard try await client.ownsSnapshot(snapshotId: request.snapshot) else {
@@ -446,11 +508,13 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 		}
 		var point: CGPoint?
 		var drag: ExactWindowDragRequest?
-		if request.point != nil || request.op == .drag || request.op == .hover || request.op == .press {
+		if request.point != nil || request.op == .drag || request.op == .hover || request.op == .press
+			|| request.clicksWithModifiers
+		{
 			// Normalized coordinates survive host image resizing; authority stays in the bridge's capture.
 			let authority = try coordinateAuthority(request.snapshot, detection, window: window)
 			point = try request.point?.mapped(in: authority) ?? request.element.map { element in
-				// Hover and press act on a point, so an element target resolves to its observed center.
+				// Hover, press and modifier clicks act on a point, so an element target resolves to its observed center.
 				let frame = detection.elements.findById(element)!.bounds
 				let center = CGPoint(x: frame.midX, y: frame.midY)
 				guard bounds.contains(center) else {
@@ -480,7 +544,10 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 		if request.op == .hover, !exposes(point!, in: window, ignoring: host) {
 			throw ActionError("Another window covers this point, or the window moved since the snapshot. Inspect the window again; bring it forward with desktop_focus if it is covered.")
 		}
-		lease = try await client.beginSnapshotMutation(snapshotId: request.snapshot)
+		// The host's modifier click leases the snapshot itself, at its execution leaf.
+		if !request.clicksWithModifiers {
+			lease = try await client.beginSnapshotMutation(snapshotId: request.snapshot)
+		}
 		invoked = true
 		let evidence: ActionEvidence
 		var verified = true
@@ -502,6 +569,20 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 			result.release = released.payload.reason.rawValue
 			verified = released.payload.reason == .released
 			evidence = ActionEvidence(released)
+		case .click where request.clicksWithModifiers:
+			// AXPress ignores modifiers, so the host activates the app, holds the keys with real events around a
+			// real click, then restores the pointer and the previously focused app and window.
+			let clicked = try await client.foregroundModifierClickWithOutcome(ForegroundModifierClickRequest(
+				point: point!,
+				clickType: request.kind.flatMap(ClickType.init(rawValue:)) ?? .single,
+				modifiers: request.modifiers!.map { PointerModifier(rawValue: $0)! },
+				snapshotID: request.snapshot,
+				windowIdentity: identity,
+				windowBounds: bounds
+			))
+			result.cursor_restoration = clicked.payload.cursorRestoration.rawValue
+			result.focus_restoration = clicked.payload.focusRestoration.rawValue
+			evidence = ActionEvidence(clicked)
 		case .click:
 			evidence = try await ActionEvidence(client.clickWithOutcome(
 				target: point.map(ClickTarget.coordinates) ?? .elementId(request.element!),
@@ -556,7 +637,48 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 			)
 			evidence = ActionEvidence(performed)
 			result.element_action = performed.payload.actionName
+		case .key where chords.count > 1:
+			// Focus moves as a sequence runs, as Tab does, so every key goes to the window's keyboard focus. The host
+			// checks before each one that the focused element is still in this key window.
+			result.receiver = "window_focus"
+			result.keys_requested = chords.count
+			result.keys_sent = 0
+			var last: ActionEvidence?
+			for (index, chord) in chords.enumerated() {
+				if index > 0 { try await Task.sleep(for: .milliseconds(keySequenceGap)) }
+				do {
+					let sent = try await ActionEvidence(client.hotkeyWithOutcome(
+						keys: chord,
+						holdDuration: 0,
+						expectedWindowIdentity: identity,
+						expectedWindowBounds: bounds
+					))
+					if sent.outcome?.state == .refused {
+						guard index > 0 else { throw ActionError("The first key was refused. Nothing was sent.") }
+						result.error = ActionMessage(
+							code: "KEY_SEQUENCE_STOPPED",
+							message: "Stopped after \(index) of \(chords.count) keys: the next key was refused.",
+							hint: "Inspect the window to see what the keys sent so far did before sending the rest."
+						)
+						break
+					}
+					last = sent
+					result.keys_sent! += 1
+				} catch let failure as DesktopActionFailure where !failure.outcome.dispatchState.mutationDispatched && index > 0 {
+					result.error = ActionMessage(
+						code: failure.standardErrorCode?.rawValue ?? "DESKTOP_ACTION_FAILED",
+						message: "Stopped after \(index) of \(chords.count) keys: \(failure.message)",
+						hint: "Inspect the window to see what the keys sent so far did before sending the rest.",
+						cause: failure.causeDescription
+					)
+					break
+				}
+			}
+			guard let last else { throw ActionError("No key was sent.") }
+			if result.keys_sent! < chords.count { verified = false }
+			evidence = last
 		case .key:
+			let chord = chords.first
 			// Text-action emulation rejects WKWebView's focused receiver; deliver the exact-window key instead.
 			if let focusedElement = context.focusedElement {
 				result.receiver = "observed_control"
@@ -613,7 +735,9 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 		}
 		// Every dispatched action consumes this snapshot, including confirmed changes and partial cleanup.
 		result.requires_fresh_observation = outcome.dispatchState.mutationDispatched
-		try await client.finishSnapshotMutation(lease!, requiresFreshObservation: result.requires_fresh_observation)
+		if let lease {
+			try await client.finishSnapshotMutation(lease, requiresFreshObservation: result.requires_fresh_observation)
+		}
 		lease = nil
 		switch outcome.state {
 		case .refused:
@@ -641,7 +765,16 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 				hint: "Inspect the window to check the field before acting again; do not repeat the typing blindly."
 			)
 		}
-		if !verified, result.outcome != "refused" {
+		if request.clicksWithModifiers, result.outcome != "refused" {
+			result.outcome = "unknown"
+			result.error = ActionMessage(
+				code: "DESKTOP_ACTION_UNVERIFIED",
+				message: "The click was sent as real pointer input holding \(request.modifiers!.joined(separator: " and ")), which activated the app and moved the pointer, then restored them (pointer \(result.cursor_restoration ?? "unknown"), focus \(result.focus_restoration ?? "unknown")). Its effect can't be confirmed.",
+				hint: "Inspect the window to see what the click did, such as which items are selected. Never repeat the click blindly."
+			)
+		} else if request.op == .key, !verified, result.outcome != "refused" {
+			result.outcome = "unknown"
+		} else if !verified, result.outcome != "refused" {
 			result.outcome = "unknown"
 			result.error = ActionMessage(
 				code: "DESKTOP_ACTION_UNVERIFIED",
