@@ -96,7 +96,7 @@ private enum Client {
 		case "switch-space":
 			return try await nativeSwitchSpace(client, handshake: handshake)
 		case "input-source":
-			return try await nativeInputSource()
+			return try await nativeInputSource(client, handshake: handshake)
 		case "management":
 			return try await nativeManagement(client, handshake: handshake)
 		case "launch":

@@ -72,6 +72,7 @@ private let activityNames: [PeekabooBridgeOperation: String] = [
 	.exactWindowTargetedHotkey: "Key",
 	.hotkey: "System key",
 	.systemDefinedKey: "Media key",
+	.selectInputSource: "Select input source",
 	.exactWindowTargetedTypeActions: "Type",
 	.selectText: "Select text",
 	.literalInsert: "Insert text",

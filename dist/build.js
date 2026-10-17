@@ -65,6 +65,7 @@ const patches = [
     "peekaboo-web-text-selection.patch",
     "peekaboo-clipboard-image-export.patch",
     "peekaboo-operation-record.patch",
+    "peekaboo-input-source.patch",
 ].map((name) => join(native, "patches", name));
 function spawn(command, env) {
     return spawnSync(command[0], command.slice(1), { encoding: "utf8", env: env ?? process.env });

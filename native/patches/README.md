@@ -527,6 +527,12 @@ response, descriptor and semantics with the read; the operation inventory tests 
 - **Advisory only.** The report changes no routing or response. Without an observer, the server does no extra work.
 - **No new operation.** The wire count is unchanged.
 
+`peekaboo-input-source.patch` adds a `selectInputSource` operation, so selecting a keyboard input source goes through the Bridge like other input. The embedding app's pause and activity list then cover it, where the client's own `TISSelectInputSource` call would bypass both.
+- **Request.** It carries one input source ID.
+- **Host.** The host selects the source with Text Input Sources on the main actor. Only enabled keyboard sources that can be selected are eligible. An unknown ID is `notFound`, and a nonzero status from TIS is `internalError`.
+- **Result contract.** No permission is required. It is a global, one-unit `dispatchedUnverified` native-framework delivery answered with `ok`. It is service-owned, so it runs in the native desktop lane, and it joins the default allowlists. The client reads the current source back itself.
+- **Tests.** The wire count is now 131, and the operation joins the unconditionally mutating set.
+
 The same patch adds an `operationAdmission` hook, for the embedding app's pause switch. The server asks it for every authorized request, after operation access is validated and before the target window is reported or anything is dispatched. It passes the operation and whether its result contract mutates the desktop. A returned message fails the request as a pre-dispatch `permissionDenied`, so it may not have completed and is recorded as `refused`. Without a hook, nothing changes.
 
 When updating Peekaboo, review the upstream fixes and these patches together. Update the revision

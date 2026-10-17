@@ -1,0 +1,225 @@
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/InputSourceSelection.swift b/Core/PeekabooCore/Sources/PeekabooBridge/InputSourceSelection.swift
+new file mode 100644
+index 000000000..76ed9a986
+--- /dev/null
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/InputSourceSelection.swift
+@@ -0,0 +1,27 @@
++import Carbon
++import Foundation
++
++enum InputSourceSelection {
++    /// Selects the enabled, selectable keyboard input source with this ID, as the input menu would.
++    /// Text Input Sources are changed on the main thread, where the run loop delivers their changes.
++    @MainActor
++    static func select(_ id: String) throws {
++        let filter = [
++            kTISPropertyInputSourceCategory as String: kTISCategoryKeyboardInputSource as String,
++            kTISPropertyInputSourceIsSelectCapable as String: true,
++            kTISPropertyInputSourceID as String: id,
++        ] as CFDictionary
++        let sources = TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource] ?? []
++        guard let source = sources.first else {
++            throw PeekabooBridgeErrorEnvelope(
++                code: .notFound,
++                message: "No enabled input source has the ID \(id)")
++        }
++        let status = TISSelectInputSource(source)
++        guard status == noErr else {
++            throw PeekabooBridgeErrorEnvelope(
++                code: .internalError,
++                message: "macOS refused to select the input source (status \(status))")
++        }
++    }
++}
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift
+index 0ce0bf96c..21d7f6a1f 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeClient+Interaction.swift
+@@ -308,6 +308,17 @@ extension PeekabooBridgeClient {
+         }
+     }
+ 
++    /// Selects one enabled keyboard input source by ID; the caller reads the current source back.
++    public func selectInputSourceWithOutcome(id: String) async throws -> UIAutomationActionResult<Void> {
++        try await self.actionResult(
++            for: .selectInputSource(PeekabooBridgeSelectInputSourceRequest(id: id)),
++            expectedResponse: "input source")
++        { response in
++            guard case .ok = response else { return nil }
++            return ()
++        }
++    }
++
+     public func waitForElement(target: ClickTarget, timeout: TimeInterval, snapshotId: String?) async throws
+         -> WaitForElementResult
+     {
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
+index c4c149896..d744d9f77 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
+@@ -95,6 +95,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
+     case drag
+     case moveMouse
+     case systemDefinedKey
++    case selectInputSource
+     case waitForElement
+     // Windows
+     case listWindows
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
+index 0522ba9a0..430dc5318 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
+@@ -78,6 +78,7 @@ extension PeekabooBridgeOperation {
+         .drag,
+         .moveMouse,
+         .systemDefinedKey,
++        .selectInputSource,
+         .waitForElement,
+         .listWindows,
+         .focusWindow,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
+index 48d19bf4e..71384d1a1 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
+@@ -301,6 +301,12 @@ extension PeekabooBridgeOperationResultSemantics {
+                 completion: .dispatchedUnverified(globalForeground),
+                 targetPolicy: .global,
+                 responseFamilies: [.ok])
++        case .selectInputSource:
++            descriptor(
++                ownership: .service,
++                completion: .dispatchedUnverified(nativeBackground),
++                targetPolicy: .global,
++                responseFamilies: [.ok])
+         case .targetedHotkey:
+             descriptor(
+                 ownership: .service,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
+index fe1593526..535e995a7 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
+@@ -494,6 +494,7 @@ extension PeekabooBridgeOperationResultSemantics {
+              .drag,
+              .moveMouse,
+              .systemDefinedKey,
++             .selectInputSource,
+              .waitForElement,
+              .listWindows,
+              .listWindowMutationInventory,
+@@ -610,6 +611,7 @@ extension PeekabooBridgeOperationResultSemantics {
+         case .clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite, .literalInsert, .agentExecutionTrace:
+             return [.dispatchedUnverified]
+         case .requestPostEventPermission, .browserExecute, .swipe, .drag, .moveMouse, .systemDefinedKey,
++             .selectInputSource,
+              .menuCommand, .clickMenuItem, .clickMenuItemByName, .clickMenuExtra,
+              .clickMenuBarItemNamed, .clickMenuBarItemIndex,
+              .launchDockItem, .rightClickDockItem,
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgePayloads.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgePayloads.swift
+index aa7a56df4..06809ce88 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgePayloads.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgePayloads.swift
+@@ -397,6 +397,15 @@ public struct PeekabooBridgeSystemDefinedKeyRequest: Codable, Sendable {
+     }
+ }
+ 
++public struct PeekabooBridgeSelectInputSourceRequest: Codable, Sendable {
++    /// The `kTISPropertyInputSourceID` of an enabled keyboard input source that can be selected.
++    public let id: String
++
++    public init(id: String) {
++        self.id = id
++    }
++}
++
+ public struct PeekabooBridgeWaitRequest: Codable, Sendable {
+     public let target: ClickTarget
+     public let timeout: TimeInterval
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
+index 3462f5963..a3245fdd3 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
+@@ -62,6 +62,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
+     case drag(PeekabooBridgeDragRequest)
+     case moveMouse(PeekabooBridgeMoveMouseRequest)
+     case systemDefinedKey(PeekabooBridgeSystemDefinedKeyRequest)
++    case selectInputSource(PeekabooBridgeSelectInputSourceRequest)
+     case waitForElement(PeekabooBridgeWaitRequest)
+     case listWindows(PeekabooBridgeWindowTargetRequest)
+     case listWindowMutationInventory(PeekabooBridgeWindowTargetRequest)
+@@ -203,6 +204,7 @@ extension PeekabooBridgeRequest {
+         case .drag: .drag
+         case .moveMouse: .moveMouse
+         case .systemDefinedKey: .systemDefinedKey
++        case .selectInputSource: .selectInputSource
+         case .waitForElement: .waitForElement
+         case .listWindows, .listWindowMutationInventory: .listWindows
+         case .focusWindow: .focusWindow
+diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
+index c2dcae48d..2be933e32 100644
+--- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
++++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
+@@ -101,7 +101,8 @@ extension PeekabooBridgeServer {
+              .foregroundModifierClick,
+              .setValue, .selectText, .performAction, .scroll, .targetedScroll, .hotkey, .targetedHotkey,
+              .exactWindowTargetedHotkey, .targetedClick,
+-             .exactWindowTargetedClick, .swipe, .drag, .moveMouse, .systemDefinedKey, .waitForElement:
++             .exactWindowTargetedClick, .swipe, .drag, .moveMouse, .systemDefinedKey, .selectInputSource,
++             .waitForElement:
+             return try await self.handleAutomationRequest(request)
+         case .createExactWindowHeldPointerOwner, .beginExactWindowHeldPointer,
+              .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer,
+@@ -345,6 +346,16 @@ extension PeekabooBridgeServer {
+         case let .systemDefinedKey(payload):
+             try SystemDefinedKeyEvents.post(payload.key)
+             return Self.globalPointerMutationResponse()
++        case let .selectInputSource(payload):
++            try InputSourceSelection.select(payload.id)
++            return .init(
++                response: .ok,
++                mutation: .init(
++                    outcome: .dispatchedUnverified(
++                        delivery: .init(mechanism: .nativeFramework, mode: .background),
++                        evidence: .deliveryAccepted,
++                        unitCount: .one),
++                    target: .global))
+         case let .waitForElement(payload):
+             let result = try await self.services.automation.waitForElement(
+                 target: payload.target,
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
+index 53e0e37fd..02cec2501 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
+@@ -299,6 +299,7 @@ struct PeekabooBridgeOperationResultSemanticsTests {
+             .drag,
+             .moveMouse,
+             .systemDefinedKey,
++            .selectInputSource,
+             .focusWindow,
+             .moveWindow,
+             .resizeWindow,
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
+index 939ba0f01..6e0c56664 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
+@@ -28,7 +28,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
+ 
+         // This count is intentionally reviewed whenever the wire enum grows. The exhaustive
+         // policy switches also make a missing classification a compile error.
+-        #expect(operations.count == 130)
++        #expect(operations.count == 131)
+ 
+         func partition<Value: Equatable>(_ values: [Value], by keyPath: KeyPath<Semantics.OperationPolicy, Value>) {
+             let groups = values.map { expected in
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
+index 4c4960007..af5a3c937 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
+@@ -9,7 +9,7 @@ struct PeekabooBridgeRequestPlanTests {
+     @Test
+     func `Every wire operation has one complete static descriptor`() {
+         let operations = PeekabooBridgeOperation.allCases
+-        #expect(operations.count == 130)
++        #expect(operations.count == 131)
+ 
+         let descriptors = operations.map(Semantics.operationDescriptor(for:))
+         #expect(descriptors.map(\.operation) == operations)
