@@ -471,6 +471,19 @@ reports the readback as a string in the same spelling, so the existing signed se
 compares the readback with the requested string, applies unchanged. Other values and elements take the
 existing path. Tests cover the write, the no-change case, refused spellings and a mismatched readback.
 
+`peekaboo-web-text-value.patch` refuses a text value written into web content. Browsers accept an
+`AXValue` write to a web text field without firing the page's `input` and `change` events, so frameworks
+such as React keep their old state and the write only looks done. Upstream typing already routes web fields
+to key events through `TextInputRoute`, but `ActionInputDriver.setValue` never consults it. With the patch,
+before any write of a string to an `AXTextField`, `AXTextArea`, `AXComboBox` or search field, the driver
+walks the element's ancestry with the same bounded walk (`TextInputRoute.resolve(container:)`, which skips
+the focus check because set-value targets need not be focused): an `AXWebArea` ancestor, or an ancestry it
+can't resolve, throws the public `WebTextFieldValueRefusal` pre-dispatch refusal, whose exact message the
+desktop client recognizes before typing into the field instead. Other roles in web content keep their
+value route. `AutomationElementRepresenting` gains `textInputRoute`, `.nativeAX` by default for in-memory
+elements. Tests cover web and unresolved ancestry refused with nothing written, a native field still set,
+and a slider in web content still set.
+
 When updating Peekaboo, review the upstream fixes and these patches together. Update the revision
 guard and patches deliberately, or remove each patch when the dependency includes its fix.
 Revalidate real button clicks, changed-focus refusal, literal multiline insertion, clipboard
