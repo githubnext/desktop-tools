@@ -1,5 +1,5 @@
 diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+Planning.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+Planning.swift
-index 7c3d80eb8..e584d2126 100644
+index 363d0f176..ae263d4cb 100644
 --- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+Planning.swift
 +++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/HotkeyService+Planning.swift
 @@ -12,6 +12,23 @@ extension HotkeyService {
@@ -24,8 +24,8 @@ index 7c3d80eb8..e584d2126 100644
 +    ]
 +
      public nonisolated static func isSelectAllShortcut(_ keys: String) -> Bool {
-         guard let chord = try? HotkeyChord(keys: self.parsedKeys(keys)) else { return false }
-         return self.isSelectAllShortcut(primaryKey: chord.plan.primaryKey, flags: chord.plan.modifierFlags)
+         guard let chord = self.shortcut(keys) else { return false }
+         return self.isSelectAllShortcut(primaryKey: chord.primaryKey, flags: chord.flags)
 diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/MenuCommand.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/MenuCommand.swift
 index 90f84bc95..ea034e247 100644
 --- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/MenuCommand.swift
@@ -669,7 +669,7 @@ index 86398c375..c90e12118 100644
              .moveWindow,
              .resizeWindow,
 diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
-index 48c30f946..890343362 100644
+index 0a55e8d1f..e27e58a5b 100644
 --- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
 +++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
 @@ -28,7 +28,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
