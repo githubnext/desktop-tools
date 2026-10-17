@@ -66,6 +66,29 @@ test("a condition that already holds is refused before input", async () => {
 	assert.equal(state.acts, 0);
 });
 
+test("window_appears skips a window ordered out on the current Space, but not one on another Space", async () => {
+	const panel = (row) => ({ window_id: 34, window_title: "Spotlight", is_minimized: false, display_current_space_id: 1, ...row });
+	const scenario = async (before, hidden = false) => {
+		let row = before;
+		const reads = {
+			async observe(request) {
+				assert.deepEqual(request, { op: "windows", pid: 5 });
+				return { text: JSON.stringify({ windows: [panel(row)], inventory_completeness: "complete", app_hidden: hidden }) };
+			},
+		};
+		const act = async () => {
+			row = { is_on_screen: true, space_ids: [1] };
+			return { text: JSON.stringify({ action: { outcome: "unknown" } }), outcome: "unknown", isError: true };
+		};
+		const request = validateExpect({ until: "window_appears", pid: 5, title: "Spotlight", timeout_ms: 300 });
+		return (await expectAfter(reads, request, act)).outcome;
+	};
+	assert.equal(await scenario({ is_on_screen: false, space_ids: [1] }), "completed");
+	assert.equal(await scenario({ is_on_screen: false, space_ids: [] }), "completed");
+	assert.equal(await scenario({ is_on_screen: false, space_ids: [2] }), "refused");
+	assert.equal(await scenario({ is_on_screen: false, space_ids: [1] }, true), "refused");
+});
+
 test("completed and refused outcomes come back as they are, without polling", async () => {
 	for (const outcome of ["completed", "refused"]) {
 		const { state, reads, act } = mac({ outcome });

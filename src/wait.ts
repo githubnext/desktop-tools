@@ -151,7 +151,21 @@ async function listWindows(reads: WaitReads, pid: number, signal: AbortSignal) {
 	// Accessibility found every window only when no row or warning says its enumeration was cut short.
 	const accessible = !rows.some((row) => row.observation_reason === "accessibility_enumeration_incomplete")
 		&& !((data.inventory_warnings ?? []) as string[]).some((warning) => /accessibility|timed out/i.test(warning));
-	return { rows, complete: data.inventory_completeness === "complete", accessible };
+	return { rows, complete: data.inventory_completeness === "complete", accessible, hidden: data.app_hidden === true };
+}
+
+/**
+ * Whether a window counts as open. Off-screen windows on no Space, such as the Finder's menu-bar strips, never
+ * do. Neither does one off screen on its display's current Space while its app isn't hidden, such as the
+ * ordered-out Spotlight panel that macOS 27 keeps listed.
+ */
+function windowShown(row: Json, appHidden: boolean) {
+	if (row.is_on_screen === true || row.is_minimized === true) return true;
+	const spaces = Array.isArray(row.space_ids) ? row.space_ids as number[] : [];
+	if (!spaces.length) return false;
+	const current = row.display_current_space_id;
+	if (typeof current !== "number" || appHidden || row.display_asleep === true) return true;
+	return !spaces.includes(current);
 }
 
 /**
@@ -196,12 +210,9 @@ function pollWindowAppears(reads: WaitReads, request: DesktopWait) {
 		const errors: string[] = [];
 		for (const pid of pids) {
 			try {
-				const { rows } = await listWindows(reads, pid, signal);
+				const { rows, hidden } = await listWindows(reads, pid, signal);
 				for (const row of rows) {
-					// Off-screen windows on no Space, such as the Finder's menu-bar strips, are never a window appearing.
-					const shown = row.is_on_screen === true || row.is_minimized === true
-						|| (Array.isArray(row.space_ids) && row.space_ids.length > 0);
-					if (!shown) continue;
+					if (!windowShown(row, hidden)) continue;
 					const title = String(row.window_title ?? "");
 					const fits = request.title !== undefined
 						? title === request.title

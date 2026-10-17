@@ -591,3 +591,11 @@ the update.
 - **Target.** The target is the resolved window's owner, else the scope's process, else the first process identity, window identity or action receipt found in the request by reflection (at most six levels deep), else the owner of the window of the snapshot the request names. `snapshotWindow` becomes internal for that.
 - **Handshake.** The hook is also asked at the handshake, as `permissionsStatus`, so a refused client learns why before it asks for anything; the refusal is a `permissionDenied` envelope and the client gets no operations.
 - **Tests.** The admission test checks the client pid, a new test checks targets from a scope and from a request's process identity, and another checks a handshake refusal. No operation is added.
+
+`peekaboo-clipboard-image-export-allowlist.patch` adds `clipboardImageExport` to the remote default allowlist, next to `clipboardImageRead`. The embedded host intersects its allowed operations with the embedded allowlist, which is built from that list, so the export was dropped and every `save_path` read was refused as not supported. The build now fails if an operation the runtime allows is missing from the embedded allowlist.
+- **Tests.** The embedded runtime test expects the export in the embedded allowlist.
+
+`peekaboo-paste-window-release.patch` lets a closed receiver window resolve a pending clipboard paste. The reservation names the receiver's process and window, and before this only observed consumption or that process quitting released it, so a paste the receiver never took (TextEdit holds an image paste into an `.rtf` document behind its convert sheet) blocked every clipboard write until the app quit.
+- **Release.** Admission also releases the reservation when the window server no longer lists the window, or lists it for another process. An unavailable window list proves nothing.
+- **Refusal.** The hint now names closing that window as a way out.
+- **Tests.** `ClipboardPasteTransactionGateTests` covers a closed window, a reused window number, a live window and an unavailable list. No operation is added.
