@@ -282,6 +282,7 @@ private struct ActionResult: Encodable {
 	var pointer_moved: Bool?
 	var destination_receipt: Receipt?
 	var release: String?
+	var receiver: String?
 	var requires_fresh_observation = false
 	var error: ActionMessage?
 }
@@ -335,11 +336,8 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 			}
 			try checkElementRequest(request, observed)
 		}
-		if request.op == .key || request.op == .insert, context.focusedElement == nil {
-			// Peekaboo resolves keyboard receivers from the window's focused element; without one the key has no target.
-			throw ActionError(request.op == .key
-				? "The snapshot has no exact focused control, so this key has no verified receiver. If the command is in a menu, use the menu instead. Otherwise click the control that should receive the key, inspect the window again, and check that the new snapshot reports a focused element before retrying."
-				: "The snapshot has no exact focused control. Click the text field, then inspect the window again.")
+		if request.op == .insert, context.focusedElement == nil {
+			throw ActionError("The snapshot has no exact focused control. Click the text field, then inspect the window again.")
 		}
 		if request.op == .insert {
 			// The GUI owns the snapshot lease and clipboard transaction through consumption and cleanup.
@@ -457,15 +455,24 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 			result.element_action = performed.payload.actionName
 		case .key:
 			// Text-action emulation rejects WKWebView's focused receiver; deliver the exact-window key instead.
-			evidence = try await ActionEvidence(client.hotkeyWithOutcome(
-				keys: chord!,
-				holdDuration: 0,
-				target: .init(
-					windowIdentity: identity,
-					windowBounds: bounds,
-					focusedElement: context.focusedElement!
-				)
-			))
+			if let focusedElement = context.focusedElement {
+				result.receiver = "observed_control"
+				evidence = try await ActionEvidence(client.hotkeyWithOutcome(
+					keys: chord!,
+					holdDuration: 0,
+					target: .init(windowIdentity: identity, windowBounds: bounds, focusedElement: focusedElement)
+				))
+			} else {
+				// Lists, outlines, canvases and web areas often have no unique observed focus. The host still
+				// requires, before each event, that the app's focused element lies in this key window.
+				result.receiver = "window_focus"
+				evidence = try await ActionEvidence(client.hotkeyWithOutcome(
+					keys: chord!,
+					holdDuration: 0,
+					expectedWindowIdentity: identity,
+					expectedWindowBounds: bounds
+				))
+			}
 		case .insert:
 			throw ActionError("Literal insertion must use its GUI-owned transaction.")
 		case .select:
