@@ -260,9 +260,12 @@ function makeFixtures() {
 	writeFileSync(rich, "{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Helvetica;}}\\f0\\fs28 Live check rich document. Replace WORD here.\\par}");
 	const page = join(root, `live-page-${run}.html`);
 	writeFileSync(page, PAGE(`Live page ${run}`));
+	const sources = join(root, "paste-sources");
+	mkdirSync(sources);
+	for (const name of ["pasted-a.txt", "pasted-b.txt", "item-02.txt"]) writeFileSync(join(sources, name), `${name}\n`);
 	const image = join(root, "fixture.png");
 	writeFileSync(image, png(64, 48, 17));
-	return { root, folder, plain, rich, page, image, captures: join(root, "captures") };
+	return { root, folder, plain, rich, page, image, sources, captures: join(root, "captures") };
 }
 
 // ---------- session: what the harness opened, and how to put it back ----------
@@ -482,6 +485,52 @@ check(107, "desktop_read leaves Safari's web accessibility alone and reports not
 });
 
 // 0.10.0
+const finderPaste = (m) =>
+	/PASTE_NAME_EXISTS/.test(m.tools.get("desktop_insert")?.description ?? "") ||
+	skip("this build's desktop_insert doesn't paste into Finder folders (#PR not in it)");
+
+/** A Finder fixture window whose file list has focus, freshly inspected. */
+async function finderListFocus(s, m) {
+	const first = await finderTable(s);
+	const row = first.table?.rows?.find((r) => r.element) ?? skip("no Finder row has an ID");
+	await m.call("desktop_click", { snapshot: first.snap, element: row.element });
+	return s.inspect(first.win);
+}
+
+check("PR", "desktop_insert format files copies into a Finder folder and restores the clipboard", async (s, m) => {
+	finderPaste(m);
+	await s.clipboard();
+	const { snap } = await finderListFocus(s, m);
+	const known = `live-check-known-${run}`;
+	await m.call("desktop_clipboard_write", { text: known });
+	const paths = ["pasted-a.txt", "pasted-b.txt"].map((n) => join(s.fixtures.sources, n));
+	const result = await m.call("desktop_insert", { snapshot: snap, format: "files", paths });
+	await sleep(500);
+	const copied = ["pasted-a.txt", "pasted-b.txt"].every((n) => existsSync(join(s.fixtures.folder, n)));
+	const after = await m.call("desktop_clipboard_read", { format: "text" });
+	const act = action(result);
+	return expect(
+		result.outcome === "completed" && act.copy === "started" && copied && after.data.text === known,
+		`${evidence(result, "folder", "copy", "consumption", "clipboard_cleanup")}; files ${copied ? "present" : "missing"}; clipboard after ${brief(after.data.text, 40)}`,
+	);
+});
+
+check("PR", "desktop_insert format files refuses a name already in the Finder folder, before input", async (s, m) => {
+	finderPaste(m);
+	await s.clipboard();
+	const { snap } = await finderListFocus(s, m);
+	const before = await m.call("desktop_clipboard_read", { format: "text" });
+	const result = await m.call("desktop_insert", {
+		snapshot: snap, format: "files", paths: [join(s.fixtures.sources, "item-02.txt")],
+	});
+	const after = await m.call("desktop_clipboard_read", { format: "text" });
+	const kept = readFileSync(join(s.fixtures.folder, "item-02.txt"), "utf8") === "item 2\n";
+	return expect(
+		result.outcome === "refused" && /PASTE_NAME_EXISTS/.test(result.text) && kept && before.data.change_count === after.data.change_count,
+		`${evidence(result)}; existing file ${kept ? "unchanged" : "changed"}; change_count ${before.data.change_count} → ${after.data.change_count}`,
+	);
+});
+
 check(99, "desktop_insert pastes a PNG into a TextEdit rich document and restores the clipboard", async (s, m) => {
 	const insert = m.tools.get("desktop_insert");
 	if (!insert?.inputSchema?.properties?.format) skip("this build's desktop_insert has no attachment format (#99 not in it)");

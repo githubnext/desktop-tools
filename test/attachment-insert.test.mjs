@@ -44,4 +44,5 @@ test("desktop_insert exposes the attachment form and the clipboard choice", () =
 	assert.deepEqual(clipboard.enum, ["restore", "replace"]);
 	assert.match(insert.description, /PASTE_UNVERIFIABLE_RECEIVER/);
 	assert.match(insert.description, /left_replaced/);
+	assert.match(insert.description, /Finder window.*PASTE_NAME_EXISTS/);
 });
