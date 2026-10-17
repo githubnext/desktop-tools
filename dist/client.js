@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { DESKTOP_BUTTONS, DESKTOP_CLICKS, DESKTOP_DIRECTIONS, DESKTOP_ELEMENT_ACTIONS, DESKTOP_MODIFIERS, DESKTOP_SELECTIONS, isDesktopAction, isDesktopKey, isDesktopManagement, } from "./protocol.js";
+import { waitFor } from "./wait.js";
 const exec = promisify(execFile);
 const MAX_TEXT = 32_000;
 /** A scoped inspection lists more elements; recognized text has its own native line and byte limits. */
@@ -1149,6 +1150,7 @@ async function execute(native, request, abort) {
             "dock",
             "inspect",
             "read",
+            "wait",
             "screen",
             "click",
             "type",
@@ -1185,6 +1187,16 @@ async function execute(native, request, abort) {
         if (isDesktopAction(request))
             return actionResult({ outcome: "refused", reason }, "refused");
         throw new Error(reason);
+    }
+    // A wait bounds itself; each of its polls is one ordinary read with its own 30-second limit.
+    if (request.op === "wait") {
+        return await waitFor({
+            observe: (read, signal) => execute(native, read, signal),
+            elements: (input, signal) => native(["elements"], signal, {
+                input: JSON.stringify(input),
+                target: { pid: input.pid, window: input.window },
+            }),
+        }, request, abort);
     }
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(new Error("Native desktop operation timed out after 30 seconds.")), 30_000);

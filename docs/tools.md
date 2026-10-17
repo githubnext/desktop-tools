@@ -1,6 +1,6 @@
 # Tools
 
-The [MCP server](mcp.md) and `desktopTools()` expose 41 tools, one per protocol operation. Each tool's description and argument schema in `src/tools.ts` is the full contract; this page is the map.
+The [MCP server](mcp.md) and `desktopTools()` expose 42 tools, one per protocol operation. Each tool's description and argument schema in `src/tools.ts` is the full contract; this page is the map.
 
 Targets are exact: an app target binds a process generation, and a window target binds its window ID and bounds. Input acts on a single-use snapshot from the latest `desktop_inspect`. A stale or changed target is refused rather than redirected. Action results report `completed`, `refused`, or `unknown`, and nothing is retried automatically.
 
@@ -12,12 +12,23 @@ Targets are exact: an app target binds a process generation, and a window target
 | `desktop_windows` | List one app's windows |
 | `desktop_inspect` | Read one window's Accessibility elements and a screenshot, or only pixels when Accessibility is unavailable; returns the snapshot that input uses. `scope` lists one element's subtree from a much larger read, and `ocr` adds recognized text |
 | `desktop_read` | Read the text of one window, or of one inspected element's subtree, through Accessibility, up to 96 KB including content scrolled out of view; read only, with no snapshot |
+| `desktop_wait` | Wait, up to 45 seconds, until a window, dialog, element, text or app condition holds, then return what matched; read only |
 | `desktop_screen` | Capture one whole display and list the displays and the windows on it, front to back; observation only, with no input snapshot. `ocr` adds recognized text |
 | `desktop_menus` | Read an app's menu bar structure without opening it |
 | `desktop_dialog` | Read the open dialog or sheet in an app or window: its buttons, text fields and labels |
 | `desktop_clipboard_read` | Read the clipboard as text, an image, or file references |
 
 Captures go through ScreenCaptureKit, which every Peekaboo process for the user shares one call at a time. When an earlier capture timed out and hasn't returned, which usually means another capture on the Mac is busy, a new capture waits up to 2 seconds for it. If it still hasn't returned, the capture is refused with a message saying the problem is temporary; wait a few seconds and inspect again. There is no fallback capture, because every other capture path would also use ScreenCaptureKit while the abandoned call still runs. `desktop_apps` has 2.5 seconds to read the app inventory and is refused, not cut short, when the Mac is too busy to finish in time.
+
+`desktop_wait` replaces polling `desktop_inspect` or `desktop_windows` after slow work such as a launch, a page load, an export or a dialog opening. Each call waits for one condition (`until`):
+
+- `window_appears`: an app, by `bundle_id` or `pid`, has a window that is on screen, minimized or on a Space, optionally with an exact `title` or a `title_contains` substring. `window_gone`: the window `pid` and `window` is no longer listed, or its app quit.
+- `dialog_appears`, `dialog_gone`: `desktop_dialog` finds a dialog, alert or sheet in app `pid`, or in its window `window`, or finds none.
+- `element_appears`, `element_gone`: an element of window `pid` and `window` matches `element`, an exact role and at least one of an exact title, value or identifier.
+- `text_changes`, `text_equals`, `text_contains`: the window's text, a `scope`'s text, or the value of the one element `element` matches, differs from the first poll, equals `text` or contains it.
+- `app_running`, `app_frontmost`, `app_quit`: an app, by `bundle_id` or `pid`, is running, is the active app, or no longer runs.
+
+The wait polls with backoff, from 200 ms up to 2 seconds between polls, for `timeout_ms` (10 seconds by default, 45 at most), and returns `matched` with what matched or `timed_out` with the last observation. It sends no input and never activates an app. Each poll is a separate read, so the wait holds no lock between polls, and other agents' operations run in between. Element and text polls read the window through Accessibility only, with `desktop_read`'s budget and no screenshot, so they don't use ScreenCaptureKit. Absence is reported only when it is certain: a traversal cut short never counts as an element being gone, a partial inventory never counts as a window or app being gone, and a dialog counts as gone only when Accessibility reached every window of the app. Matched windows and apps come as `desktop_windows` and `desktop_apps` rows with their targets. When an element appears, the wait inspects the window once more (with the `scope`, if given) and returns that snapshot's ID and the matching elements' IDs, which the action tools accept; when the inspection doesn't list the element, its `snapshot_id` is null and the agent must inspect before acting.
 
 ## Apps and windows
 

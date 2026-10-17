@@ -28,6 +28,7 @@ import {
 	isDesktopKey,
 	isDesktopManagement,
 } from "./protocol.js";
+import { waitFor } from "./wait.js";
 
 /** Explicit paths for one signed host and client pair; nothing is discovered. */
 export type DesktopConfig = {
@@ -1361,6 +1362,7 @@ async function execute(
 			"dock",
 			"inspect",
 			"read",
+			"wait",
 			"screen",
 			"click",
 			"type",
@@ -1399,6 +1401,17 @@ async function execute(
 		const reason = "Native desktop tools require macOS 15 or later.";
 		if (isDesktopAction(request)) return actionResult({ outcome: "refused", reason }, "refused");
 		throw new Error(reason);
+	}
+	// A wait bounds itself; each of its polls is one ordinary read with its own 30-second limit.
+	if (request.op === "wait") {
+		return await waitFor({
+			observe: (read, signal) => execute(native, read, signal),
+			elements: (input, signal) =>
+				native(["elements"], signal, {
+					input: JSON.stringify(input),
+					target: { pid: input.pid as number, window: input.window as number },
+				}),
+		}, request, abort);
 	}
 	const deadline = new AbortController();
 	const timer = setTimeout(

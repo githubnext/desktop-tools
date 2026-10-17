@@ -33,6 +33,7 @@ private enum Client {
 			|| (operation == "windows" && args.count == 3)
 			|| (operation == "inspect" && args.count >= 5 && args.count <= 10)
 			|| (operation == "read" && (args.count == 4 || args.count == 6))
+			|| (operation == "elements" && args.count == 2)
 			|| (operation == "screen" && args.count >= 3 && args.count <= 5)
 			|| (operation == "action" && args.count == 2)
 			|| (operation == "management" && args.count == 2)
@@ -113,6 +114,8 @@ private enum Client {
 			guard let window = UInt32(args[3]), window > 0 else { throw ClientError.usage }
 			let scope = args.count == 6 ? ScopeRequest(snapshot: args[4], element: args[5]) : nil
 			return try await nativeRead(client, pid: pid, window: window, scope: scope)
+		case "elements":
+			return try await nativeElements(client)
 		case "apps":
 			let inventory = try await client.listApplicationMutationInventory()
 			var metadata: [ServiceApplicationInfo] = []
@@ -485,7 +488,7 @@ private enum ClientError: LocalizedError {
 	var errorDescription: String? {
 		switch self {
 		case .usage:
-			"Usage: desktop-tools-client <socket> apps | windows <pid> | inspect <pid> <window> <absolute-output-path> [accessibility|pixels] [ocr] [scope <snapshot> <element>] | read <pid> <window> [<snapshot> <element>] | screen <absolute-output-path> [display] [ocr] | menubar | menubar-click <absolute-output-path> < JSON | menus|menu|dialog|dock|action|management|launch|open|clipboard < JSON"
+			"Usage: desktop-tools-client <socket> apps | windows <pid> | inspect <pid> <window> <absolute-output-path> [accessibility|pixels] [ocr] [scope <snapshot> <element>] | read <pid> <window> [<snapshot> <element>] | elements < JSON | screen <absolute-output-path> [display] [ocr] | menubar | menubar-click <absolute-output-path> < JSON | menus|menu|dialog|dock|action|management|launch|open|clipboard < JSON"
 		case .target:
 			"The native observation did not confirm the requested process and window. Refresh the window list and try again."
 		case .image:
