@@ -16,6 +16,7 @@ private struct Status: Encodable {
 	var clipboardRead = ClipboardPolicy()
 	var cursor = false
 	var highlight = false
+	var paused = false
 }
 
 private final class State: @unchecked Sendable {
@@ -37,6 +38,7 @@ private final class State: @unchecked Sendable {
 		result.screenRecording = CGPreflightScreenCaptureAccess()
 		result.eventSynthesizing = result.eventSynthesizing || CGPreflightPostEventAccess()
 		result.clipboardRead = ClipboardPolicy.current()
+		result.paused = Pause.shared.isPaused
 		return result
 	}
 
@@ -106,6 +108,9 @@ private final class Desktop {
 					}
 				}
 				configuration.operationObserver = recordActivity
+				configuration.operationAdmission = { operation, mutatesDesktop in
+					Pause.shared.refusal(operation, mutatesDesktop: mutatesDesktop)
+				}
 				let next = PeekabooEmbeddedBridgeRuntime.make(configuration: configuration, feedbackClient: AgentCursor.shared)
 				runtime = next
 				try await next.startChecked()
@@ -168,6 +173,13 @@ public func setCursor(_ enabled: Bool) {
 public func setHighlight(_ enabled: Bool) {
 	state.setHighlight(enabled)
 	DispatchQueue.main.async { AgentWindow.shared.enabled = enabled }
+}
+
+/// Pauses or resumes all input: while paused, every operation that changes the desktop, and clipboard writes,
+/// are refused before dispatch, and reads keep working. Only the embedding app calls this; it starts resumed.
+@_cdecl("desktop_tools_set_paused")
+public func setPaused(_ paused: Bool) {
+	Pause.shared.set(paused)
 }
 
 /// Returns the recent operations as a JSON array, newest first; release it with `desktop_tools_free`.

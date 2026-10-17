@@ -11,6 +11,7 @@ private struct Runtime {
 	let setCursor: @convention(c) (Bool) -> Void
 	let setHighlight: @convention(c) (Bool) -> Void
 	let activity: @convention(c) () -> UnsafeMutablePointer<CChar>?
+	let setPaused: @convention(c) (Bool) -> Void
 
 	init(_ path: String) {
 		guard let handle = dlopen(path, RTLD_NOW) else { fatalError(String(cString: dlerror())) }
@@ -26,6 +27,7 @@ private struct Runtime {
 		setCursor = symbol("desktop_tools_set_cursor")
 		setHighlight = symbol("desktop_tools_set_highlight")
 		activity = symbol("desktop_tools_activity")
+		setPaused = symbol("desktop_tools_set_paused")
 	}
 }
 
@@ -35,6 +37,7 @@ private struct Status: Decodable {
 	var accessibility: Bool
 	var screenRecording: Bool
 	var eventSynthesizing: Bool
+	var paused: Bool?
 }
 
 /// One recent operation from the runtime, newest first; it never includes typed text or values.
@@ -60,6 +63,8 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 	private let menu = NSMenu()
 	private var serving = true
+	// Pausing lasts until the user resumes or the app quits; it is never saved.
+	private var paused = false
 	// The app shows the agent cursor and window outline unless the user turned them off; embedding apps start with them off.
 	private var cursor = UserDefaults.standard.object(forKey: "agentCursor") as? Bool ?? true
 	private var highlight = UserDefaults.standard.object(forKey: "agentWindow") as? Bool ?? true
@@ -87,7 +92,7 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	}
 
 	func applicationDidFinishLaunching(_: Notification) {
-		item.button?.image = NSImage(systemSymbolName: "cursorarrow.rays", accessibilityDescription: "Desktop Tools")
+		updateIcon()
 		menu.delegate = self
 		item.menu = menu
 		runtime.setCursor(cursor)
@@ -114,6 +119,7 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		menu.removeAllItems()
 		let status = read()
 		let state = status.map { $0.error.map { "Error: \($0)" } ?? $0.state.capitalized } ?? "Unavailable"
+			+ (paused ? " (input paused)" : "")
 		menu.addItem(withTitle: "Desktop Tools: \(state)", action: nil, keyEquivalent: "")
 		menu.addItem(withTitle: socket, action: nil, keyEquivalent: "")
 		menu.addItem(.separator())
@@ -133,6 +139,11 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 			menu.addItem(entry)
 		}
 		menu.addItem(.separator())
+		let pause = NSMenuItem(title: "Pause All Input", action: #selector(togglePause), keyEquivalent: "")
+		pause.target = self
+		pause.state = paused ? .on : .off
+		pause.toolTip = "Refuse every click, key, typing, window change and clipboard write from agents until resumed. Reading the screen still works."
+		menu.addItem(pause)
 		let toggle = NSMenuItem(title: "Serve agents", action: #selector(toggle), keyEquivalent: "")
 		toggle.target = self
 		toggle.state = serving ? .on : .off
@@ -183,13 +194,29 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 			keyEquivalent: "")
 		let time = Date(timeIntervalSince1970: entry.time).formatted(date: .omitted, time: .standard)
 		item.subtitle = "\(entry.agent) (\(entry.pid)) · \(time) · \(entry.outcome)"
-		let symbol = ["completed": "checkmark.circle", "refused": "xmark.circle"][entry.outcome] ?? "questionmark.circle"
+		let symbol = ["completed": "checkmark.circle", "refused": "xmark.circle", "paused": "pause.circle"][entry.outcome]
+			?? "questionmark.circle"
 		item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: entry.outcome)
 		return item
 	}
 
 	@objc private func grant(_ sender: NSMenuItem) {
 		(sender.representedObject as! String).withCString(runtime.permission)
+	}
+
+	@objc private func togglePause() {
+		paused.toggle()
+		runtime.setPaused(paused)
+		updateIcon()
+	}
+
+	/// The menu bar icon shows a pause sign while input is paused, so the state is visible at a glance.
+	private func updateIcon() {
+		let symbol = paused ? "pause.circle.fill" : "cursorarrow.rays"
+		item.button?.image = NSImage(
+			systemSymbolName: symbol,
+			accessibilityDescription: paused ? "Desktop Tools, input paused" : "Desktop Tools")
+		item.button?.toolTip = paused ? "Desktop Tools: input paused" : "Desktop Tools"
 	}
 
 	@objc private func toggle() {

@@ -13,9 +13,11 @@ Anything running as the user can use those grants while the app serves, so grant
 - the target app and window title;
 - the agent (`DESKTOP_TOOLS_AGENT`, or the name of the process that ran the client, such as `node` for the MCP server) and that process's pid;
 - the time;
-- the outcome: completed, unknown or refused.
+- the outcome: completed, unknown, refused, or paused for a request refused because input was paused.
 
 Identical operations in a row fold into one line with a count. Every desktop change is listed, and so are screen captures and clipboard reads. Listings and snapshot bookkeeping are not. Only the operation and its target are kept, never typed text, clipboard contents or values. The list lives in memory and is gone when the app quits.
+
+**Pause All Input** stops agents from changing anything until you turn it off again. While paused, the app refuses every click, key, typing, scroll, drag, menu command, app or window change, dialog action and clipboard write before it is sent. The refusal tells the agent to ask you to resume. Agents can still observe: listings, the accessibility tree, screen captures and clipboard reads keep working. The menu bar icon becomes a pause sign while input is paused. Only this menu item changes it; no client can pause or resume. Pausing isn't saved, so the app starts resumed. `desktop_input_source` select runs in the client rather than through the app, so pausing does not stop it.
 
 ## Build
 

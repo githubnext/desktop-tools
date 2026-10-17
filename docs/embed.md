@@ -7,11 +7,12 @@
 | Symbol | Meaning |
 | --- | --- |
 | `void desktop_tools_start(const char *socket, const char *client)` | Serve the Bridge on `socket` for the exact signed `client` identifier from this app's team |
-| `char *desktop_tools_status(void)` | JSON `{ state, error?, accessibility, screenRecording, eventSynthesizing, clipboardRead, cursor, highlight }`; free with `desktop_tools_free` |
+| `char *desktop_tools_status(void)` | JSON `{ state, error?, accessibility, screenRecording, eventSynthesizing, clipboardRead, cursor, highlight, paused }`; free with `desktop_tools_free` |
 | `void desktop_tools_stop(void)` | Drain native operations and stop; poll status until `stopped` |
 | `void desktop_tools_permission(const char *kind)` | Request `accessibility`, `screenRecording`, or `eventSynthesizing` |
 | `void desktop_tools_set_cursor(bool)` | Show the agent cursor for pointer input; it is off until turned on |
 | `void desktop_tools_set_highlight(bool)` | Outline and label the window the agent is using; it is off until turned on |
+| `void desktop_tools_set_paused(bool)` | Pause all input: refuse every operation that changes the desktop, and clipboard writes, before dispatch, while reads continue. It starts resumed, is held in memory only, and only the embedding app can change it |
 | `char *desktop_tools_activity(void)` | JSON array of the last 20 operations, newest first: `{ time, agent, pid, operation, app?, window?, outcome, count }`; free with `desktop_tools_free` |
 | `void desktop_tools_free(void *)` | Release a status or activity string |
 
