@@ -1,6 +1,6 @@
 {
 	"name": "@githubnext/desktop-tools",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Signed macOS desktop inspection and input for agents, built on a pinned, patched Peekaboo Bridge",
 	"license": "MIT",
 	"type": "module",
