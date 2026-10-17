@@ -4,6 +4,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-17
+
 ### Added
 
 - The Desktop Tools app asks once per agent, such as Claude Code or a terminal app, "Allow *name* to control this Mac?", and refuses every request from an agent you haven't allowed with `CALLER_NOT_APPROVED`, listings and captures included, without making it wait. Agents are recognized by their validated signature, or by their path when unsigned, and **Approved Agents** in the menu revokes, allows or forgets each one. After updating, each agent you use is asked about once. Recent Activity names the agent, such as `claude-code`, instead of `node`. Embedding apps opt in with `desktop_tools_set_caller_handler`. ([#120](https://github.com/githubnext/desktop-tools/pull/120))
@@ -189,7 +191,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The first release: a signed, notarized Desktop Tools menu bar app, and the desktop tools served over MCP. ([#28](https://github.com/githubnext/desktop-tools/pull/28), [#29](https://github.com/githubnext/desktop-tools/pull/29), [#12](https://github.com/githubnext/desktop-tools/pull/12))
 
-[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/githubnext/desktop-tools/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/githubnext/desktop-tools/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/githubnext/desktop-tools/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/githubnext/desktop-tools/compare/v0.11.0...v0.12.0
