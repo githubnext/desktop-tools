@@ -41,7 +41,7 @@ Window operations other than focus use background Accessibility and don't activa
 | `desktop_menubar_click` | Press one status item by its exact listed target, then list and capture the windows that opened |
 | `desktop_dock` | List the Dock; launch or activate one item by exact title, or right-click it and choose a context-menu item by exact title |
 
-A status item is pressed through Accessibility in its owner process without moving the pointer. Control Center, Notification Center and many popovers open as windows that `desktop_inspect` can read and drive; an app's plain status menu shows only in the click's capture. The Dock right-click is a real mouse event that moves the physical pointer.
+A status item is pressed through Accessibility in its owner process without moving the pointer. Control Center, Notification Center and many popovers open as windows that `desktop_inspect` can read and drive; an app's plain status menu may show only in the click's capture. The Dock right-click is a real mouse event that moves the physical pointer.
 
 ## Input
 
