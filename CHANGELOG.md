@@ -15,6 +15,7 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ### Fixed
 
+- `desktop_click` with `modifiers`, such as Command-click or Shift-click, no longer fails its cleanup every time with `DESKTOP_ACTION_FAILED` and "cursor restoration … could not be verified": the host read the pointer back before its restoring move had landed. It reports `cursor_restoration` again and stays `unknown` with `DESKTOP_ACTION_UNVERIFIED`, since a modifier click's effect can't be confirmed. ([#127](https://github.com/githubnext/desktop-tools/issues/127))
 - `desktop_clipboard_read` with `save_path` saves images again; the host never enabled image export, so every such read was refused. The build now fails if the host would drop an operation the app allows. ([#125](https://github.com/githubnext/desktop-tools/pull/125))
 - A clipboard paste whose receiver never took it, such as an image pasted into a TextEdit `.rtf` document, no longer blocks every clipboard write and paste until that app quits: closing the receiving window releases it too, and the refusal says so. ([#125](https://github.com/githubnext/desktop-tools/pull/125))
 - `window_appears` no longer counts a window macOS keeps listed but ordered out on the current Space as open, so `expect` with `window_appears` for Spotlight works on macOS 27, where Siri AI (`com.apple.campo`) hosts the panel. ([#125](https://github.com/githubnext/desktop-tools/pull/125))
