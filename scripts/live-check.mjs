@@ -474,7 +474,8 @@ class Session {
 
 const label = (e) => `${e.label ?? ""} ${e.attributes?.title ?? ""} ${e.attributes?.description ?? ""}`;
 const find = (els, role, pattern) =>
-	els.find((e) => e.role === role && (!pattern || pattern.test(label(e)) || pattern.test(e.value ?? "")));
+	// role is inspect's normalized role, such as textField; the Accessibility role is attributes.role.
+	els.find((e) => (e.attributes?.role ?? e.role) === role && (!pattern || pattern.test(label(e)) || pattern.test(e.value ?? "")));
 const findOrSkip = (els, role, pattern, what) => find(els, role, pattern) ?? skip(`no ${what} (${role}) found in the inspection`);
 const tableOf = (result) => dig(result.data, "rows") ? result.data.table ?? result.data : null;
 
@@ -563,14 +564,14 @@ check(111, "desktop_read right after Chrome launches returns the page, or fails 
 check(110, "desktop_wait element_appears on a fresh Chrome turns on web accessibility and finds a page element", withChrome(async (s, m, win) => {
 	if (!m.tools.get("desktop_wait")?.inputSchema?.properties?.web_accessibility) skip("this build's desktop_wait has no web_accessibility (#110 not in it)");
 	// Only the page has tables; Chrome's own toolbar has none, so a match needs the web tree.
-	const result = await m.call("desktop_wait", { until: "element_appears", pid: win.pid, window: win.window, element: { role: "AXTable" }, timeout_ms: 8000 });
+	const result = await m.call("desktop_wait", { until: "element_appears", pid: win.pid, window: win.window, element: { role: "AXTable", title: "Fruit table" }, timeout_ms: 8000 });
 	const state = result.data.match?.web_accessibility;
 	const text = { until: "text_contains", pid: win.pid, window: win.window, text: "riverbank link", timeout_ms: 5000 };
 	const kept = await m.call("desktop_wait", { ...text, web_accessibility: false });
 	return expect(
 		result.data.status === "matched" && state === "enabled"
 			&& kept.data.status === "matched" && kept.data.match?.web_accessibility === undefined,
-		`element ${result.data.status}, web_accessibility ${state}; text with it opted out ${kept.data.status}, ${kept.data.match?.web_accessibility}`,
+		`element ${result.data.status ?? brief(result.text, 200)}, web_accessibility ${state}; text with it opted out ${kept.data.status ?? brief(kept.text, 200)}, ${kept.data.match?.web_accessibility}`,
 	);
 }), ISOLATED);
 

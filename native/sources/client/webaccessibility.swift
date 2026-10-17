@@ -16,9 +16,24 @@ enum WebAccessibility: String, Encodable {
 	case unknown
 }
 
+/// The attribute a read turned web accessibility on with: Chrome 155 rejects AXManualAccessibility, so the host
+/// falls back to AXEnhancedUserInterface for apps that ship Chromium.
+enum WebAccessibilityVia: String, Encodable {
+	case manual
+	case enhanced_ui
+}
+
 /// Whether reads may turn on web accessibility: the caller allows it and the host offers it.
 struct WebAccessibilityPolicy {
 	let allowed: Bool
+	private let turnedOn = TurnedOn()
+
+	/// How this read turned it on, when it did.
+	var via: WebAccessibilityVia? { turnedOn.via }
+
+	private final class TurnedOn {
+		var via: WebAccessibilityVia?
+	}
 
 	/// How long a page gets to build its tree after it is turned on, before the window is read.
 	static let settle: Duration = .milliseconds(500)
@@ -30,10 +45,13 @@ struct WebAccessibilityPolicy {
 	/// Turns it on before the first read of an app that ships Chromium, waiting for the tree when it was off.
 	func beforeRead(_ client: PeekabooBridgeClient, pid: Int32) async -> WebAccessibility? {
 		guard allowed, shipsChromium(pid) else { return nil }
-		let state = await enable(client, pid: pid)
+		let state = await enable(client, pid: pid, chromium: true)
 		if state == .enabled { try? await Task.sleep(for: Self.settle) }
 		return state
 	}
+
+	/// How much longer a tree turned on just before the read gets when the read found no web content yet.
+	static let rebuild: Duration = .seconds(1)
 
 	/// After a read that found a nearly empty web area in an app not handled before the read, turns it on.
 	/// Returns the new state, and whether the window should be read again.
@@ -41,22 +59,35 @@ struct WebAccessibilityPolicy {
 		_ client: PeekabooBridgeClient, pid: Int32, elements: [DetectedElement], truncated: Bool,
 		before: WebAccessibility?
 	) async -> (state: WebAccessibility?, readAgain: Bool) {
-		guard allowed, before == nil, !truncated, hasSparseWebArea(elements) else { return (before, false) }
-		let state = await enable(client, pid: pid)
+		guard allowed, !truncated else { return (before, false) }
+		if before == .enabled {
+			// A fresh Chrome turned on with AXEnhancedUserInterface can take over a second to build its tree.
+			guard !hasPopulatedWebArea(elements) else { return (before, false) }
+			try? await Task.sleep(for: Self.rebuild)
+			return (before, true)
+		}
+		guard before == nil, hasSparseWebArea(elements) else { return (before, false) }
+		let state = await enable(client, pid: pid, chromium: shipsChromium(pid))
 		guard state == .enabled else { return (state, false) }
 		try? await Task.sleep(for: Self.settle)
 		return (state, true)
 	}
 
-	private func enable(_ client: PeekabooBridgeClient, pid: Int32) async -> WebAccessibility {
+	/// Only an app that ships Chromium may get AXEnhancedUserInterface, which can change how other apps animate.
+	private func enable(_ client: PeekabooBridgeClient, pid: Int32, chromium: Bool) async -> WebAccessibility {
 		guard let start = SystemIdentityResolver.processStartIdentity(pid) else { return .unknown }
 		do {
 			let result = try await client.enableWebAccessibilityWithOutcome(
-				ApplicationProcessIdentity(processIdentifier: pid, processStartIdentity: start)
+				ApplicationProcessIdentity(processIdentifier: pid, processStartIdentity: start),
+				allowsEnhancedUserInterface: chromium
 			)
-			return result.payload ? .enabled : .already_on
-		} catch let envelope as PeekabooBridgeErrorEnvelope where envelope.code == .operationNotSupported {
-			return .unsupported
+			switch result.payload {
+			case .alreadyOn: return .already_on
+			case .manual: turnedOn.via = .manual
+			case .enhancedUserInterface: turnedOn.via = .enhanced_ui
+			case .unsupported: return .unsupported
+			}
+			return .enabled
 		} catch {
 			return .unknown
 		}
@@ -83,6 +114,14 @@ private func hasSparseWebArea(_ elements: [DetectedElement]) -> Bool {
 	guard let ordered = try? preorder(elements) else { return false }
 	return ordered.indices.contains { position in
 		ordered[position].element.attributes["role"] == "AXWebArea" && subtree(ordered, at: position).count <= 2
+	}
+}
+
+/// Whether a web area has more than one element under it. Chrome 155 lists no web area at all before its tree is on.
+private func hasPopulatedWebArea(_ elements: [DetectedElement]) -> Bool {
+	guard let ordered = try? preorder(elements) else { return true }
+	return ordered.indices.contains { position in
+		ordered[position].element.attributes["role"] == "AXWebArea" && subtree(ordered, at: position).count > 2
 	}
 }
 

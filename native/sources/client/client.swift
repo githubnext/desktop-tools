@@ -309,6 +309,7 @@ private enum Client {
 			// The traversal reads the title after target resolution, so a live title is newer there.
 			window_title: result.elements?.metadata.windowContext?.windowTitle ?? result.target.window?.title,
 			web_accessibility: web,
+			web_accessibility_via: options.web.via,
 			snapshot_id: result.files.publishedSnapshotID,
 			element_count: scope == nil ? result.elements?.metadata.elementCount ?? 0 : elements.count,
 			scope: scope,
@@ -465,6 +466,7 @@ private struct Inspection: Encodable {
 	let application_name: String?
 	let window_title: String?
 	let web_accessibility: WebAccessibility?
+	let web_accessibility_via: WebAccessibilityVia?
 	let snapshot_id: String?
 	let element_count: Int
 	let scope: InspectionScope?

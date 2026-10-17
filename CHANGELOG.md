@@ -7,6 +7,7 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 ### Fixed
 
 - Secure text fields, such as password fields, show `attributes.subrole: "AXSecureTextField"` and no value in `desktop_inspect`, `desktop_read` and `desktop_wait`, not even their mask characters; `desktop_type`, `desktop_set_value` and `desktop_select` refuse them before dispatch instead of returning `unknown`. ([#118](https://github.com/githubnext/desktop-tools/pull/118))
+- `desktop_inspect`, `desktop_read` and `desktop_wait` see Chrome 155's web content again: Chrome now rejects `AXManualAccessibility`, so the host falls back to `AXEnhancedUserInterface` for apps that ship Chromium, and results name the one used in `web_accessibility_via`. An app that accepts neither now reports `unsupported` instead of `unknown`.
 
 ## [0.13.0] - 2026-10-17
 

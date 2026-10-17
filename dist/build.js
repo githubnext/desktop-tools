@@ -70,6 +70,7 @@ const patches = [
     "peekaboo-web-accessibility.patch",
     "peekaboo-finder-paste.patch",
     "peekaboo-secure-subrole.patch",
+    "peekaboo-web-accessibility-enhanced-ui.patch",
 ].map((name) => join(native, "patches", name));
 function spawn(command, env) {
     return spawnSync(command[0], command.slice(1), { encoding: "utf8", env: env ?? process.env });

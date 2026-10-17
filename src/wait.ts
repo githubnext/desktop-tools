@@ -334,11 +334,14 @@ async function readText(reads: WaitReads, request: DesktopWait, signal: AbortSig
 		const text = (element.value ?? element.label ?? null) as string | null;
 		return { text, observation: { element, text } };
 	}
-	const { text, truncated, truncation, window_title, web_accessibility } = await reads.elements(
+	const { text, truncated, truncation, window_title, web_accessibility, web_accessibility_via } = await reads.elements(
 		elementsInput(request, { text: true }),
 		signal,
 	);
-	return { text: text as string, observation: { window_title, text, truncated, truncation, web_accessibility } };
+	return {
+		text: text as string,
+		observation: { window_title, text, truncated, truncation, web_accessibility, web_accessibility_via },
+	};
 }
 
 function pollText(reads: WaitReads, request: DesktopWait) {
@@ -376,8 +379,23 @@ function checker(reads: WaitReads, request: DesktopWait) {
 	if (until === "window_appears") return pollWindowAppears(reads, request);
 	if (until === "window_gone") return pollWindowGone(reads, request);
 	if (until.startsWith("dialog_")) return pollDialog(reads, request);
-	if (ELEMENT.includes(until)) return pollElement(reads, request);
-	return pollText(reads, request);
+	if (ELEMENT.includes(until)) return rememberTurnOn(pollElement(reads, request));
+	return rememberTurnOn(pollText(reads, request));
+}
+
+/** Keeps reporting that this wait turned web accessibility on after a later poll finds it already on. */
+function rememberTurnOn(poll: (signal: AbortSignal) => Promise<Check>) {
+	let turnedOn: Json | undefined;
+	return async (signal: AbortSignal): Promise<Check> => {
+		const check = await poll(signal);
+		const observation = check.observation as Json | undefined;
+		if (observation?.web_accessibility === "enabled") {
+			turnedOn = { web_accessibility: "enabled", web_accessibility_via: observation.web_accessibility_via };
+		} else if (turnedOn && observation?.web_accessibility === "already_on") {
+			return { ...check, observation: { ...observation, ...turnedOn } };
+		}
+		return check;
+	};
 }
 
 /** Resolves true after the delay, or false when the signal ends the wait first. */
