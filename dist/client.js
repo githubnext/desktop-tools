@@ -247,6 +247,33 @@ async function inspect(native, request, signal) {
         await rm(directory, { recursive: true, force: true });
     }
 }
+async function screen(native, request, signal) {
+    const display = request.display;
+    if (display !== undefined && (!Number.isInteger(display) || display < 0 || display > 63)) {
+        throw new Error("Choose a display index from 0 to 63 from the returned displays list.");
+    }
+    const directory = await mkdtemp(join(tmpdir(), "desktop-tools-"));
+    try {
+        const path = join(directory, "capture.png");
+        const args = ["screen", path];
+        if (display !== undefined)
+            args.push(String(display));
+        const data = await native(args, signal);
+        const { image, width, height } = await screenshot(path, join(directory, "image.jpg"), signal);
+        const text = bounded({
+            ...data,
+            ace_image: {
+                width,
+                height,
+                note: "Whole-display screenshot, resized. Observation only: there is no snapshot_id and no input can target this image. Window and display bounds are global desktop points; pass a window's pid and window_id to desktop_inspect to act on it.",
+            },
+        }, "windows");
+        return { text, image };
+    }
+    finally {
+        await rm(directory, { recursive: true, force: true });
+    }
+}
 function validatePoint(point) {
     if (!point || typeof point !== "object" || !("x" in point) || !("y" in point)) {
         throw new Error("Choose a normalized screenshot point with x and y coordinates.");
@@ -806,6 +833,7 @@ async function execute(native, request, abort) {
             "menus",
             "menu",
             "inspect",
+            "screen",
             "click",
             "type",
             "key",
@@ -840,6 +868,8 @@ async function execute(native, request, abort) {
             return await act(native, request, signal);
         if (request.op === "inspect")
             return await inspect(native, request, signal);
+        if (request.op === "screen")
+            return await screen(native, request, signal);
         if (request.op === "menus") {
             validateAppOnly(request.target);
             if (request.path !== undefined)

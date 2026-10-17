@@ -88,6 +88,9 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | {
     window: number;
     mode?: "accessibility" | "pixels";
 } | {
+    op: "screen";
+    display?: number;
+} | {
     op: "click";
     snapshot: string;
     element?: string;

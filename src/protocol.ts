@@ -39,6 +39,7 @@ export type DesktopRequest =
 	| { op: "menus"; target: DesktopAppTarget; path?: string[] }
 	| { op: "menu"; target: DesktopAppTarget; path: string[] }
 	| { op: "inspect"; pid: number; window: number; mode?: "accessibility" | "pixels" }
+	| { op: "screen"; display?: number }
 	| {
 		op: "click";
 		snapshot: string;
