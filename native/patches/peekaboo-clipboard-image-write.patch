@@ -280,3 +280,41 @@ index 5151c95..08c92e7 100644
          case .clipboardImageRead:
              return try await self.handleClipboardImageRead()
          case .clipboardTextRead, .clipboardTextWrite:
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
+index 5333e38..a5a3235 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
+@@ -335,6 +335,7 @@ struct PeekabooBridgeOperationResultSemanticsTests {
+             .exactDialogForceDismiss,
+             .literalInsert,
+             .clipboardTextWrite,
++            .clipboardImageWrite,
+         ]
+         let classified = Set(PeekabooBridgeOperation.allCases.filter(\.mutatesDesktop))
+         #expect(classified == expected)
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
+index f054419..118c70e 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
+@@ -28,7 +28,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
+ 
+         // This count is intentionally reviewed whenever the wire enum grows. The exhaustive
+         // policy switches also make a missing classification a compile error.
+-        #expect(operations.count == 123)
++        #expect(operations.count == 124)
+ 
+         func partition<Value: Equatable>(_ values: [Value], by keyPath: KeyPath<Semantics.OperationPolicy, Value>) {
+             let groups = values.map { expected in
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
+index d144e43..08f34de 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
+@@ -9,7 +9,7 @@ struct PeekabooBridgeRequestPlanTests {
+     @Test
+     func `Every wire operation has one complete static descriptor`() {
+         let operations = PeekabooBridgeOperation.allCases
+-        #expect(operations.count == 123)
++        #expect(operations.count == 124)
+ 
+         let descriptors = operations.map(Semantics.operationDescriptor(for:))
+         #expect(descriptors.map(\.operation) == operations)

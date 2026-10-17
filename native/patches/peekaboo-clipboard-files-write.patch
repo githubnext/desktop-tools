@@ -145,7 +145,7 @@ index 0000000..7c1d708
 +    }
 +}
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
-index fae31e8..88b5fe0 100644
+index d584091..e449dc0 100644
 --- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeModels.swift
 @@ -42,6 +42,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
@@ -157,7 +157,7 @@ index fae31e8..88b5fe0 100644
      case requestPostEventPermission
      case daemonStatus
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
-index 0e8c83c..70552fb 100644
+index 5ef9273..dff541e 100644
 --- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
 @@ -29,7 +29,7 @@ extension PeekabooBridgeOperation {
@@ -170,7 +170,7 @@ index 0e8c83c..70552fb 100644
          .requestPostEventPermission,
          .daemonStatus,
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
-index 706717c..61df86e 100644
+index 5aaf748..164a059 100644
 --- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationDescriptor.swift
 @@ -66,6 +66,9 @@ extension PeekabooBridgeOperationResultSemantics {
@@ -221,10 +221,10 @@ index 031dffa..f3cf34f 100644
          case application
          case applicationMutationInventory
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
-index 664dc3b..62a7070 100644
+index 967470f..3ea47bb 100644
 --- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperationResultSemantics.swift
-@@ -446,7 +446,7 @@ extension PeekabooBridgeOperationResultSemantics {
+@@ -448,7 +448,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .performAction(target: payload.target, actionName: payload.actionName)
          case let .selectText(payload):
              .selectText(target: payload.target, request: payload.request)
@@ -233,7 +233,7 @@ index 664dc3b..62a7070 100644
               .attestedOperation,
               .projectedAction,
               .handshake,
-@@ -597,7 +597,7 @@ extension PeekabooBridgeOperationResultSemantics {
+@@ -600,7 +600,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .suspectedNoop,
          ]
          switch request.operation {
@@ -256,7 +256,7 @@ index 312bdbe..1b6daa5 100644
  }
  
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
-index d7aaedc..d835672 100644
+index 69ceb0d..6c12ec2 100644
 --- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeRequestResponse.swift
 @@ -12,6 +12,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
@@ -267,7 +267,7 @@ index d7aaedc..d835672 100644
      case permissionsStatus
      case requestPostEventPermission
      case daemonStatus
-@@ -146,6 +147,7 @@ extension PeekabooBridgeRequest {
+@@ -147,6 +148,7 @@ extension PeekabooBridgeRequest {
          case .clipboardFilesRead: .clipboardFilesRead
          case .clipboardTextWrite: .clipboardTextWrite
          case .clipboardImageWrite: .clipboardImageWrite
@@ -275,7 +275,7 @@ index d7aaedc..d835672 100644
          case .permissionsStatus: .permissionsStatus
          case .requestPostEventPermission: .requestPostEventPermission
          case .daemonStatus: .daemonStatus
-@@ -280,6 +282,7 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
+@@ -282,6 +284,7 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
      case clipboardFiles(ClipboardFilesContents)
      case clipboardTextWrite(PeekabooBridgeClipboardTextWriteResult)
      case clipboardImageWrite(PeekabooBridgeClipboardImageWriteResult)
@@ -284,7 +284,7 @@ index d7aaedc..d835672 100644
      case daemonStatus(PeekabooDaemonStatus)
      case agentExecutionTrace(PeekabooBridgeAgentExecutionTraceResponse)
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
-index 08c92e7..e88c5d1 100644
+index 105c9f4..d671808 100644
 --- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer+Handlers.swift
 @@ -14,6 +14,8 @@ extension PeekabooBridgeServer {
@@ -296,3 +296,41 @@ index 08c92e7..e88c5d1 100644
          case .clipboardImageWrite:
              return try await self.handleClipboardImageWrite(request)
          case .clipboardImageRead:
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
+index a8c314c..89e126c 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
+@@ -337,6 +337,7 @@ struct PeekabooBridgeOperationResultSemanticsTests {
+             .clipboardTextWrite,
+             .clipboardImageWrite,
+             .menuCommand,
++            .clipboardFilesWrite,
+         ]
+         let classified = Set(PeekabooBridgeOperation.allCases.filter(\.mutatesDesktop))
+         #expect(classified == expected)
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
+index 8572582..bac4116 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
+@@ -28,7 +28,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
+ 
+         // This count is intentionally reviewed whenever the wire enum grows. The exhaustive
+         // policy switches also make a missing classification a compile error.
+-        #expect(operations.count == 125)
++        #expect(operations.count == 126)
+ 
+         func partition<Value: Equatable>(_ values: [Value], by keyPath: KeyPath<Semantics.OperationPolicy, Value>) {
+             let groups = values.map { expected in
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
+index 5f28524..b35512c 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
+@@ -9,7 +9,7 @@ struct PeekabooBridgeRequestPlanTests {
+     @Test
+     func `Every wire operation has one complete static descriptor`() {
+         let operations = PeekabooBridgeOperation.allCases
+-        #expect(operations.count == 125)
++        #expect(operations.count == 126)
+ 
+         let descriptors = operations.map(Semantics.operationDescriptor(for:))
+         #expect(descriptors.map(\.operation) == operations)

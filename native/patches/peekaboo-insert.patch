@@ -1001,3 +1001,46 @@ diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeServer.swift
      let services: any PeekabooBridgeServiceProviding
      let hostKind: PeekabooBridgeHostKind
      let allowlistedTeams: Set<String>
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationResultSemanticsTests.swift
+@@ -333,6 +333,7 @@
+             .exactDialogDismiss,
+             .exactDialogEnterText,
+             .exactDialogForceDismiss,
++            .literalInsert,
+         ]
+         let classified = Set(PeekabooBridgeOperation.allCases.filter(\.mutatesDesktop))
+         #expect(classified == expected)
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeOperationSemanticPlanTests.swift
+@@ -28,7 +28,7 @@
+ 
+         // This count is intentionally reviewed whenever the wire enum grows. The exhaustive
+         // policy switches also make a missing classification a compile error.
+-        #expect(operations.count == 118)
++        #expect(operations.count == 119)
+ 
+         func partition<Value: Equatable>(_ values: [Value], by keyPath: KeyPath<Semantics.OperationPolicy, Value>) {
+             let groups = values.map { expected in
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
+--- a/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/PeekabooBridgeRequestPlanTests.swift
+@@ -9,7 +9,7 @@
+     @Test
+     func `Every wire operation has one complete static descriptor`() {
+         let operations = PeekabooBridgeOperation.allCases
+-        #expect(operations.count == 118)
++        #expect(operations.count == 119)
+ 
+         let descriptors = operations.map(Semantics.operationDescriptor(for:))
+         #expect(descriptors.map(\.operation) == operations)
+@@ -77,6 +77,7 @@
+             .foregroundModifierClick,
+             .exactDialogForceDismiss,
+             .clickMenuBarItemIndex,
++            .literalInsert,
+         ]
+         let accessibility: Set<PeekabooBridgeOperation> = [
+             .inspectAccessibilityTree,
