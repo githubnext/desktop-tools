@@ -39,3 +39,10 @@ Peekaboo's own tests take the real desktop operation locks in `~/.peekaboo` (`gl
 The build does not sign or stage the Swift runtime. Embedding apps own both. If an app's deployment target needs bundled Swift libraries, stage them with `xcrun swift-stdlib-tool --copy` into `Contents/Frameworks`; binaries carry an `@loader_path/../Frameworks` rpath for that.
 
 CI checks that `dist/` matches a fresh compile and that the modules import on Linux. It also builds the native artifacts, unsigned, on macOS with Xcode 26.2.
+
+## Releases
+
+Each change that users would notice adds a bullet under `## [Unreleased]` in [CHANGELOG.md](https://github.com/githubnext/desktop-tools/blob/main/CHANGELOG.md), under Added, Changed or Fixed, with its PR link. To cut a release:
+
+1. In one PR, bump `version` in `package.json` and `package-lock.json`, update the `#v…` tag pinned in `README.md` and `docs/mcp.md`, and rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` above a new, empty `## [Unreleased]`. Update the compare links at the bottom of the file. `npm test` fails if the version has no entries.
+2. After it merges, run the release workflow with `publish`: `gh workflow run release.yml -f publish=true`. It publishes `v` plus the version, using that version's CHANGELOG section (`node scripts/changelog.ts`) as the release notes, and stops before building if the section is missing.
