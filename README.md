@@ -40,7 +40,7 @@ You need macOS 15 or later and Node 22 or later. The MCP server runs from this r
    }
    ```
 
-4. **Verify.** Ask the agent to call `desktop_apps`. It should list the running apps with an `inventory_completeness` of `complete`. If it says the socket is missing, open the app and check that **Serve agents** is on.
+4. **Verify.** Ask the agent to call `desktop_apps`. It should list the running apps with an `inventory_completeness` of `complete`. If it says the socket is missing, open the app.
 
 Any process running as you can use the app's grants while it serves agents. Quit it when you don't need it.
 
