@@ -776,6 +776,15 @@ function validateAction(request: DesktopAction) {
 		}
 		return;
 	}
+	if (request.op === "input-source") {
+		if (
+			Object.keys(request).some((key) => !["op", "select"].includes(key))
+			|| !isInputSourceID(request.select)
+		) {
+			throw new Error("Pass select, one input source id from desktop_input_source.");
+		}
+		return;
+	}
 	if (request.op === "switch-space") {
 		if (
 			Object.keys(request).some((key) => !["op", "space_id"].includes(key))
@@ -1088,6 +1097,11 @@ function validateManagement(request: DesktopManagement) {
 	}
 }
 
+/** An input source ID as Text Input Sources names it, such as com.apple.keylayout.US. */
+function isInputSourceID(value: unknown): value is string {
+	return typeof value === "string" && value.length > 0 && value.length <= 256 && /^[^\p{C}\s]+$/u.test(value);
+}
+
 /** Adds the target window's availability to a refusal when it explains one; the window is only listed, never touched. */
 async function explainRefusal(
 	native: Native,
@@ -1212,6 +1226,8 @@ async function act(
 			? "system-key"
 			: request.op === "switch-space"
 			? "switch-space"
+			: request.op === "input-source"
+			? "input-source"
 			: isDesktopManagement(request)
 			? "management"
 			: "action";
@@ -1270,6 +1286,8 @@ async function act(
 	if (request.op === "dock") return actionResult(data, outcome);
 	// The native client already read the Spaces back; desktop_spaces shows the rest.
 	if (request.op === "switch-space") return actionResult(data, outcome);
+	// The native client already read the selected source back.
+	if (request.op === "input-source") return actionResult(data, outcome);
 
 	if (
 		outcome === "unknown"
@@ -1574,6 +1592,7 @@ async function execute(
 			"system-key",
 			"spaces",
 			"switch-space",
+			"input-source",
 			"insert",
 			"select",
 			"element-action",
@@ -1687,6 +1706,13 @@ async function execute(
 			}
 			const data = await native(["spaces"], signal);
 			return { text: bounded(data, "displays") };
+		}
+		if (request.op === "input-source" && request.select === undefined) {
+			if (Object.keys(request).some((key) => key !== "op")) {
+				throw new Error("Listing input sources takes no arguments besides select.");
+			}
+			const data = await native(["input-source"], signal, { input: "{}" });
+			return { text: bounded(data, "sources") };
 		}
 		if (request.op === "dock" && request.title === undefined) {
 			validateDock(request);

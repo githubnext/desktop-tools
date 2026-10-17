@@ -651,6 +651,13 @@ function validateAction(request) {
         }
         return;
     }
+    if (request.op === "input-source") {
+        if (Object.keys(request).some((key) => !["op", "select"].includes(key))
+            || !isInputSourceID(request.select)) {
+            throw new Error("Pass select, one input source id from desktop_input_source.");
+        }
+        return;
+    }
     if (request.op === "switch-space") {
         if (Object.keys(request).some((key) => !["op", "space_id"].includes(key))
             || !Number.isSafeInteger(request.space_id) || request.space_id < 1) {
@@ -913,6 +920,10 @@ function validateManagement(request) {
         }
     }
 }
+/** An input source ID as Text Input Sources names it, such as com.apple.keylayout.US. */
+function isInputSourceID(value) {
+    return typeof value === "string" && value.length > 0 && value.length <= 256 && /^[^\p{C}\s]+$/u.test(value);
+}
 /** Adds the target window's availability to a refusal when it explains one; the window is only listed, never touched. */
 async function explainRefusal(native, data, signal) {
     const receipt = data.target_receipt;
@@ -1024,9 +1035,11 @@ async function act(native, request, signal) {
                                     ? "system-key"
                                     : request.op === "switch-space"
                                         ? "switch-space"
-                                        : isDesktopManagement(request)
-                                            ? "management"
-                                            : "action";
+                                        : request.op === "input-source"
+                                            ? "input-source"
+                                            : isDesktopManagement(request)
+                                                ? "management"
+                                                : "action";
         data = await native([operation], signal, {
             input: JSON.stringify(input),
             onDispatch() {
@@ -1079,6 +1092,9 @@ async function act(native, request, signal) {
         return actionResult(data, outcome);
     // The native client already read the Spaces back; desktop_spaces shows the rest.
     if (request.op === "switch-space")
+        return actionResult(data, outcome);
+    // The native client already read the selected source back.
+    if (request.op === "input-source")
         return actionResult(data, outcome);
     if (outcome === "unknown"
         && ((request.op === "quit" && data.terminated === false)
@@ -1345,6 +1361,7 @@ async function execute(native, request, abort) {
             "system-key",
             "spaces",
             "switch-space",
+            "input-source",
             "insert",
             "select",
             "element-action",
@@ -1454,6 +1471,13 @@ async function execute(native, request, abort) {
             }
             const data = await native(["spaces"], signal);
             return { text: bounded(data, "displays") };
+        }
+        if (request.op === "input-source" && request.select === undefined) {
+            if (Object.keys(request).some((key) => key !== "op")) {
+                throw new Error("Listing input sources takes no arguments besides select.");
+            }
+            const data = await native(["input-source"], signal, { input: "{}" });
+            return { text: bounded(data, "sources") };
         }
         if (request.op === "dock" && request.title === undefined) {
             validateDock(request);
