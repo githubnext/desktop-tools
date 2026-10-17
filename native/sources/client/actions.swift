@@ -849,10 +849,13 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 		result.selected_leaf_evidence = failure.selectedLeafEvidence
 		let dispatched = failure.outcome.dispatchState.mutationDispatched
 		result.requires_fresh_observation = dispatched || failure.outcome.escalation == .refreshTarget
-		result.error = ActionMessage(
-			code: failure.standardErrorCode?.rawValue ?? "DESKTOP_ACTION_FAILED",
-			message: failure.message, hint: failure.hint, cause: failure.causeDescription
-		)
+		// The host checks the live focus before sending characters or pasting, so nothing reached the field.
+		result.error = !dispatched && failure.message == SecureTextFillRefusal.secureFocus
+			? ActionMessage(code: secureFieldRequiresFill.code, message: failure.message, hint: secureFieldRequiresFill.hint)
+			: ActionMessage(
+				code: failure.standardErrorCode?.rawValue ?? "DESKTOP_ACTION_FAILED",
+				message: failure.message, hint: failure.hint, cause: failure.causeDescription
+			)
 		if let lease {
 			do {
 				try await client.finishSnapshotMutation(lease, requiresFreshObservation: dispatched)
@@ -1125,7 +1128,10 @@ private func isFinderFileName(_ observed: DetectedElement, detection: ElementDet
 private func checkElementRequest(_ request: ActionRequest, _ observed: DetectedElement) throws {
 	let role = observed.attributes["role"] ?? ""
 	if [.type, .setValue, .select].contains(request.op), isSecure(observed) {
-		throw ActionError("This is a secure text field, such as a password field, and text is never typed, set or selected in it. Nothing was sent.")
+		throw ActionError(
+			"This is a secure text field, such as a password field, and text is never typed, set or selected in it. Nothing was sent.",
+			hint: secureFieldRequiresFill.hint, code: secureFieldRequiresFill.code
+		)
 	}
 	switch request.op {
 	case .elementAction:

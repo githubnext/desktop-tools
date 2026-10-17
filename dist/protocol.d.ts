@@ -249,6 +249,16 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     snapshot: string;
     element: string;
     text: string;
+}
+/** Fills the focused password field from a Keychain item named by service or server, or with text after approval. */
+ | {
+    op: "fill-password";
+    snapshot: string;
+    element: string;
+    service?: string;
+    server?: string;
+    account?: string;
+    text?: string;
 } | {
     op: "insert";
     snapshot: string;
@@ -342,7 +352,7 @@ export type DesktopModifier = (typeof DESKTOP_MODIFIERS)[number];
 export type DesktopSelection = (typeof DESKTOP_SELECTIONS)[number];
 export type DesktopElementAction = (typeof DESKTOP_ELEMENT_ACTIONS)[number];
 export type DesktopAction = Extract<DesktopRequest, {
-    op: "click" | "type" | "key" | "system-key" | "switch-space" | "input-source" | "insert" | "select" | "element-action" | "set-value" | "set-cell" | "scroll" | "drag" | "hover" | "press" | "activate" | "launch" | "open" | "quit" | "close" | "focus" | "minimize" | "restore" | "move" | "resize" | "clipboard-write" | "menu" | "dialog-answer" | "hide" | "unhide" | "maximize" | "fullscreen" | "menubar-click" | "dock" | "notification-action";
+    op: "click" | "type" | "fill-password" | "key" | "system-key" | "switch-space" | "input-source" | "insert" | "select" | "element-action" | "set-value" | "set-cell" | "scroll" | "drag" | "hover" | "press" | "activate" | "launch" | "open" | "quit" | "close" | "focus" | "minimize" | "restore" | "move" | "resize" | "clipboard-write" | "menu" | "dialog-answer" | "hide" | "unhide" | "maximize" | "fullscreen" | "menubar-click" | "dock" | "notification-action";
 }>;
 export type DesktopOutcome = "completed" | "refused" | "unknown";
 export type DesktopImage = {

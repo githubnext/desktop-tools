@@ -88,7 +88,7 @@ private final class Desktop {
 						.createSnapshot, .cleanSnapshot, .ownsSnapshot, .getDetectionResult, .beginSnapshotMutation,
 						.finishSnapshotMutation,
 						.targetedClick, .exactWindowTargetedClick, .foregroundModifierClick, .setValue, .performAction, .exactWindowTargetedHotkey, .hotkey, .exactWindowTargetedTypeActions,
-						.selectText, .literalInsert, .attachmentInsert, .clipboardTextRead, .clipboardImageRead, .clipboardImageExport, .clipboardFilesRead, .clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite, .targetedScroll, .exactWindowDrag, .drag, .moveMouse, .systemDefinedKey, .selectInputSource, .enableWebAccessibility,
+						.selectText, .literalInsert, .attachmentInsert, .clipboardTextRead, .clipboardImageRead, .clipboardImageExport, .clipboardFilesRead, .clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite, .targetedScroll, .exactWindowDrag, .drag, .moveMouse, .systemDefinedKey, .selectInputSource, .enableWebAccessibility, .secureTextFill,
 						.createExactWindowHeldPointerOwner, .beginExactWindowHeldPointer, .releaseExactWindowHeldPointer,
 						.revokeExactWindowHeldPointer, .disconnectExactWindowHeldPointerOwner,
 						.launchApplicationWithOptions, .activateApplication, .quitApplication, .hideApplication, .backgroundCloseWindow,
@@ -109,6 +109,7 @@ private final class Desktop {
 					}
 				}
 				configuration.operationObserver = recordActivity
+				configuration.secureTextFill = { await PasswordFill.shared.authorize($0) }
 				configuration.operationAdmission = { admission in
 					if let refusal = Callers.shared.refusal(client: admission.clientProcessIdentifier) { return refusal }
 					// A host that asks the user about callers keeps its own prompts and menus for the user alone.
