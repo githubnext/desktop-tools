@@ -1,0 +1,196 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Core/Models/Snapshot.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Core/Models/Snapshot.swift
+index 456cbcc37..f1f57b700 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Core/Models/Snapshot.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Core/Models/Snapshot.swift
+@@ -77,6 +77,8 @@ public nonisolated struct UIElement: Codable, Sendable {
+     public let description: String?
+     public let help: String?
+     public let roleDescription: String?
++    /// Kept only for secure text fields, whose values are never stored.
++    public let subrole: String?
+     public let identifier: String?
+     public let confidence: Double?
+     public var frame: CGRect
+@@ -107,6 +109,7 @@ public nonisolated struct UIElement: Codable, Sendable {
+         description: String? = nil,
+         help: String? = nil,
+         roleDescription: String? = nil,
++        subrole: String? = nil,
+         identifier: String? = nil,
+         confidence: Double? = nil,
+         frame: CGRect,
+@@ -127,6 +130,7 @@ public nonisolated struct UIElement: Codable, Sendable {
+         self.description = description
+         self.help = help
+         self.roleDescription = roleDescription
++        self.subrole = subrole
+         self.identifier = identifier
+         self.confidence = confidence
+         self.frame = frame
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/InMemorySnapshotManager+DetectionMapping.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/InMemorySnapshotManager+DetectionMapping.swift
+index f2efc6b8a..597a0eeec 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/InMemorySnapshotManager+DetectionMapping.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/InMemorySnapshotManager+DetectionMapping.swift
+@@ -31,6 +31,7 @@ extension InMemorySnapshotManager {
+                 description: element.attributes["description"],
+                 help: element.attributes["help"],
+                 roleDescription: element.attributes["roleDescription"],
++                subrole: element.attributes["subrole"],
+                 identifier: element.attributes["identifier"],
+                 confidence: element.attributes["confidence"].flatMap(Double.init),
+                 frame: element.bounds,
+@@ -112,6 +113,9 @@ extension InMemorySnapshotManager {
+             if let roleDescription = uiElement.roleDescription {
+                 attributes["roleDescription"] = roleDescription
+             }
++            if let subrole = uiElement.subrole {
++                attributes["subrole"] = subrole
++            }
+             if let confidence = uiElement.confidence {
+                 attributes["confidence"] = String(format: "%.2f", confidence)
+             }
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/SnapshotManager.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/SnapshotManager.swift
+index 381e7e091..c49b42b41 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/SnapshotManager.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Support/SnapshotManager.swift
+@@ -131,6 +131,7 @@ public final class SnapshotManager: SnapshotManagerProtocol {
+                 description: element.attributes["description"],
+                 help: element.attributes["help"],
+                 roleDescription: element.attributes["roleDescription"],
++                subrole: element.attributes["subrole"],
+                 identifier: element.attributes["identifier"],
+                 confidence: element.attributes["confidence"].flatMap(Double.init),
+                 frame: element.bounds,
+@@ -187,6 +188,9 @@ public final class SnapshotManager: SnapshotManagerProtocol {
+             if let roleDescription = uiElement.roleDescription {
+                 attributes["roleDescription"] = roleDescription
+             }
++            if let subrole = uiElement.subrole {
++                attributes["subrole"] = subrole
++            }
+             if let confidence = uiElement.confidence {
+                 attributes["confidence"] = String(format: "%.2f", confidence)
+             }
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
+index 26ede934d..a2851a319 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
+@@ -110,6 +110,7 @@ enum DetachedAXObservationWorker {
+         kAXPositionAttribute,
+         kAXSizeAttribute,
+         kAXRoleAttribute,
++        kAXSubroleAttribute,
+         kAXTitleAttribute,
+         "AXLabel",
+         kAXValueAttribute,
+@@ -595,6 +596,10 @@ enum DetachedAXObservationWorker {
+         if let roleDescription = descriptor.roleDescription {
+             attributes["roleDescription"] = roleDescription
+         }
++        if descriptor.isSecure {
++            // Readers withhold secure values by this attribute; the role stays what Accessibility reports.
++            attributes["subrole"] = "AXSecureTextField"
++        }
+         if let identifier {
+             attributes["identifier"] = identifier
+         }
+@@ -724,12 +729,15 @@ extension DetachedAXObservationWorker {
+             size: self.sizeValue(byName[kAXSizeAttribute]) ?? .zero)
+         guard frame.width > 5, frame.height > 5 else { return .absent }
+         let role = self.stringValue(byName[kAXRoleAttribute]) ?? "Unknown"
++        let isSecure = self.isSecure(role: role, subrole: self.stringValue(byName[kAXSubroleAttribute]))
+         return .value(Descriptor(
+             frame: frame,
+             role: role,
++            isSecure: isSecure,
+             title: self.stringValue(byName[kAXTitleAttribute]),
+             label: self.stringValue(byName["AXLabel"]),
+-            value: AXDescriptorReader.displayValue(byName[kAXValueAttribute]),
++            // A secure field's value is a mask, one character per secret character, so even it is never kept.
++            value: isSecure ? nil : AXDescriptorReader.displayValue(byName[kAXValueAttribute]),
+             description: self.stringValue(byName[kAXDescriptionAttribute]),
+             help: self.stringValue(byName[kAXHelpAttribute]),
+             roleDescription: self.stringValue(byName[kAXRoleDescriptionAttribute]),
+@@ -743,6 +751,11 @@ extension DetachedAXObservationWorker {
+             keyboardShortcut: self.stringValue(byName["AXKeyboardShortcut"])))
+     }
+ 
++    /// Secure text fields report the role AXTextField with the subrole AXSecureTextField; some report it as their role.
++    private static func isSecure(role: String, subrole: String?) -> Bool {
++        role == "AXSecureTextField" || subrole == "AXSecureTextField"
++    }
++
+     private static func descriptorWithSingleReads(of element: AXUIElement, node: Int) -> DescriptorReadResult {
+         var valuesByName: [String: Any] = [:]
+         for name in self.descriptorAttributeNames {
+@@ -760,12 +773,15 @@ extension DetachedAXObservationWorker {
+             size: self.sizeValue(valuesByName[kAXSizeAttribute]) ?? .zero)
+         guard frame.width > 5, frame.height > 5 else { return .absent }
+         let role = self.stringValue(valuesByName[kAXRoleAttribute]) ?? "Unknown"
++        let isSecure = self.isSecure(role: role, subrole: self.stringValue(valuesByName[kAXSubroleAttribute]))
+         return .value(Descriptor(
+             frame: frame,
+             role: role,
++            isSecure: isSecure,
+             title: self.stringValue(valuesByName[kAXTitleAttribute]),
+             label: self.stringValue(valuesByName["AXLabel"]),
+-            value: AXDescriptorReader.displayValue(valuesByName[kAXValueAttribute]),
++            // A secure field's value is a mask, one character per secret character, so even it is never kept.
++            value: isSecure ? nil : AXDescriptorReader.displayValue(valuesByName[kAXValueAttribute]),
+             description: self.stringValue(valuesByName[kAXDescriptionAttribute]),
+             help: self.stringValue(valuesByName[kAXHelpAttribute]),
+             roleDescription: self.stringValue(valuesByName[kAXRoleDescriptionAttribute]),
+@@ -1131,6 +1147,7 @@ private struct TraversalRequest {
+ private struct Descriptor {
+     let frame: CGRect
+     let role: String
++    let isSecure: Bool
+     let title: String?
+     let label: String?
+     let value: String?
+diff --git a/Core/PeekabooCore/Tests/PeekabooTests/SnapshotManagerTests.swift b/Core/PeekabooCore/Tests/PeekabooTests/SnapshotManagerTests.swift
+index 62cb566b4..03cf24da8 100644
+--- a/Core/PeekabooCore/Tests/PeekabooTests/SnapshotManagerTests.swift
++++ b/Core/PeekabooCore/Tests/PeekabooTests/SnapshotManagerTests.swift
+@@ -309,11 +309,19 @@ struct SnapshotManagerTests {
+                 "isValueSettable": "true",
+                 "axEnabledKnown": "true",
+             ])
++        let password = DetectedElement(
++            id: "elem_2",
++            type: .textField,
++            label: "Password",
++            value: nil,
++            bounds: CGRect(x: 10, y: 50, width: 200, height: 22),
++            isEnabled: true,
++            attributes: ["role": "AXTextField", "subrole": "AXSecureTextField", "axEnabledKnown": "true"])
+         let result = ElementDetectionResult(
+             snapshotId: snapshotId,
+             screenshotPath: "/tmp/appearance.png",
+-            elements: DetectedElements(sliders: [slider]),
+-            metadata: DetectionMetadata(detectionTime: 0.1, elementCount: 1, method: "test"))
++            elements: DetectedElements(textFields: [password], sliders: [slider]),
++            metadata: DetectionMetadata(detectionTime: 0.1, elementCount: 2, method: "test"))
+ 
+         try await manager.storeDetectionResult(snapshotId: snapshotId, result: result)
+ 
+@@ -329,6 +337,8 @@ struct SnapshotManagerTests {
+         #expect(storedSlider.isActionable)
+         #expect(storedSlider.isEnabled == true)
+         #expect(storedSlider.isValueSettable == true)
++        #expect(storedSlider.subrole == nil)
++        #expect(stored.uiMap[password.id]?.subrole == "AXSecureTextField")
+ 
+         let hydrated = try #require(try await manager.getDetectionResult(snapshotId: snapshotId))
+         let hydratedSlider = try #require(hydrated.elements.sliders.first)
+@@ -339,6 +349,10 @@ struct SnapshotManagerTests {
+         #expect(hydratedSlider.knownIsEnabled == true)
+         #expect(hydratedSlider.isActionable)
+         #expect(hydratedSlider.isValueSettable == true)
++        #expect(hydratedSlider.attributes["subrole"] == nil)
++        let hydratedPassword = try #require(hydrated.elements.all.first { $0.id == password.id })
++        #expect(hydratedPassword.attributes["subrole"] == "AXSecureTextField")
++        #expect(hydratedPassword.value == nil)
+         try await manager.cleanSnapshot(snapshotId: snapshotId)
+     }
+ }

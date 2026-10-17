@@ -513,7 +513,7 @@ private struct Element: Encodable {
 		id = element.id
 		role = element.type.rawValue
 		label = element.label
-		value = element.value
+		value = isSecure(element) ? nil : element.value
 		bounds = Bounds(element.bounds)
 		is_enabled = element.isEnabled
 		is_selected = element.isSelected

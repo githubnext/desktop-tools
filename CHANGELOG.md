@@ -4,6 +4,10 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Fixed
+
+- Secure text fields, such as password fields, show `attributes.subrole: "AXSecureTextField"` and no value in `desktop_inspect`, `desktop_read` and `desktop_wait`, not even their mask characters; `desktop_type`, `desktop_set_value` and `desktop_select` refuse them before dispatch instead of returning `unknown`. ([#118](https://github.com/githubnext/desktop-tools/pull/118))
+
 ## [0.13.0] - 2026-10-17
 
 ### Added

@@ -70,9 +70,13 @@ private func matches(_ element: DetectedElement, _ match: ElementsRequest.Match)
 
 /// The value an agent may see; secure text field values are never read.
 private func readableValue(_ element: DetectedElement) -> String? {
-	let role = element.attributes["role"]
-	let secure = role == "AXSecureTextField" || element.attributes["subrole"] == "AXSecureTextField"
-	return secure ? nil : element.value
+	isSecure(element) ? nil : element.value
+}
+
+/// Whether an element is a secure text field, such as a password field. The host reports one by its subrole, since
+/// its role is AXTextField; some apps report the subrole as the role.
+func isSecure(_ element: DetectedElement) -> Bool {
+	element.attributes["role"] == "AXSecureTextField" || element.attributes["subrole"] == "AXSecureTextField"
 }
 
 /// Reads one exact window through Accessibility alone, with the large read budget: no screenshot, no

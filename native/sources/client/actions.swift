@@ -1098,6 +1098,9 @@ private func exposes(_ point: CGPoint, in window: UIAutomationTarget.ExactWindow
 /// Element actions and values act only on what the snapshot observed the element to support.
 private func checkElementRequest(_ request: ActionRequest, _ observed: DetectedElement) throws {
 	let role = observed.attributes["role"] ?? ""
+	if [.type, .setValue, .select].contains(request.op), isSecure(observed) {
+		throw ActionError("This is a secure text field, such as a password field, and text is never typed, set or selected in it. Nothing was sent.")
+	}
 	switch request.op {
 	case .elementAction:
 		let action = request.action!
