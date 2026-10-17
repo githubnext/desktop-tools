@@ -1,5 +1,5 @@
 /** Why a window can or can't be observed and acted on now. Read only: nothing here sends input or recovers. */
-export type WindowAvailability = {
+type WindowAvailability = {
 	state: "available" | "limited" | "unavailable";
 	reason:
 		| "visible"
@@ -21,7 +21,7 @@ export type WindowAvailability = {
 };
 
 /** The fields of one desktop_windows row that availability reads. */
-export type WindowFacts = {
+type WindowFacts = {
 	bounds?: { x: number; y: number; width: number; height: number };
 	is_on_screen?: boolean;
 	is_minimized?: boolean;
@@ -34,7 +34,7 @@ export type WindowFacts = {
 };
 
 /** The listing-wide facts of a desktop_windows result. */
-export type SessionFacts = { session_locked?: boolean; app_hidden?: boolean | null };
+type SessionFacts = { session_locked?: boolean; app_hidden?: boolean | null };
 
 const reinspect = "then inspect it again before acting.";
 

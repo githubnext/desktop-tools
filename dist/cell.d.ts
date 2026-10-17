@@ -1,9 +1,9 @@
 import type { DesktopAction, DesktopRequest, DesktopResult } from "./protocol.js";
-type Json = Record<string, unknown>;
+import { type Json } from "./results.js";
 type SetCell = Extract<DesktopRequest, {
     op: "set-cell";
 }>;
-export type CellIO = {
+type CellIO = {
     /** One native table read of the scope element in the snapshot. */
     table(input: {
         pid: number;

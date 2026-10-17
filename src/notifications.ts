@@ -1,7 +1,8 @@
 import type { DesktopRequest, DesktopResult } from "./protocol.js";
+import { errorMessage, type Json, parseResult } from "./results.js";
 
 /** Notification Center's process; its banners, alerts and open panel are windows of it. */
-export const NOTIFICATION_CENTER = "com.apple.notificationcenterui";
+const NOTIFICATION_CENTER = "com.apple.notificationcenterui";
 /** Hosts of system alerts such as permission prompts, which desktop_dialog reads and answers. */
 const ALERT_HOSTS = ["com.apple.UserNotificationCenter", "com.apple.SecurityAgent"];
 /** Under the 60-second request timeout common MCP clients use. */
@@ -13,7 +14,6 @@ const MAX_TEXT = 1000;
 /** Custom action names as the native client lists and accepts them. */
 const MAX_ACTION = 64;
 
-type Json = Record<string, unknown>;
 
 export type NotificationIO = {
 	/** One ordinary read: apps, windows or inspect. */
@@ -22,7 +22,7 @@ export type NotificationIO = {
 	perform(input: Json, signal: AbortSignal, onDispatch: () => void): Promise<Json>;
 };
 
-export type NotificationEntry = {
+type NotificationEntry = {
 	id: string;
 	pid: number;
 	window_id: number;
@@ -38,13 +38,6 @@ export type NotificationEntry = {
 	actions: string[];
 };
 
-function parse(result: DesktopResult): Json {
-	return JSON.parse(result.text) as Json;
-}
-
-function message(error: unknown): string {
-	return (error instanceof Error ? error.message : String(error)).slice(0, 2000);
-}
 
 function clip(text: unknown): string | null {
 	return typeof text === "string" && text.trim() ? text.slice(0, MAX_TEXT) : null;
@@ -145,7 +138,7 @@ const lastRead = new Map<string, Json>();
 
 /** The running apps with exactly this bundle ID; a query keeps a long inventory from cutting them off. */
 async function appsWith(io: NotificationIO, bundle: string, signal: AbortSignal) {
-	const data = parse(await io.observe({ op: "apps", query: bundle }, signal));
+	const data = parseResult(await io.observe({ op: "apps", query: bundle }, signal));
 	return { rows: ((data.apps ?? []) as Json[]).filter((row) => row.bundle_id === bundle), data };
 }
 
@@ -153,7 +146,7 @@ async function appsWith(io: NotificationIO, bundle: string, signal: AbortSignal)
 async function shownWindows(io: NotificationIO, bundle: string, signal: AbortSignal) {
 	const shown: { pid: number; row: Json }[] = [];
 	for (const app of (await appsWith(io, bundle, signal)).rows) {
-		const data = parse(await io.observe({ op: "windows", pid: app.pid as number }, signal));
+		const data = parseResult(await io.observe({ op: "windows", pid: app.pid as number }, signal));
 		for (const row of (data.windows ?? []) as Json[]) {
 			if (row.is_on_screen === true) shown.push({ pid: app.pid as number, row });
 		}
@@ -173,7 +166,7 @@ export async function readNotifications(io: NotificationIO, signal: AbortSignal)
 			}
 		} catch (error) {
 			signal.throwIfAborted();
-			alerts.push({ host, error: message(error) });
+			alerts.push({ host, error: errorMessage(error) });
 		}
 	}
 	if (!center) {
@@ -192,7 +185,7 @@ export async function readNotifications(io: NotificationIO, signal: AbortSignal)
 		const window = row.window_id as number;
 		try {
 			const result = await io.observe({ op: "inspect", pid, window }, signal);
-			const data = parse(result);
+			const data = parseResult(result);
 			if (result.isError) {
 				errors.push({ window_id: window, error: data.inspection_error ?? data });
 				continue;
@@ -201,7 +194,7 @@ export async function readNotifications(io: NotificationIO, signal: AbortSignal)
 			if (data.truncated === true) errors.push({ window_id: window, error: "The window's elements were truncated." });
 		} catch (error) {
 			signal.throwIfAborted();
-			errors.push({ window_id: window, error: message(error) });
+			errors.push({ window_id: window, error: errorMessage(error) });
 		}
 	}
 	lastRead.clear();
@@ -272,7 +265,7 @@ export async function notificationAction(
 			outcome,
 			data: {
 				outcome,
-				reason: message(error),
+				reason: errorMessage(error),
 				message: dispatched
 					? "The notification action may have run. Read notifications again before acting further."
 					: "No input was sent.",
@@ -324,7 +317,7 @@ export async function notificationAction(
 				outcome: "unknown",
 				action,
 				native_outcome: native,
-				observation_error: message(error),
+				observation_error: errorMessage(error),
 				message: "Read notifications again before acting further; do not repeat the action blindly.",
 				native: data,
 			},
