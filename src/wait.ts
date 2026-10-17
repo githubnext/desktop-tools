@@ -2,6 +2,7 @@ import {
 	DESKTOP_WAIT_CONDITIONS,
 	type DesktopAppTarget,
 	type DesktopElementMatch,
+	type DesktopOutcome,
 	type DesktopRequest,
 	type DesktopResult,
 	type DesktopWait,
@@ -18,6 +19,11 @@ export type WaitReads = {
 export const WAIT_DEFAULT_MS = 10_000;
 /** Below the 60-second request timeout common MCP clients use, with room for the final inspection. */
 export const WAIT_MAX_MS = 45_000;
+/** An action's expect polls briefly by default; input that took effect usually shows within a few seconds. */
+export const EXPECT_DEFAULT_MS = 3_000;
+export const EXPECT_MAX_MS = 10_000;
+/** An action result with its expectation stays under the client's result limit. */
+const MAX_RESULT = 32_000;
 const FIRST_DELAY = 200;
 const MAX_DELAY = 2_000;
 /** The inspection that gives an appeared element a snapshot gets this long after the wait. */
@@ -44,7 +50,7 @@ function exactString(value: unknown, name: string, limit = 512) {
 }
 
 /** Refuses argument combinations a condition doesn't use, so a misplaced filter is never silently ignored. */
-export function validateWait(request: DesktopWait) {
+export function validateWait(request: DesktopWait, maxTimeout = WAIT_MAX_MS) {
 	const until = request.until;
 	if (!(DESKTOP_WAIT_CONDITIONS as readonly string[]).includes(until)) {
 		throw new Error(`Choose until from ${DESKTOP_WAIT_CONDITIONS.join(", ")}.`);
@@ -97,8 +103,8 @@ export function validateWait(request: DesktopWait) {
 		}
 	}
 	if (request.timeout_ms !== undefined) {
-		if (!Number.isSafeInteger(request.timeout_ms) || request.timeout_ms < 100 || request.timeout_ms > WAIT_MAX_MS) {
-			throw new Error(`timeout_ms must be an integer from 100 to ${WAIT_MAX_MS}.`);
+		if (!Number.isSafeInteger(request.timeout_ms) || request.timeout_ms < 100 || request.timeout_ms > maxTimeout) {
+			throw new Error(`timeout_ms must be an integer from 100 to ${maxTimeout}.`);
 		}
 	}
 	const extra = Object.keys(request).filter((key) => !allowed.has(key) && (request as Json)[key] !== undefined);
@@ -428,14 +434,11 @@ async function confirm(reads: WaitReads, request: DesktopWait, abort?: AbortSign
 	}
 }
 
-/** Polls one read-only condition with backoff until it holds or the timeout passes. Sends no input. */
-export async function waitFor(reads: WaitReads, request: DesktopWait, abort?: AbortSignal): Promise<DesktopResult> {
-	validateWait(request);
-	const timeout = request.timeout_ms ?? WAIT_DEFAULT_MS;
+/** Polls a condition with backoff until it holds or the timeout passes. Sends no input. */
+async function poll(check: (signal: AbortSignal) => Promise<Check>, timeout: number, abort?: AbortSignal) {
 	const started = Date.now();
 	const deadline = AbortSignal.timeout(timeout);
 	const signal = abort ? AbortSignal.any([abort, deadline]) : deadline;
-	const check = checker(reads, request);
 	let last: Check | undefined;
 	let lastError: string | undefined;
 	let polls = 0;
@@ -457,11 +460,17 @@ export async function waitFor(reads: WaitReads, request: DesktopWait, abort?: Ab
 			break;
 		}
 	}
+	return { last, lastError, polls, elapsed: Date.now() - started };
+}
+
+/** What a poll ended with, in desktop_wait's result shape; an appeared element also gets a snapshot. */
+async function report(reads: WaitReads, request: DesktopWait, polled: Awaited<ReturnType<typeof poll>>, abort?: AbortSignal) {
+	const { last, lastError, polls, elapsed } = polled;
 	const matched = last?.holds === true;
 	const result: Json = {
 		until: request.until,
 		status: matched ? "matched" : "timed_out",
-		elapsed_ms: Date.now() - started,
+		elapsed_ms: elapsed,
 		polls,
 	};
 	let image: DesktopResult["image"];
@@ -476,8 +485,106 @@ export async function waitFor(reads: WaitReads, request: DesktopWait, abort?: Ab
 		result.last_observation = last?.observation ?? null;
 		if (lastError) result.last_error = lastError;
 	}
+	return { matched, result, image };
+}
+
+/** Polls one read-only condition with backoff until it holds or the timeout passes. Sends no input. */
+export async function waitFor(reads: WaitReads, request: DesktopWait, abort?: AbortSignal): Promise<DesktopResult> {
+	validateWait(request);
+	const polled = await poll(checker(reads, request), request.timeout_ms ?? WAIT_DEFAULT_MS, abort);
+	const { matched, result, image } = await report(reads, request, polled, abort);
 	result.note = note(request, matched);
 	return { text: JSON.stringify(result), ...(image ? { image } : {}) };
+}
+
+/** The condition an action's expect names: desktop_wait's arguments without op, with a shorter timeout. */
+export function validateExpect(expect: unknown): DesktopWait {
+	if (!expect || typeof expect !== "object" || Array.isArray(expect)) {
+		throw new Error("expect must be an object naming a desktop_wait condition with until.");
+	}
+	if ("op" in expect) throw new Error("expect takes desktop_wait's arguments without op.");
+	const request = { op: "wait", ...expect } as DesktopWait;
+	validateWait(request, EXPECT_MAX_MS);
+	return request;
+}
+
+/** Input the expectation follows: one action call, which runs at most once. */
+export type ExpectedAction = (signal?: AbortSignal) => Promise<DesktopResult>;
+
+/**
+ * Runs an action once, and when its outcome is unknown, polls the expected condition for a short time.
+ * The condition is read before input and must not already hold, so a later match shows the input's effect;
+ * the outcome becomes completed only on that match. Input is never repeated.
+ */
+export async function expectAfter(
+	reads: WaitReads,
+	expect: DesktopWait,
+	act: ExpectedAction,
+	abort?: AbortSignal,
+): Promise<DesktopResult> {
+	const check = checker(reads, expect);
+	let before: Check;
+	try {
+		before = await check(AbortSignal.any([...(abort ? [abort] : []), AbortSignal.timeout(CONFIRM_MS)]));
+	} catch (error) {
+		abort?.throwIfAborted();
+		return refusedExpect(expect, `The expected condition couldn't be read before input: ${message(error)}`, null);
+	}
+	if (before.holds) {
+		return refusedExpect(
+			expect,
+			"The expected condition already holds, so it can't show what this action does. Expect a condition the action changes, or leave out expect.",
+			before.observation,
+		);
+	}
+	if (before.observation.error !== undefined) {
+		return refusedExpect(
+			expect,
+			"The expected condition couldn't be read reliably before input, so a later match wouldn't show this action's effect. Fix the condition, or leave out expect.",
+			before.observation,
+		);
+	}
+	const result = await act(abort);
+	if (result.outcome !== "unknown") return result;
+	const data = JSON.parse(result.text) as Json;
+	const action = (data.action ?? {}) as Json;
+	let polled: Awaited<ReturnType<typeof poll>>;
+	try {
+		polled = await poll(check, expect.timeout_ms ?? EXPECT_DEFAULT_MS, abort);
+	} catch {
+		// Stopping ends the check, not the input already sent; the outcome stays unknown.
+		return expectResult(data, { until: expect.until, status: "interrupted" }, "unknown");
+	}
+	const { matched, result: expectation, image } = await report(reads, expect, polled).catch((error) => ({
+		matched: false,
+		result: { until: expect.until, status: "timed_out", last_error: message(error) } as Json,
+		image: undefined,
+	}));
+	if (!matched) {
+		expectation.note = "The condition did not hold before the timeout, so the outcome stays unknown. The input was not repeated; observe before acting again.";
+		return expectResult(data, expectation, "unknown");
+	}
+	expectation.note = "The condition did not hold before input and held after it, so the outcome is completed. It may change afterward; inspect before acting.";
+	return expectResult({ ...data, action: { ...action, outcome: "completed", native_outcome: "unknown" } }, expectation, "completed", image);
+}
+
+function refusedExpect(expect: DesktopWait, reason: string, observation: Json | null): DesktopResult {
+	const text = JSON.stringify({
+		action: { outcome: "refused", reason, message: "No input was sent." },
+		expectation: { until: expect.until, status: "refused", before: observation },
+	});
+	return { text: Buffer.byteLength(text) > MAX_RESULT ? JSON.stringify({ action: { outcome: "refused", reason, message: "No input was sent." } }) : text, outcome: "refused", isError: true };
+}
+
+/** Bounds an expectation that would make the action result too long, keeping its status and the action. */
+function expectResult(data: Json, expectation: Json, outcome: DesktopOutcome, image?: DesktopResult["image"]): DesktopResult {
+	let text = JSON.stringify({ ...data, expectation });
+	if (Buffer.byteLength(text) > MAX_RESULT) {
+		const { match: _match, last_observation: _last, inspection, ...rest } = expectation;
+		const kept = inspection ? { ...rest, inspection: { snapshot_id: (inspection as Json).snapshot_id } } : rest;
+		text = JSON.stringify({ ...data, expectation: { ...kept, omitted: "The observation exceeded the result limit; inspect to see it." } });
+	}
+	return { text, outcome, isError: outcome !== "completed", ...(image ? { image } : {}) };
 }
 
 function note(request: DesktopWait, matched: boolean) {

@@ -69,6 +69,11 @@ export type DesktopWait = {
 	timeout_ms?: number;
 };
 
+/** A desktop_wait condition an action checks after an unknown outcome; its timeout_ms is shorter. */
+export type DesktopExpect = Omit<DesktopWait, "op">;
+/** The actions that take expect; others opt in by joining this list and their tool's schema. */
+export const DESKTOP_EXPECT_OPS = ["click", "key", "system-key", "drag", "insert"] as const;
+
 /** Writes the full-resolution capture, or the part under region in global desktop points, as a PNG. */
 export type DesktopCaptureSave = {
 	save_path?: string;
@@ -124,6 +129,7 @@ export type DesktopRequest =
 		point?: DesktopPoint;
 		kind?: DesktopClick;
 		modifiers?: DesktopModifier[];
+		expect?: DesktopExpect;
 	}
 	| {
 		op: "scroll";
@@ -143,6 +149,7 @@ export type DesktopRequest =
 		duration_ms?: number;
 		modifiers?: DesktopModifier[];
 		path?: DesktopPoint[];
+		expect?: DesktopExpect;
 	}
 	| { op: "hover"; snapshot: string; element?: string; point?: DesktopPoint }
 	| {
@@ -154,7 +161,7 @@ export type DesktopRequest =
 		duration_ms?: number;
 	}
 	| { op: "type"; snapshot: string; element: string; text: string }
-	| { op: "insert"; snapshot: string; text: string; route?: "paste" | "type" }
+	| { op: "insert"; snapshot: string; text: string; route?: "paste" | "type"; expect?: DesktopExpect }
 	| { op: "element-action"; snapshot: string; element: string; action: DesktopElementAction }
 	| { op: "set-value"; snapshot: string; element: string; value: number | boolean | string }
 	| {
@@ -186,8 +193,9 @@ export type DesktopRequest =
 		keys?: { key: DesktopKey; modifiers?: DesktopModifier[] }[];
 		/** Presses key this many times, up to 32. */
 		repeat?: number;
+		expect?: DesktopExpect;
 	}
-	| { op: "system-key"; key: DesktopKey | DesktopSystemKey; modifiers?: DesktopModifier[] };
+	| { op: "system-key"; key: DesktopKey | DesktopSystemKey; modifiers?: DesktopModifier[]; expect?: DesktopExpect };
 
 export type DesktopPoint = { x: number; y: number };
 export const DESKTOP_CLICKS = ["single", "double", "right", "middle", "triple"] as const;

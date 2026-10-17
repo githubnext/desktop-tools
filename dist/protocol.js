@@ -14,6 +14,8 @@ export const DESKTOP_WAIT_CONDITIONS = [
     "app_frontmost",
     "app_quit",
 ];
+/** The actions that take expect; others opt in by joining this list and their tool's schema. */
+export const DESKTOP_EXPECT_OPS = ["click", "key", "system-key", "drag", "insert"];
 export const DESKTOP_CLICKS = ["single", "double", "right", "middle", "triple"];
 export const DESKTOP_DIRECTIONS = ["up", "down", "left", "right"];
 export const DESKTOP_BUTTONS = ["left", "right"];

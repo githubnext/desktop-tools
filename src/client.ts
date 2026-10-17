@@ -13,6 +13,7 @@ import {
 	DESKTOP_CLICKS,
 	DESKTOP_DIRECTIONS,
 	DESKTOP_ELEMENT_ACTIONS,
+	DESKTOP_EXPECT_OPS,
 	DESKTOP_MODIFIERS,
 	DESKTOP_SYSTEM_KEYS,
 	DESKTOP_SELECTIONS,
@@ -26,6 +27,7 @@ import {
 	type DesktopOutcome,
 	type DesktopRequest,
 	type DesktopResult,
+	type DesktopWait,
 	type DesktopWindowTarget,
 	type DesktopStatusItemTarget,
 	isDesktopAction,
@@ -41,7 +43,7 @@ import {
 } from "./notifications.js";
 import { setCell } from "./cell.js";
 import { buildTable, TABLE_ROWS_MAX, type TableElement, TableError } from "./table.js";
-import { waitFor } from "./wait.js";
+import { expectAfter, validateExpect, waitFor, type WaitReads } from "./wait.js";
 
 /** Explicit paths for one signed host and client pair; nothing is discovered. */
 export type DesktopConfig = {
@@ -1606,16 +1608,33 @@ async function execute(
 		if (isDesktopAction(request)) return actionResult({ outcome: "refused", reason }, "refused");
 		throw new Error(reason);
 	}
+	const reads: WaitReads = {
+		observe: (read, signal) => execute(native, read, signal),
+		elements: (input, signal) =>
+			native(["elements"], signal, {
+				input: JSON.stringify(input),
+				target: { pid: input.pid as number, window: input.window as number },
+			}),
+	};
 	// A wait bounds itself; each of its polls is one ordinary read with its own 30-second limit.
-	if (request.op === "wait") {
-		return await waitFor({
-			observe: (read, signal) => execute(native, read, signal),
-			elements: (input, signal) =>
-				native(["elements"], signal, {
-					input: JSON.stringify(input),
-					target: { pid: input.pid as number, window: input.window as number },
-				}),
-		}, request, abort);
+	if (request.op === "wait") return await waitFor(reads, request, abort);
+	// An expectation reads its condition before input and polls it after an unknown outcome, never repeating input.
+	if (isDesktopAction(request) && "expect" in request && request.expect !== undefined) {
+		const { expect, ...action } = request;
+		let condition: DesktopWait;
+		try {
+			if (!(DESKTOP_EXPECT_OPS as readonly string[]).includes(request.op)) {
+				throw new Error(`${request.op} doesn't take expect.`);
+			}
+			condition = validateExpect(expect);
+		} catch (error) {
+			return actionResult({
+				outcome: "refused",
+				reason: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
+				message: "No input was sent.",
+			}, "refused");
+		}
+		return await expectAfter(reads, condition, (signal) => execute(native, action as DesktopRequest, signal), abort);
 	}
 	// Notifications compose several reads, each with its own 30-second limit, under one overall limit.
 	if (request.op === "notifications" || request.op === "notification-action") {
