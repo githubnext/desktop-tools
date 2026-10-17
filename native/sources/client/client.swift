@@ -125,7 +125,7 @@ private enum Client {
 			let web = WebAccessibilityPolicy(allowed: !keep, handshake: handshake)
 			return try await nativeRead(client, pid: pid, window: window, scope: scope, web: web)
 		case "elements":
-			return try await nativeElements(client)
+			return try await nativeElements(client, handshake: handshake)
 		case "table":
 			return try await nativeTable(client)
 		case "apps":
