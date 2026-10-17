@@ -937,6 +937,26 @@ function validateAction(request: DesktopAction) {
 		}
 		return validateKey(request);
 	}
+	if (request.op === "insert" && "format" in request) {
+		const keys = ["op", "snapshot", "format", request.format === "files" ? "paths" : "path", "clipboard"];
+		if (Object.keys(request).some((key) => !keys.includes(key))) {
+			throw new Error("Insert an image with format image and path, or files with format files and paths, without text or route.");
+		}
+		if (request.clipboard !== undefined && request.clipboard !== "restore" && request.clipboard !== "replace") {
+			throw new Error("Choose clipboard restore or replace, or omit it.");
+		}
+		if (request.format === "files") {
+			if (
+				!Array.isArray(request.paths) || !request.paths.length || request.paths.length > 32
+				|| request.paths.some((path) => !isAbsoluteClipboardPath(path))
+			) throw new Error("Insert 1–32 absolute file paths.");
+			return;
+		}
+		if (request.format !== "image" || !isAbsoluteClipboardPath(request.path)) {
+			throw new Error("Insert format image with one absolute image path, or format files with paths.");
+		}
+		return;
+	}
 	if (request.op === "insert") {
 		if (typeof request.text !== "string" || !request.text || request.text.length > 8192) {
 			throw new Error("Inserted text must contain 1 to 8192 UTF-16 code units.");
@@ -1181,6 +1201,10 @@ async function exportClipboardImage(
 	}
 }
 
+function isAbsoluteClipboardPath(path: unknown): path is string {
+	return typeof path === "string" && path.startsWith("/") && path.length <= 4096 && !path.includes("\0");
+}
+
 async function clipboardImageInput(path: string, signal: AbortSignal): Promise<string> {
 	signal.throwIfAborted();
 	// Nonblocking open prevents a named pipe from waiting before its regular-file check.
@@ -1225,7 +1249,10 @@ async function act(
 	let data: Record<string, unknown>;
 	try {
 		validateAction(request);
-		if (request.op === "clipboard-write" && "format" in request && request.format === "files") {
+		if (
+			(request.op === "clipboard-write" || request.op === "insert") && "format" in request
+			&& request.format === "files"
+		) {
 			for (const path of request.paths) {
 				signal.throwIfAborted();
 				const entry = await lstat(path);
@@ -1243,6 +1270,14 @@ async function act(
 					op: request.op,
 					format: request.format,
 					image: await clipboardImageInput(request.path, signal),
+				}
+				: request.op === "insert" && "format" in request && request.format === "image"
+				? {
+					op: request.op,
+					snapshot: request.snapshot,
+					format: request.format,
+					image: await clipboardImageInput(request.path, signal),
+					clipboard: request.clipboard,
 				}
 				: request.op === "set-value" && typeof request.value === "string"
 				? { ...request, value: canonicalDate(request.value) }

@@ -107,6 +107,8 @@ export type DesktopWait = {
 };
 /** A desktop_wait condition an action checks after an unknown outcome; its timeout_ms is shorter. */
 export type DesktopExpect = Omit<DesktopWait, "op">;
+/** restore keeps the prior clipboard until the paste is observed; replace leaves the paste on the clipboard. */
+export type DesktopPasteClipboard = "restore" | "replace";
 /** The actions that take expect; others opt in by joining this list and their tool's schema. */
 export declare const DESKTOP_EXPECT_OPS: readonly ["click", "key", "system-key", "drag", "insert"];
 /** Writes the full-resolution capture, or the part under region in global desktop points, as a PNG. */
@@ -246,6 +248,20 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     snapshot: string;
     text: string;
     route?: "paste" | "type";
+    expect?: DesktopExpect;
+} | {
+    op: "insert";
+    snapshot: string;
+    format: "image";
+    path: string;
+    clipboard?: DesktopPasteClipboard;
+    expect?: DesktopExpect;
+} | {
+    op: "insert";
+    snapshot: string;
+    format: "files";
+    paths: string[];
+    clipboard?: DesktopPasteClipboard;
     expect?: DesktopExpect;
 } | {
     op: "element-action";

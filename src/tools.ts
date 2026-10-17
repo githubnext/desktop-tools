@@ -816,14 +816,23 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 			name: "desktop_insert",
 			op: "insert",
 			description:
-				`Insert text at the caret, or over the selection, in the window of a fresh desktop_inspect snapshot, keeping the text around it. Background, without activating the app. When the snapshot shows a focused control, it pastes the whole string, newlines included, through a temporary clipboard and restores it once it reads the edit back (route paste; needs clipboard read access). Otherwise, as in terminals, canvases and web editors, it types into the window's keyboard focus (route type): up to 1000 UTF-16 units, no newlines or tabs (press those with desktop_key), refused under secure keyboard entry, and unknown unless the host reads an observed control back. route forces either one. ${expectNote}`,
+				`Insert text at the caret, or over the selection, in the window of a fresh desktop_inspect snapshot, keeping the text around it. Background, without activating the app. When the snapshot shows a focused control, it pastes the whole string, newlines included, through a temporary clipboard and restores it once it reads the edit back (route paste; needs clipboard read access). Otherwise, as in terminals, canvases and web editors, it types into the window's keyboard focus (route type): up to 1000 UTF-16 units, no newlines or tabs (press those with desktop_key), refused under secure keyboard entry, and unknown unless the host reads an observed control back. route forces either one. Instead of text, format image with one absolute path (PNG, JPEG or TIFF up to 10 MiB) or format files with 1–32 absolute paths pastes attachments into a native text area such as TextEdit rich text, Mail or Notes: completed when one U+FFFC per item reads back in place of the selection, then the clipboard is restored. Any other receiver, including web fields, is refused with PASTE_UNVERIFIABLE_RECEIVER before input; clipboard replace pastes there anyway, leaving the item on the clipboard (left_replaced), and is unknown unless the attachment is seen. ${expectNote}`,
 			parameters: {
 				type: "object",
-				required: ["snapshot", "text"],
+				required: ["snapshot"],
 				properties: {
 					snapshot: id,
 					text: { type: "string", minLength: 1, maxLength: 8192 },
 					route: { type: "string", enum: ["paste", "type"] },
+					format: { type: "string", enum: ["image", "files"] },
+					path: { type: "string", minLength: 1, maxLength: 4096 },
+					paths: {
+						type: "array",
+						items: { type: "string", minLength: 1, maxLength: 4096 },
+						minItems: 1,
+						maxItems: 32,
+					},
+					clipboard: { type: "string", enum: ["restore", "replace"] },
 					expect,
 				},
 			},
