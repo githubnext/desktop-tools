@@ -4,8 +4,13 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Added
+
+- `npm run peekaboo-test` runs Peekaboo's Swift tests without signing credentials, and stops only that run's test helpers. ([#112](https://github.com/githubnext/desktop-tools/pull/112))
+
 ### Changed
 
+- `desktop_inspect` and `desktop_read` retry an incomplete Accessibility read once, and say `retried` when it fails again. ([#111](https://github.com/githubnext/desktop-tools/pull/111))
 - `desktop_wait` also turns on Chromium and Electron web accessibility before its element and text polls, so it finds web content as inspect and read do. ([#110](https://github.com/githubnext/desktop-tools/pull/110))
 
 ## [0.11.0] - 2026-10-17
