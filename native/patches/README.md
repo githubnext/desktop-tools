@@ -448,7 +448,13 @@ permission partition in `PeekabooBridgeRequestPlanTests`, and the mutating opera
 
 Peekaboo's tests take the real per-user `~/.peekaboo` locks, whatever `HOME` is. Run them in the
 foreground with a narrow `--filter` and a hard time limit, and never leave a run in the background:
-a stuck run blocks every desktop operation on the Mac, including the installed app. Run
+a stuck run blocks every desktop operation on the Mac, including the installed app.
+`npm run peekaboo-test -- --scratch <build scratch> --filter <suite> [--build]` does this for the
+checkout a `node dist/build.js --scratch` run left. `--package automationkit` runs PeekabooAutomationKit
+instead of PeekabooCore. It runs `swift test` in its own process group with a time limit (`--timeout`, at
+most 580 seconds) and kills any testing helper or test bundle left under this run's test scratch, and no
+other run's. It also leaves AI provider credentials (`*_API_KEY`, `*_TOKEN`) out of the environment, since
+PeekabooCore's agent tests refuse to run with them (`credentialEnvironmentPresent`). Run
 `PeekabooAutomationKitTests`, `PeekabooBridgeTests`, and the `PeekabooTests` Bridge suites (files
 named `*Bridge*`) in a few batches. Two upstream tests also
 fail on unpatched Peekaboo 4.8.0 on some hosts:
