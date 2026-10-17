@@ -518,7 +518,9 @@ const approvesCallers = () =>
 check(120, "input to Desktop Tools itself is refused with SELF_TARGET_REFUSED, and observing it still works", async (s, m) => {
 	approvesCallers();
 	const { data } = await m.call("desktop_apps", { query: HOST });
-	const host = (data.apps ?? []).find((a) => a.bundle_id === HOST) ?? skip("no Desktop Tools app is listed");
+	// The installed app or the dev app, whose ID is under it.
+	const host = (data.apps ?? []).find((a) => a.bundle_id === HOST || a.bundle_id?.startsWith(`${HOST}.`))
+		?? skip("no Desktop Tools app is listed");
 	const windows = await m.call("desktop_windows", { pid: host.target.pid });
 	const result = await m.call("desktop_activate", { target: host.target });
 	return expect(
