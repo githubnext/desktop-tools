@@ -105,6 +105,7 @@ private final class Desktop {
 						AgentWindow.shared.target(window: target.windowID, process: target.processIdentifier, agent: agent)
 					}
 				}
+				configuration.operationObserver = recordActivity
 				let next = PeekabooEmbeddedBridgeRuntime.make(configuration: configuration, feedbackClient: AgentCursor.shared)
 				runtime = next
 				try await next.startChecked()
@@ -167,6 +168,14 @@ public func setCursor(_ enabled: Bool) {
 public func setHighlight(_ enabled: Bool) {
 	state.setHighlight(enabled)
 	DispatchQueue.main.async { AgentWindow.shared.enabled = enabled }
+}
+
+/// Returns the recent operations as a JSON array, newest first; release it with `desktop_tools_free`.
+/// They are kept in memory only and never include typed text, clipboard contents or values.
+@_cdecl("desktop_tools_activity")
+public func activity() -> UnsafeMutablePointer<CChar>? {
+	let data = try! JSONEncoder().encode(Activity.shared.read())
+	return strdup(String(decoding: data, as: UTF8.self))
 }
 
 @_cdecl("desktop_tools_free")

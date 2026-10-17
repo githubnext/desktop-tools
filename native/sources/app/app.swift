@@ -10,6 +10,7 @@ private struct Runtime {
 	let permission: @convention(c) (UnsafePointer<CChar>) -> Void
 	let setCursor: @convention(c) (Bool) -> Void
 	let setHighlight: @convention(c) (Bool) -> Void
+	let activity: @convention(c) () -> UnsafeMutablePointer<CChar>?
 
 	init(_ path: String) {
 		guard let handle = dlopen(path, RTLD_NOW) else { fatalError(String(cString: dlerror())) }
@@ -24,6 +25,7 @@ private struct Runtime {
 		permission = symbol("desktop_tools_permission")
 		setCursor = symbol("desktop_tools_set_cursor")
 		setHighlight = symbol("desktop_tools_set_highlight")
+		activity = symbol("desktop_tools_activity")
 	}
 }
 
@@ -34,6 +36,21 @@ private struct Status: Decodable {
 	var screenRecording: Bool
 	var eventSynthesizing: Bool
 }
+
+/// One recent operation from the runtime, newest first; it never includes typed text or values.
+private struct Activity: Decodable {
+	var time: Double
+	var agent: String
+	var pid: Int32
+	var operation: String
+	var app: String?
+	var window: String?
+	var outcome: String
+	var count: Int
+}
+
+/// The menu lists this many recent operations; the rest are under All Activity.
+private let recentShown = 5
 
 @MainActor
 private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -129,7 +146,46 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		outline.state = highlight ? .on : .off
 		menu.addItem(outline)
 		menu.addItem(.separator())
+		renderActivity()
+		menu.addItem(.separator())
 		menu.addItem(withTitle: "Quit Desktop Tools", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+	}
+
+	private func readActivity() -> [Activity] {
+		guard let pointer = runtime.activity() else { return [] }
+		defer { runtime.free(pointer) }
+		return (try? JSONDecoder().decode([Activity].self, from: Data(String(cString: pointer).utf8))) ?? []
+	}
+
+	/// The last few operations agents ran, so use from outside this app stays visible.
+	private func renderActivity() {
+		let entries = readActivity()
+		menu.addItem(.sectionHeader(title: "Recent Activity"))
+		if entries.isEmpty {
+			menu.addItem(withTitle: "No agent activity since Desktop Tools started", action: nil, keyEquivalent: "")
+			return
+		}
+		for entry in entries.prefix(recentShown) { menu.addItem(activityItem(entry)) }
+		guard entries.count > recentShown else { return }
+		let all = NSMenu()
+		for entry in entries { all.addItem(activityItem(entry)) }
+		let more = NSMenuItem(title: "All Activity (\(entries.count))", action: nil, keyEquivalent: "")
+		more.submenu = all
+		menu.addItem(more)
+	}
+
+	private func activityItem(_ entry: Activity) -> NSMenuItem {
+		let target = [entry.app, entry.window].compactMap { $0 }.joined(separator: " — ")
+		let repeats = entry.count > 1 ? " ×\(entry.count)" : ""
+		let item = NSMenuItem(
+			title: entry.operation + repeats + (target.isEmpty ? "" : " · \(target)"),
+			action: nil,
+			keyEquivalent: "")
+		let time = Date(timeIntervalSince1970: entry.time).formatted(date: .omitted, time: .standard)
+		item.subtitle = "\(entry.agent) (\(entry.pid)) · \(time) · \(entry.outcome)"
+		let symbol = ["completed": "checkmark.circle", "refused": "xmark.circle"][entry.outcome] ?? "questionmark.circle"
+		item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: entry.outcome)
+		return item
 	}
 
 	@objc private func grant(_ sender: NSMenuItem) {
