@@ -81,7 +81,7 @@ private final class Desktop {
 					allowlistedTeams: [identity.team],
 					allowlistedBundles: [client],
 					allowedOperations: [
-						.listApplications, .listWindows, .listMenus, .menuCommand, .desktopObservation, .inspectAccessibilityTree,
+						.listApplications, .getFocusedElement, .listWindows, .listMenus, .menuCommand, .desktopObservation, .inspectAccessibilityTree,
 						.createSnapshot, .cleanSnapshot, .ownsSnapshot, .getDetectionResult, .beginSnapshotMutation,
 						.finishSnapshotMutation,
 						.targetedClick, .exactWindowTargetedClick, .setValue, .performAction, .exactWindowTargetedHotkey, .hotkey, .exactWindowTargetedTypeActions,

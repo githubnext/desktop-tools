@@ -120,12 +120,12 @@ private func display(for uuid: String, in displays: [Display]) -> Display? {
 	}
 }
 
-private func rect(_ bounds: Bounds) -> CGRect {
+func rect(_ bounds: Bounds) -> CGRect {
 	CGRect(x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height)
 }
 
 /// The display holding most of a rectangle in global top-left points.
-private func displayIndex(of area: CGRect, in displays: [Display]) -> Int? {
+func displayIndex(of area: CGRect, in displays: [Display]) -> Int? {
 	var best: (index: Int, area: CGFloat)?
 	for display in displays {
 		let overlap = rect(display.bounds).intersection(area)
@@ -143,7 +143,7 @@ private struct Focus {
 	let windowDisplay: Int?
 }
 
-private func normalWindows(_ options: CGWindowListOption) -> [(pid: Int32, id: Int, app: String?, bounds: CGRect)] {
+func normalWindows(_ options: CGWindowListOption) -> [(pid: Int32, id: Int, app: String?, bounds: CGRect)] {
 	let own = getpid()
 	let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
 	return list.compactMap { info in
