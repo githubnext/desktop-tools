@@ -100,7 +100,7 @@ export type DesktopRequest =
 		duration_ms?: number;
 	}
 	| { op: "type"; snapshot: string; element: string; text: string }
-	| { op: "insert"; snapshot: string; text: string }
+	| { op: "insert"; snapshot: string; text: string; route?: "paste" | "type" }
 	| { op: "element-action"; snapshot: string; element: string; action: DesktopElementAction }
 	| { op: "set-value"; snapshot: string; element: string; value: number | boolean }
 	| {

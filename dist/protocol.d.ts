@@ -182,6 +182,7 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     op: "insert";
     snapshot: string;
     text: string;
+    route?: "paste" | "type";
 } | {
     op: "element-action";
     snapshot: string;

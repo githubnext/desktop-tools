@@ -640,6 +640,9 @@ function validateAction(request) {
         if (typeof request.text !== "string" || !request.text || request.text.length > 8192) {
             throw new Error("Inserted text must contain 1 to 8192 UTF-16 code units.");
         }
+        if (request.route !== undefined && request.route !== "paste" && request.route !== "type") {
+            throw new Error("Choose the paste or type route, or omit route.");
+        }
         return;
     }
     if (typeof request.element !== "string" || !request.element || request.element.length > 256) {
