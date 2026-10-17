@@ -4,8 +4,9 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { deflateSync } from "node:zlib";
 
@@ -30,8 +31,8 @@ const only = new Set((values.only ?? []).flatMap((v) => v.split(",")).map((v) =>
 
 const TEXTEDIT = "com.apple.TextEdit";
 const FINDER = "com.apple.finder";
-const SAFARI = "com.apple.Safari";
 const CHROME = "com.google.Chrome";
+const SAFARI = "com.apple.Safari";
 const run = randomBytes(3).toString("hex");
 
 // ---------- MCP client ----------
@@ -278,6 +279,7 @@ class Session {
 		this.launched = new Map(); // bundle_id -> target, apps not running before
 		this.memo = new Map();
 		this.restore = []; // async functions, run last first
+		this.chromes = new Set(); // isolated Chrome instances: { child, profile, target }
 	}
 
 	async runningTarget(bundleId) {
@@ -361,15 +363,6 @@ class Session {
 		});
 	}
 
-	chrome() {
-		return this.once("chrome", async () => {
-			if (!existsSync("/Applications/Google Chrome.app")) skip("Google Chrome is not installed in /Applications");
-			// A running Chrome may already have web accessibility on, and holds the user's windows.
-			if (await this.runningTarget(CHROME)) skip("Chrome is running; quit it to run the Chromium checks");
-			return this.openWindow(this.fixtures.page, CHROME, `Live page ${run}`, "Chrome fixture page");
-		});
-	}
-
 	async inspect(win, extra = {}) {
 		const result = await this.mcp.call("desktop_inspect", { pid: win.pid, window: win.window, ...extra });
 		const snap = result.data.snapshot_id;
@@ -381,7 +374,63 @@ class Session {
 		return this.mcp.call("desktop_read", { pid: win.pid, window: win.window, ...extra });
 	}
 
+	/**
+	 * A fresh, isolated Chrome on the fixture page: its own temporary profile, so it never shares a process, window
+	 * or setting with the user's Chrome. Each call launches a new instance, whose web accessibility starts off.
+	 */
+	async launchChrome() {
+		const app = ["/Applications/Google Chrome.app", join(homedir(), "Applications", "Google Chrome.app")].find((path) =>
+			existsSync(join(path, "Contents", "MacOS", "Google Chrome")),
+		) ?? skip("Google Chrome isn't installed in /Applications or ~/Applications; the Chromium checks need it");
+		const profile = mkdtempSync(join(tmpdir(), `desktop-tools-live-chrome-${run}-`));
+		const child = spawn(
+			join(app, "Contents", "MacOS", "Google Chrome"),
+			[`--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--new-window", pathToFileURL(this.fixtures.page).href],
+			{ stdio: "ignore", detached: true },
+		);
+		const chrome = { child, profile, target: null, exited: new Promise((resolve) => child.once("exit", resolve)) };
+		child.once("error", () => {}); // A failed spawn shows as no window below.
+		child.unref();
+		this.chromes.add(chrome);
+		for (let attempt = 0; attempt < 40 && child.exitCode === null; attempt++) {
+			const { data } = await this.mcp.call("desktop_apps", { query: CHROME });
+			chrome.target ??= (data.apps ?? []).find((a) => a.pid === child.pid)?.target ?? null;
+			if (chrome.target) {
+				const win = (await this.windows(child.pid)).find((w) => (w.window_title ?? "").includes(`Live page ${run}`));
+				if (win) return { pid: child.pid, window: win.window_id, target: chrome.target, info: win, chrome };
+			}
+			await sleep(500);
+		}
+		await this.quitChrome(chrome);
+		throw new Error(`The isolated Chrome (pid ${child.pid}) showed no window for the fixture page.`);
+	}
+
+	/** Quits only the Chrome process the harness started, then removes its profile. */
+	async quitChrome(chrome, log = () => {}) {
+		if (!this.chromes.delete(chrome)) return;
+		const { child, profile, target } = chrome;
+		if (child.exitCode === null && target) {
+			const quit = await this.mcp.call("desktop_quit", { target });
+			log(`quit the isolated Chrome (pid ${child.pid}): ${quit.outcome}`);
+		}
+		const gone = await Promise.race([chrome.exited.then(() => true), sleep(8000).then(() => false)]);
+		if (!gone && child.exitCode === null) {
+			// The child is this harness's own process, never the user's Chrome.
+			child.kill("SIGTERM");
+			log(`terminated the isolated Chrome (pid ${child.pid}), which didn't quit in time`);
+			await Promise.race([chrome.exited, sleep(3000)]);
+		}
+		rmSync(profile, { recursive: true, force: true });
+	}
+
 	async cleanup(log) {
+		for (const chrome of [...this.chromes]) {
+			try {
+				await this.quitChrome(chrome, log);
+			} catch (error) {
+				log(`could not quit the isolated Chrome (pid ${chrome.child.pid}): ${error.message}`);
+			}
+		}
 		for (const undo of this.restore.reverse()) {
 			try {
 				await undo();
@@ -444,47 +493,18 @@ const selectedNames = (table) => (table?.rows ?? []).filter((r) => r.selected).m
 const checks = [];
 const check = (pr, title, run, notes) => checks.push({ pr: String(pr), title, run, notes });
 
-// 0.11.0
-check(107, "desktop_inspect turns on a fresh Chrome's web accessibility once, and lists the page's fields", async (s, m) => {
-	if (!m.tools.get("desktop_inspect")?.inputSchema?.properties?.web_accessibility) skip("this build's desktop_inspect has no web_accessibility (#107 not in it)");
-	const win = await s.chrome();
-	const first = await s.inspect(win);
-	const field = find(first.els, "AXTextField", /Controlled field/);
-	const again = await s.inspect(win);
-	const kept = await s.inspect(win, { web_accessibility: false });
-	return expect(
-		first.result.data.web_accessibility === "enabled" && field
-			&& again.result.data.web_accessibility === "already_on" && kept.result.data.web_accessibility === undefined,
-		`first ${first.result.data.web_accessibility} with ${first.els.length} elements, field ${field ? "found" : "missing"}; again ${again.result.data.web_accessibility}; opted out ${kept.result.data.web_accessibility}`,
-	);
-}, "Launches Chrome on the fixture page and quits it after; it may restore the user's last Chrome session meanwhile.");
+/** Runs a check against its own fresh isolated Chrome, so web accessibility starts off, and quits it after. */
+const withChrome = (body) => async (s, m) => {
+	const win = await s.launchChrome();
+	try {
+		return await body(s, m, win);
+	} finally {
+		await s.quitChrome(win.chrome);
+	}
+};
+const ISOLATED = "Launches an isolated Chrome (temporary profile, no first-run UI) on the fixture page, then quits only that process and deletes the profile.";
 
-check(110, "desktop_wait text_contains on a fresh Chrome turns on web accessibility and finds the page's text", async (s, m) => {
-	if (!m.tools.get("desktop_wait")?.inputSchema?.properties?.web_accessibility) skip("this build's desktop_wait has no web_accessibility (#110 not in it)");
-	const win = await s.chrome();
-	const wait = { until: "text_contains", pid: win.pid, window: win.window, text: "riverbank link", timeout_ms: 5000 };
-	const result = await m.call("desktop_wait", wait);
-	const state = result.data.match?.web_accessibility;
-	const kept = await m.call("desktop_wait", { ...wait, web_accessibility: false });
-	// An earlier Chrome check in this run may have turned it on already.
-	return expect(
-		result.data.status === "matched" && (state === "enabled" || state === "already_on")
-			&& kept.data.status === "matched" && kept.data.match?.web_accessibility === undefined,
-		`${result.data.status}, web_accessibility ${state}; opted out ${kept.data.status}, ${kept.data.match?.web_accessibility}`,
-	);
-}, "Launches Chrome on the fixture page and quits it after, like the #107 Chrome check.");
-
-check(107, "desktop_read leaves Safari's web accessibility alone and reports nothing", async (s, m) => {
-	if (!m.tools.get("desktop_read")?.inputSchema?.properties?.web_accessibility) skip("this build's desktop_read has no web_accessibility (#107 not in it)");
-	const win = await s.web();
-	const read = await s.read(win);
-	return expect(
-		read.data.web_accessibility === undefined && (read.data.text ?? "").includes(`Live page ${run}`),
-		`web_accessibility ${read.data.web_accessibility}; text ${brief(read.data.text, 80)}`,
-	);
-});
-
-// 0.10.0
+// 0.13.0
 const finderPaste = (m) =>
 	/PASTE_NAME_EXISTS/.test(m.tools.get("desktop_insert")?.description ?? "") ||
 	skip("this build's desktop_insert doesn't paste into Finder folders (#114 not in it)");
@@ -531,6 +551,53 @@ check(114, "desktop_insert format files refuses a name already in the Finder fol
 	);
 });
 
+// 0.12.0
+check(111, "desktop_read right after Chrome launches returns the page, or fails saying it retried", withChrome(async (s, m, win) => {
+	// No wait for the page to settle: the first read races Chrome building its web tree.
+	const read = await s.read(win);
+	const text = read.data.text ?? "";
+	if (!read.isError) return expect(text.includes("quick brown fox"), `read ${read.data.web_accessibility}; page text ${text.includes("quick brown fox") ? "present" : "missing"}`);
+	return expect(read.data.retried === true, `failed with retried ${read.data.retried}: ${brief(read.text, 160)}`);
+}), `${ISOLATED} A read that succeeded may have retried once without saying so; only a failure after the retry reports it.`);
+
+check(110, "desktop_wait element_appears on a fresh Chrome turns on web accessibility and finds a page element", withChrome(async (s, m, win) => {
+	if (!m.tools.get("desktop_wait")?.inputSchema?.properties?.web_accessibility) skip("this build's desktop_wait has no web_accessibility (#110 not in it)");
+	// Only the page has tables; Chrome's own toolbar has none, so a match needs the web tree.
+	const result = await m.call("desktop_wait", { until: "element_appears", pid: win.pid, window: win.window, element: { role: "AXTable" }, timeout_ms: 8000 });
+	const state = result.data.match?.web_accessibility;
+	const text = { until: "text_contains", pid: win.pid, window: win.window, text: "riverbank link", timeout_ms: 5000 };
+	const kept = await m.call("desktop_wait", { ...text, web_accessibility: false });
+	return expect(
+		result.data.status === "matched" && state === "enabled"
+			&& kept.data.status === "matched" && kept.data.match?.web_accessibility === undefined,
+		`element ${result.data.status}, web_accessibility ${state}; text with it opted out ${kept.data.status}, ${kept.data.match?.web_accessibility}`,
+	);
+}), ISOLATED);
+
+// 0.11.0
+check(107, "desktop_inspect turns on a fresh Chrome's web accessibility once, and lists the page's fields", withChrome(async (s, m, win) => {
+	if (!m.tools.get("desktop_inspect")?.inputSchema?.properties?.web_accessibility) skip("this build's desktop_inspect has no web_accessibility (#107 not in it)");
+	const first = await s.inspect(win);
+	const field = find(first.els, "AXTextField", /Controlled field/);
+	const again = await s.inspect(win);
+	const kept = await s.inspect(win, { web_accessibility: false });
+	return expect(
+		first.result.data.web_accessibility === "enabled" && field
+			&& again.result.data.web_accessibility === "already_on" && kept.result.data.web_accessibility === undefined,
+		`first ${first.result.data.web_accessibility} with ${first.els.length} elements, field ${field ? "found" : "missing"}; again ${again.result.data.web_accessibility}; opted out ${kept.result.data.web_accessibility}`,
+	);
+}), ISOLATED);
+
+check(107, "desktop_read leaves Safari's web accessibility alone and reports nothing", async (s, m) => {
+	if (!m.tools.get("desktop_read")?.inputSchema?.properties?.web_accessibility) skip("this build's desktop_read has no web_accessibility (#107 not in it)");
+	const win = await s.web();
+	const read = await s.read(win);
+	return expect(
+		read.data.web_accessibility === undefined && (read.data.text ?? "").includes(`Live page ${run}`),
+		`web_accessibility ${read.data.web_accessibility}; text ${brief(read.data.text, 80)}`,
+	);
+});
+
 check(99, "desktop_insert pastes a PNG into a TextEdit rich document and restores the clipboard", async (s, m) => {
 	const insert = m.tools.get("desktop_insert");
 	if (!insert?.inputSchema?.properties?.format) skip("this build's desktop_insert has no attachment format (#99 not in it)");
@@ -568,6 +635,7 @@ check(99, "desktop_insert of an image into a web field refuses with PASTE_UNVERI
 	);
 });
 
+// 0.10.0
 check(96, "clipboard image save_path writes the PNG's original bytes", async (s, m) => {
 	await s.clipboard();
 	const write = await m.call("desktop_clipboard_write", { format: "image", path: s.fixtures.image });

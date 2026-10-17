@@ -17,7 +17,8 @@ What it touches:
 - It makes its own fixtures in a new `/tmp/desktop-tools-live-*` folder: a plain and a rich TextEdit document, a Finder folder of eight files and a subfolder, a PNG, and a web page with a React-style controlled input, a date input, a contenteditable, a table with `<th>` headers and a grid of inputs. The folder is removed at the end unless `--keep-fixtures` is passed.
 - It opens those fixtures in TextEdit, Finder and Safari with `desktop_open`, and acts only on the new windows. At the end, even after a failure or Control-C, it closes each window it opened and quits only the apps it launched itself. A fixture document that asks to save is answered with Delete or Don't Save, on that document only.
 - Web checks are skipped while Safari has windows open, since a fixture page could open as a tab in one of them.
-- The Chromium check (#107) runs only when Google Chrome is installed and not running. It opens the fixture page in Chrome, which may also restore the user's last Chrome session, and quits Chrome at the end.
+- The Chromium checks (#107, #110 and #111) each launch their own Chrome on the fixture page, isolated from the user's: a new temporary profile (`--user-data-dir`), with `--no-first-run` and `--no-default-browser-check`. They run alongside a Chrome the user already has open, never touch its windows, and quit only the process they started before deleting its profile, so each check starts with web accessibility off. They are skipped when Google Chrome isn't in `/Applications` or `~/Applications`.
+- The Finder paste checks (#114) paste the fixtures' own files into the fixture folder, and the folder goes when the fixtures do.
 - Clipboard checks run only when the clipboard holds plain text, and that text is written back at the end. The input-source check selects another enabled keyboard layout, then the original again.
 - Modifier clicks (#77) and `desktop_system_key` (#89) use the real keyboard and pointer, as they always do; nothing else needs the foreground.
 
@@ -28,11 +29,11 @@ These stay manual, because they are destructive, change system settings, need a 
 - **#80 media, volume and brightness keys:** they change the output volume, playback and display brightness system-wide, and each delivered key is `unknown`.
 - **#43 window outline:** what the outline looks like, during a Space switch, on a full-screen window and while dragging; the menu toggle; clicks through the margin and label.
 - **#78 full screen, #66 Spaces and #1 `other_space`:** each needs a second Space.
-- **#1 incomplete Accessibility retry:** it needs a web view whose first read comes back incomplete, which can't be produced on demand; when one does, the inspect or read lists the page after its retry, or fails with `retried: true`.
+- **#1 incomplete Accessibility retry:** the #111 check reads a Chrome page the moment it opens, which passes whether or not that first read raced the page. A read that comes back incomplete twice can't be produced on demand; when one does, it should fail with `retried: true`.
 - **#2 two displays:** negative-origin displays, rearranging a display between inspect and click, and SIGKILL of a client mid-drag.
 - **#3 clipboard lifecycle:** SIGKILL of the MCP client during an insert, and quitting Desktop Tools after an uncertain insert.
 - **#99 wedge and permission cases:** an image into a plain-text TextEdit document (holds the clipboard until TextEdit quits), `clipboard: "replace"` into Slack or a browser, Mail and Notes, a 10 MiB TIFF, and clipboard read access set to Ask.
-- **#100 Pause All Input and #98 Recent Activity:** both are read and toggled in the app's menu.
+- **#100 Pause All Input and #98 Recent Activity:** both are read and toggled in the app's menu. Pause is the user's alone, so the harness never chooses it through agent input, not even in a test.
 - **#74 notifications:** they need banners from a real app, and closing or opening one acts on it.
 - **#41 Dock and status menus:** the Dock right-click moves the pointer, and a third-party status menu belongs to the user.
 - **#57, #4 and #9 Open and Save panels:** a Save sheet can write files outside the fixtures if answered wrongly.
