@@ -27,7 +27,7 @@ The build:
 
 1. Resolves only the versions in `Package.resolved`.
 2. Checks Peekaboo's pinned revision.
-3. Assembles the ordered patch stack in a private Git index and applies only the missing suffix. Drift from every complete prefix fails the build instead of producing unexpected source.
+3. Assembles the ordered patch stack in a private Git index and applies only the missing suffix. The checkout under `<scratch>/checkouts/Peekaboo` is build scratch: when it matches no complete prefix, as after an earlier revision of a patch or a local edit, the build says so with its path, discards its local changes, and applies the whole stack. It still fails if the result differs from the stack. Keep Peekaboo edits you want in a patch, not in the checkout.
 4. Builds in release mode.
 
 `--out` receives `libDesktopTools.dylib`, `desktop-tools-client`, `desktop-tools-app` (the [Desktop Tools app](app.md) host), and `Licenses/<dependency>/` notices for this package and every resolved pin. Existing files in `<out>/Licenses` are kept.
