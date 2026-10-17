@@ -222,6 +222,19 @@ public func activity() -> UnsafeMutablePointer<CChar>? {
 	return strdup(String(decoding: data, as: UTF8.self))
 }
 
+/// Appends each listed operation to `path`, created readable only by the user, one line each, newest last. Past
+/// 1 MiB the file moves to `<path>.1`. Pass NULL to stop.
+@_cdecl("desktop_tools_set_log")
+public func setLog(_ path: UnsafePointer<CChar>?) {
+	ActivityLog.shared.open(path.map { String(cString: $0) })
+}
+
+/// Appends one line of the embedding app's own to the log, such as when it starts or the user pauses input.
+@_cdecl("desktop_tools_log")
+public func log(_ message: UnsafePointer<CChar>) {
+	ActivityLog.shared.write(String(cString: message))
+}
+
 @_cdecl("desktop_tools_free")
 public func release(_ value: UnsafeMutableRawPointer?) {
 	free(value)
