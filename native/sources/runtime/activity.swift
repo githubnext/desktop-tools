@@ -9,9 +9,9 @@ import PeekabooBridge
 struct ActivityEntry: Encodable, Equatable {
 	/// Seconds since 1970 of the latest repeat.
 	var time: Double
-	/// The agent's name from DESKTOP_TOOLS_AGENT, or the name of the process that ran the client.
+	/// The caller's name, as approved: the nearest ancestor of the client that isn't a launcher or shell.
 	let agent: String
-	/// The process that ran the client, such as the MCP server; it lives as long as the agent's session.
+	/// The caller's process, such as Claude Code or a terminal app.
 	let pid: Int32
 	let operation: String
 	let app: String?
@@ -140,6 +140,11 @@ final class Pause: @unchecked Sendable {
 		if pauseExempt.contains(operation) { return false }
 		return mutatesDesktop || clipboardWrites.contains(operation)
 	}
+
+	/// Input or a window or app change, which could reach the host's own prompt or menu; clipboard writes can't.
+	static func isInput(_ operation: PeekabooBridgeOperation, mutatesDesktop: Bool) -> Bool {
+		mutatesDesktop && !pauseExempt.contains(operation)
+	}
 }
 
 private let clipboardWrites: Set<PeekabooBridgeOperation> = [.clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite]
@@ -160,14 +165,12 @@ func recordActivity(_ record: PeekabooBridgeOperationRecord) {
 		let name = activityNames[operation] ?? (record.mutatesDesktop ? operation.rawValue : nil)
 	else { return }
 	if operation == .enableWebAccessibility, !WebAccessibilityLaunches.shared.isFirst(record) { return }
+	let caller = Callers.shared.resolve(client: record.clientProcessIdentifier)
 	let parent = parentProcess(of: record.clientProcessIdentifier)
-	let agent = agentName(of: record.clientProcessIdentifier)
-		?? parent.flatMap(processName)
-		?? "Unknown agent"
 	Activity.shared.append(ActivityEntry(
 		time: Date().timeIntervalSince1970,
-		agent: agent,
-		pid: parent ?? record.clientProcessIdentifier,
+		agent: caller?.caller.name ?? parent.flatMap(processName) ?? "Unknown agent",
+		pid: caller?.pid ?? parent ?? record.clientProcessIdentifier,
 		operation: name,
 		app: record.targetProcessIdentifier.flatMap { NSRunningApplication(processIdentifier: $0)?.localizedName },
 		window: record.targetWindowID.flatMap(windowTitle),
@@ -196,7 +199,7 @@ private final class WebAccessibilityLaunches: @unchecked Sendable {
 }
 
 /// When the process started, which tells two launches with the same pid apart.
-private func processStart(_ process: pid_t) -> String? {
+func processStart(_ process: pid_t) -> String? {
 	var info = kinfo_proc()
 	var size = MemoryLayout<kinfo_proc>.stride
 	var mib = [CTL_KERN, KERN_PROC, KERN_PROC_PID, process]
@@ -205,7 +208,7 @@ private func processStart(_ process: pid_t) -> String? {
 	return "\(start.tv_sec).\(start.tv_usec)"
 }
 
-private func parentProcess(of process: pid_t) -> pid_t? {
+func parentProcess(of process: pid_t) -> pid_t? {
 	var info = kinfo_proc()
 	var size = MemoryLayout<kinfo_proc>.stride
 	var mib = [CTL_KERN, KERN_PROC, KERN_PROC_PID, process]

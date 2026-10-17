@@ -4,7 +4,7 @@ The [MCP server](mcp.md) and `desktopTools()` expose 47 tools, one per protocol 
 
 [Recipes](recipes.md) give tool sequences, derived from the code, for tasks that take several calls, such as printing to PDF, installing from a DMG or filling a web form.
 
-Targets are exact: an app target binds a process generation, and a window target binds its window ID and bounds. Input acts on a single-use snapshot from the latest `desktop_inspect`. A stale or changed target is refused rather than redirected. Action results report `completed`, `refused`, or `unknown`, and nothing is retried automatically.
+Targets are exact: an app target binds a process generation, and a window target binds its window ID and bounds. Input acts on a single-use snapshot from the latest `desktop_inspect`. A stale or changed target is refused rather than redirected. Action results report `completed`, `refused`, or `unknown`, and nothing is retried automatically. The Desktop Tools app refuses every call from an agent the user hasn't allowed with `CALLER_NOT_APPROVED`, and input aimed at its own prompts, menus and windows, or sent while one of its prompts or menus is open, with `SELF_TARGET_REFUSED`; see [approved agents](app.md#approved-agents).
 
 ## Find and observe
 

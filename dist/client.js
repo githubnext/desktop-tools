@@ -92,6 +92,29 @@ async function run(path, args, signal, errorJson = false, input, agent) {
         throw new Error((failed.stderr?.trim() || failed.message).slice(0, 2000), { cause: error });
     }
 }
+/** Refusals the host owns rather than Peekaboo: their message starts with the code agents should see. */
+const HOST_REFUSAL = /^(CALLER_NOT_APPROVED|SELF_TARGET_REFUSED): /;
+/** What the agent can do about each host refusal: only the user can answer it. */
+const HOST_REFUSAL_HINTS = {
+    CALLER_NOT_APPROVED: "Ask the user to choose Allow for this agent in the Desktop Tools prompt or under Approved Agents in its menu, then retry once.",
+    SELF_TARGET_REFUSED: "Ask the user to act on Desktop Tools' own prompt, menu or window; don't retry it or work around it.",
+};
+/**
+ * Gives a host refusal its own code and hint, in place of Peekaboo's generic permission code and its advice to grant
+ * a permission.
+ */
+export function hostRefusal(error) {
+    const match = HOST_REFUSAL.exec(error.message);
+    if (!match)
+        return error;
+    const code = match[1];
+    return {
+        ...error,
+        code,
+        message: error.message.slice(match[0].length),
+        ...("hint" in error ? { hint: HOST_REFUSAL_HINTS[code] } : {}),
+    };
+}
 const caller = (config) => async (args, signal, options = {}) => {
     const { client, socket } = config;
     if (!existsSync(client))
@@ -113,7 +136,9 @@ const caller = (config) => async (args, signal, options = {}) => {
         throw new Error("The native desktop client returned an unsupported response.");
     }
     if (!value.success) {
-        const error = value.error;
+        const error = value.error && hostRefusal(value.error);
+        if (error && error.code !== value.error.code)
+            throw new NativeError(error.code, `${error.code}: ${error.message}`);
         const reason = error ? `${error.code}: ${error.message}` : "Native desktop operation failed";
         const name = config.name ?? "the desktop host app";
         const permission = error?.code.toLowerCase().includes("permission")
@@ -135,6 +160,10 @@ const caller = (config) => async (args, signal, options = {}) => {
         if (receipt.pid !== target.pid || receipt.window_id !== target.window) {
             throw new Error("Native inspection returned a different application or window. Refresh the desktop inventory and select the target again.");
         }
+    }
+    const refusal = value.data.error;
+    if (typeof refusal?.code === "string" && typeof refusal.message === "string") {
+        value.data.error = hostRefusal(refusal);
     }
     return {
         ...value.data,

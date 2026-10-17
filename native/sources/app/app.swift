@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import DesktopToolsCallers
 
 // The runtime is loaded, not linked, so the app stays a thin host for the same library embedding apps ship.
 private struct Runtime {
@@ -12,6 +13,8 @@ private struct Runtime {
 	let setHighlight: @convention(c) (Bool) -> Void
 	let activity: @convention(c) () -> UnsafeMutablePointer<CChar>?
 	let setPaused: @convention(c) (Bool) -> Void
+	let setCallerHandler: @convention(c) ((@convention(c) (UnsafePointer<CChar>) -> Void)?) -> Void
+	let setCallers: @convention(c) (UnsafePointer<CChar>) -> Void
 
 	init(_ path: String) {
 		guard let handle = dlopen(path, RTLD_NOW) else { fatalError(String(cString: dlerror())) }
@@ -28,6 +31,8 @@ private struct Runtime {
 		setHighlight = symbol("desktop_tools_set_highlight")
 		activity = symbol("desktop_tools_activity")
 		setPaused = symbol("desktop_tools_set_paused")
+		setCallerHandler = symbol("desktop_tools_set_caller_handler")
+		setCallers = symbol("desktop_tools_set_callers")
 	}
 }
 
@@ -55,8 +60,17 @@ private struct Activity: Decodable {
 /// The menu lists this many recent operations; the rest are under All Activity.
 private let recentShown = 5
 
+/// The runtime asks about an unknown caller on its own thread; the app answers on the main thread.
+private let callerAsked: @convention(c) (UnsafePointer<CChar>) -> Void = { json in
+	let data = Data(String(cString: json).utf8)
+	DispatchQueue.main.async {
+		MainActor.assumeIsolated { Host.current?.ask(about: data) }
+	}
+}
+
 @MainActor
 private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
+	static weak var current: Host?
 	private let runtime: Runtime
 	private let socket: String
 	private let client: String
@@ -68,6 +82,11 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	// The app shows the agent cursor and window outline unless the user turned them off; embedding apps start with them off.
 	private var cursor = UserDefaults.standard.object(forKey: "agentCursor") as? Bool ?? true
 	private var highlight = UserDefaults.standard.object(forKey: "agentWindow") as? Bool ?? true
+	/// The user's answer for each caller, kept in the state directory; a missing file asks about every caller again.
+	private let decisionsFile: URL
+	private var decisions: [CallerDecision]
+	/// Callers asked about and not answered yet, newest last.
+	private var waiting: [Caller] = []
 
 	override init() {
 		let bin = Bundle.main.executableURL!.deletingLastPathComponent()
@@ -91,7 +110,10 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		else { fatalError("Cannot link the desktop client at \(link)") }
 		socket = home.appendingPathComponent("desktop.sock").path
 		client = Bundle.main.bundleIdentifier! + ".desktop-client"
+		decisionsFile = home.appendingPathComponent(CallerDecisions.fileName)
+		decisions = CallerDecisions.load(decisionsFile)
 		super.init()
+		Host.current = self
 	}
 
 	func applicationDidFinishLaunching(_: Notification) {
@@ -100,6 +122,8 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		item.menu = menu
 		runtime.setCursor(cursor)
 		runtime.setHighlight(highlight)
+		pushDecisions()
+		runtime.setCallerHandler(callerAsked)
 		runtime.start(socket, client)
 		render()
 	}
@@ -142,6 +166,7 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 			menu.addItem(entry)
 		}
 		menu.addItem(.separator())
+		renderCallers()
 		let pause = NSMenuItem(title: "Pause All Input", action: #selector(togglePause), keyEquivalent: "")
 		pause.target = self
 		pause.state = paused ? .on : .off
@@ -163,6 +188,102 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		renderActivity()
 		menu.addItem(.separator())
 		menu.addItem(withTitle: "Quit Desktop Tools", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+	}
+
+	/// Approved Agents: every caller the user answered or hasn't yet, each with what the user can change.
+	private func renderCallers() {
+		let list = NSMenu()
+		let rows: [(Caller, String, [(String, Selector)])] =
+			waiting.map { ($0, "clock", [("Allow", #selector(allowCaller(_:))), ("Don't Allow", #selector(denyCaller(_:)))]) }
+			+ decisions.sorted { $0.decided > $1.decided }.map {
+				$0.allowed
+					? ($0.caller, "checkmark.circle", [("Revoke", #selector(denyCaller(_:)))])
+					: ($0.caller, "xmark.circle", [("Allow", #selector(allowCaller(_:))), ("Forget", #selector(forgetCaller(_:)))])
+			}
+		if rows.isEmpty {
+			list.addItem(withTitle: "No agents have asked yet", action: nil, keyEquivalent: "")
+		}
+		for (caller, symbol, actions) in rows {
+			let row = NSMenuItem(title: caller.name, action: nil, keyEquivalent: "")
+			row.subtitle = caller.origin
+			row.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+			let choices = NSMenu()
+			for (title, action) in actions {
+				let choice = NSMenuItem(title: title, action: action, keyEquivalent: "")
+				choice.target = self
+				choice.representedObject = caller.key
+				choices.addItem(choice)
+			}
+			row.submenu = choices
+			list.addItem(row)
+		}
+		let agents = NSMenuItem(title: waiting.isEmpty ? "Approved Agents" : "Approved Agents (\(waiting.count) waiting)",
+			action: nil, keyEquivalent: "")
+		agents.submenu = list
+		menu.addItem(agents)
+	}
+
+	/// Asks the user about a caller the runtime refused for now. The caller isn't waiting; it was told to retry.
+	fileprivate func ask(about data: Data) {
+		guard let caller = try? JSONDecoder().decode(Caller.self, from: data),
+			!decisions.contains(where: { $0.caller.key == caller.key })
+		else { return }
+		waiting.removeAll { $0.key == caller.key }
+		waiting.append(caller)
+		Task {
+			let answer = await Confirmations.shared.ask(.init(
+				key: "caller \(caller.key)",
+				title: "Allow \(caller.name) to control this Mac?",
+				message: """
+					\(caller.origin)
+
+					It could see the screen, read the clipboard, and click, type and change apps and windows, with \
+					the permissions you gave Desktop Tools. You can change this under Approved Agents in the \
+					Desktop Tools menu.
+					""",
+				allow: "Allow",
+				deny: "Don't Allow"))
+			// nil: already answered from the menu.
+			if let answer { decide(caller, allowed: answer == .allow) }
+		}
+	}
+
+	private func decide(_ caller: Caller, allowed: Bool) {
+		decisions.removeAll { $0.caller.key == caller.key }
+		decisions.append(CallerDecision(caller: caller, allowed: allowed, decided: Date().timeIntervalSince1970))
+		waiting.removeAll { $0.key == caller.key }
+		Confirmations.shared.cancel(key: "caller \(caller.key)")
+		saveDecisions()
+	}
+
+	private func caller(_ sender: NSMenuItem) -> Caller? {
+		let key = sender.representedObject as? String
+		return waiting.first { $0.key == key } ?? decisions.first { $0.caller.key == key }?.caller
+	}
+
+	@objc private func allowCaller(_ sender: NSMenuItem) {
+		if let caller = caller(sender) { decide(caller, allowed: true) }
+	}
+
+	@objc private func denyCaller(_ sender: NSMenuItem) {
+		if let caller = caller(sender) { decide(caller, allowed: false) }
+	}
+
+	/// Forgets a refused caller, so it is asked about again next time.
+	@objc private func forgetCaller(_ sender: NSMenuItem) {
+		decisions.removeAll { $0.caller.key == sender.representedObject as? String }
+		saveDecisions()
+	}
+
+	private func saveDecisions() {
+		// The runtime follows the answers even if the file can't be written; they last until the app quits.
+		try? CallerDecisions.save(decisions, to: decisionsFile)
+		pushDecisions()
+	}
+
+	private func pushDecisions() {
+		let data = (try? JSONEncoder().encode(decisions)) ?? Data("[]".utf8)
+		String(decoding: data, as: UTF8.self).withCString(runtime.setCallers)
 	}
 
 	private func readActivity() -> [Activity] {
@@ -240,8 +361,15 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	}
 }
 
-let app = NSApplication.shared
-private let host = MainActor.assumeIsolated { Host() }
-app.delegate = host
-app.setActivationPolicy(.accessory)
-app.run()
+@main
+private enum Main {
+	@MainActor
+	static func main() {
+		let app = NSApplication.shared
+		// The application holds its delegate weakly; this frame lives as long as the app runs.
+		let host = Host()
+		app.delegate = host
+		app.setActivationPolicy(.accessory)
+		app.run()
+	}
+}

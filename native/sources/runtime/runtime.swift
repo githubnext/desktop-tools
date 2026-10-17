@@ -1,3 +1,4 @@
+import DesktopToolsCallers
 import DesktopToolsIdentity
 import AppKit
 import ApplicationServices
@@ -108,8 +109,21 @@ private final class Desktop {
 					}
 				}
 				configuration.operationObserver = recordActivity
-				configuration.operationAdmission = { operation, mutatesDesktop in
-					Pause.shared.refusal(operation, mutatesDesktop: mutatesDesktop)
+				configuration.operationAdmission = { admission in
+					if let refusal = Callers.shared.refusal(client: admission.clientProcessIdentifier) { return refusal }
+					// A host that asks the user about callers keeps its own prompts and menus for the user alone.
+					// Every snapshot-bound click, key, type, set-value, scroll or insert takes its snapshot's lease first.
+					if Callers.shared.enforcing,
+						admission.operation == .beginSnapshotMutation
+							|| Pause.isInput(admission.operation, mutatesDesktop: admission.mutatesDesktop),
+						let refusal = OwnUIGuard.refusal(
+							input: true,
+							targetIsOwn: admission.targetProcessIdentifier.map(OwnUI.isOwn) ?? false,
+							ownUIOpen: OwnUI.promptOrMenuOpen())
+					{
+						return refusal
+					}
+					return Pause.shared.refusal(admission.operation, mutatesDesktop: admission.mutatesDesktop)
 				}
 				let next = PeekabooEmbeddedBridgeRuntime.make(configuration: configuration, feedbackClient: AgentCursor.shared)
 				runtime = next
@@ -180,6 +194,23 @@ public func setHighlight(_ enabled: Bool) {
 @_cdecl("desktop_tools_set_paused")
 public func setPaused(_ paused: Bool) {
 	Pause.shared.set(paused)
+}
+
+/// Turns on caller approval: from now on a request runs only when the user allowed its caller, the nearest
+/// ancestor of the client that isn't a launcher or shell. The first request from an unknown caller is refused, and
+/// `handler` gets that caller as JSON (`key`, `name`, `path`, `team`, `identifier`, `signer`) once, on any thread,
+/// to ask the user; answers come back through `desktop_tools_set_callers`. Agent input aimed at this host's own
+/// processes, or sent while one of them shows a prompt or menu, is refused too. Pass NULL to turn it off.
+@_cdecl("desktop_tools_set_caller_handler")
+public func setCallerHandler(_ handler: (@convention(c) (UnsafePointer<CChar>) -> Void)?) {
+	Callers.shared.setHandler(handler)
+}
+
+/// Sets every answer so far, as the JSON array the app keeps in `callers.json`: `{caller, allowed, decided}`.
+@_cdecl("desktop_tools_set_callers")
+public func setCallers(_ json: UnsafePointer<CChar>) {
+	let data = Data(String(cString: json).utf8)
+	Callers.shared.setDecisions((try? JSONDecoder().decode([CallerDecision].self, from: data)) ?? [])
 }
 
 /// Returns the recent operations as a JSON array, newest first; release it with `desktop_tools_free`.
