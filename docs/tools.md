@@ -2,6 +2,8 @@
 
 The [MCP server](mcp.md) and `desktopTools()` expose 45 tools, one per protocol operation. Each tool's description and argument schema in `src/tools.ts` is the full contract; this page is the map.
 
+[Recipes](recipes.md) give tool sequences, derived from the code, for tasks that take several calls, such as printing to PDF, installing from a DMG or filling a web form.
+
 Targets are exact: an app target binds a process generation, and a window target binds its window ID and bounds. Input acts on a single-use snapshot from the latest `desktop_inspect`. A stale or changed target is refused rather than redirected. Action results report `completed`, `refused`, or `unknown`, and nothing is retried automatically.
 
 ## Find and observe
