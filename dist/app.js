@@ -59,7 +59,7 @@ export function assemble(out, scratch) {
     return app;
 }
 /** Signs inside out; the client's exact identifier is what the runtime admits. */
-function sign(app, identity, release) {
+export function sign(app, identity, release) {
     const codesign = ["codesign", "--force", "--sign", identity, ...(release ? ["--options", "runtime", "--timestamp"] : [])];
     const frameworks = join(app, "Contents", "Frameworks");
     for (const name of readdirSync(frameworks, { withFileTypes: true }).filter((entry) => entry.isFile())) {
