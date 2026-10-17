@@ -52,7 +52,6 @@ Pointer input is delivered to the exact window without moving the physical point
 - **Hover, pointer moves and press-and-hold.** Drags are one straight line within one window; there is no drag between windows or apps.
 - **Whole-screen capture.** Inspection covers one window at a time.
 - **Dialog answers, force quit and retries.** Quit, close and menu commands can open dialogs; the agent inspects and answers them with input tools.
-- **Chrome pages with a changing title** fail Accessibility inspection; pixels mode works ([#6](https://github.com/githubnext/desktop-tools/issues/6)).
 - **Remote Macs.** The tools act on the Mac running the host app, on macOS 15 or later.
 
 Open bugs and gaps are tracked in [issues](https://github.com/githubnext/desktop-tools/issues).
