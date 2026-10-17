@@ -35,6 +35,7 @@ private enum Client {
 			|| (operation == "inspect" && args.count >= 5 && args.count <= 10)
 			|| (operation == "read" && (args.count == 4 || args.count == 6))
 			|| (operation == "elements" && args.count == 2)
+			|| (operation == "table" && args.count == 2)
 			|| (operation == "screen" && args.count >= 3 && args.count <= 5)
 			|| (operation == "action" && args.count == 2)
 			|| (operation == "management" && args.count == 2)
@@ -117,6 +118,8 @@ private enum Client {
 			return try await nativeRead(client, pid: pid, window: window, scope: scope)
 		case "elements":
 			return try await nativeElements(client)
+		case "table":
+			return try await nativeTable(client)
 		case "apps":
 			let inventory = try await client.listApplicationMutationInventory()
 			var metadata: [ServiceApplicationInfo] = []

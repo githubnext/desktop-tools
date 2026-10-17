@@ -46,10 +46,10 @@ func subtree(_ elements: [OrderedElement], at position: Int) -> ArraySlice<Order
 }
 
 /// What identifies a scope element across two traversals of an unchanged window.
-private struct ScopeKey: Equatable {
+struct ScopeKey: Hashable {
 	let role: String?
 	let depth: Int
-	let bounds: CGRect
+	let x, y, width, height: Double
 	let label: String?
 	let title: String?
 	let identifier: String?
@@ -57,7 +57,8 @@ private struct ScopeKey: Equatable {
 	init(_ element: OrderedElement) {
 		role = element.element.attributes["role"]
 		depth = element.depth
-		bounds = element.element.bounds
+		let bounds = element.element.bounds
+		(x, y, width, height) = (bounds.minX, bounds.minY, bounds.width, bounds.height)
 		label = element.element.label
 		title = element.element.attributes["title"]
 		identifier = element.element.attributes["identifier"]
@@ -70,6 +71,8 @@ struct ScopeSource {
 	fileprivate let ordinal: Int
 	fileprivate let matches: Int
 	let processStartIdentity: UInt64
+	/// The whole traversal stored in the scope snapshot, whose IDs actions accept.
+	let snapshotElements: [OrderedElement]
 }
 
 /// Reads the scope element from its own snapshot, which must observe the same process and window.
@@ -94,7 +97,8 @@ func scopeSource(_ client: PeekabooBridgeClient, _ scope: ScopeRequest, pid: Int
 	let key = ScopeKey(elements[position])
 	let same = elements.indices.filter { ScopeKey(elements[$0]) == key }
 	return ScopeSource(
-		key: key, ordinal: same.firstIndex(of: position)!, matches: same.count, processStartIdentity: generation
+		key: key, ordinal: same.firstIndex(of: position)!, matches: same.count, processStartIdentity: generation,
+		snapshotElements: elements
 	)
 }
 
