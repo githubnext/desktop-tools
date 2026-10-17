@@ -94,17 +94,16 @@ Through Finder:
 
 A shell `cp` is simpler. Use this when the copy must go through Finder.
 
-1. `desktop_clipboard_write` with `format: "files"` and the `paths`. It replaces the clipboard, so read it first if it matters.
-2. `desktop_focus` the destination window target, then inspect it. Keys go only to the app's key window.
-3. `desktop_key` with `key: "v"` and `modifiers: ["command"]`. Add `option` to move instead of copy.
+1. `desktop_focus` the destination window target, `desktop_click` an empty part of its file list, then inspect it.
+2. `desktop_insert` with `format: "files"` and the `paths`. It pastes them with Command-V and restores the clipboard once every name is in the folder.
 
-To copy files picked in Finder instead, `desktop_click` the first one and the rest with `modifiers: ["command"]` (foreground, `unknown`; inspect to check the selection), then `desktop_key` `c` with `command` before step 2.
+To copy files picked in Finder instead, `desktop_click` the first one and the rest with `modifiers: ["command"]` (foreground, `unknown`; inspect to check the selection), then `desktop_key` `c` with `command`, and `desktop_key` `v` with `command` in the destination. Add `option` to move instead of copy.
 
-**Verify:** `ls` the destination folder.
+**Verify:** the result is `completed` with `copy: "started"`. Large files may still be copying; `ls` the destination to check sizes.
 
 **Goes wrong:**
 
-- A name that already exists opens a Replace / Keep Both / Stop dialog. `desktop_wait` with `until: "dialog_appears"`, then answer it deliberately.
+- A name that already exists is refused with `PASTE_NAME_EXISTS` before anything is pasted. A manual Command-V would open a Replace / Keep Both / Stop dialog instead.
 - A drag between Finder windows also copies, but its result is always `unknown`.
 
 ## Open something with Spotlight

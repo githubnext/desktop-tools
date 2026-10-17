@@ -422,6 +422,8 @@ private struct ActionResult: Encodable {
 	var clipboard_ownership: String?
 	var consumption: String?
 	var attachment_evidence: String?
+	var folder: String?
+	var copy: String?
 	var pointer_moved: Bool?
 	var destination_receipt: Receipt?
 	var release: String?
@@ -504,9 +506,17 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 					code: "PASTE_UNVERIFIABLE_RECEIVER", message: AttachmentPasteRefusal.message, hint: AttachmentPasteRefusal.hint
 				)
 				return try JSONEncoder().encode(ActionReply(data: result, target_receipt: receipt))
+			} catch let error where refusalMessage(error)?.hasSuffix(FinderPasteRefusal.suffix) == true {
+				result.outcome = "refused"
+				result.error = ActionMessage(
+					code: "PASTE_NAME_EXISTS", message: refusalMessage(error)!, hint: FinderPasteRefusal.hint
+				)
+				return try JSONEncoder().encode(ActionReply(data: result, target_receipt: receipt))
 			}
 			try applyInsertion(insertion, to: &result, identity: identity)
 			result.attachment_evidence = insertion.attachment_evidence
+			result.folder = insertion.folder
+			result.copy = insertion.copy
 			await explainMinimized(client, &result, receipt: receipt)
 			return try JSONEncoder().encode(ActionReply(data: result, target_receipt: receipt))
 		}

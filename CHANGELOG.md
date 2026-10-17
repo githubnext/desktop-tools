@@ -4,6 +4,10 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Added
+
+- `desktop_insert` with `format: "files"` copies files into a Finder window's folder, refusing names already there, and restores the clipboard once every name appears. ([#114](https://github.com/githubnext/desktop-tools/pull/114))
+
 ## [0.12.0] - 2026-10-17
 
 ### Added
