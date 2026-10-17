@@ -14,6 +14,7 @@ private struct DialogRequest: Decodable {
 	let button: String?
 	let field: Int?
 	let text: String?
+	let path: String?
 }
 
 private struct DialogError: LocalizedError {
@@ -68,6 +69,7 @@ private struct DialogResult: Encodable {
 	let action = "dialog"
 	var button: String?
 	var field: Int?
+	var path: String?
 	var native_outcome: DesktopActionOutcome?
 	var details: [String: String]?
 	var requires_fresh_observation = false
@@ -137,7 +139,7 @@ func nativeDialog(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 	}
 	let request = try JSONDecoder().decode(DialogRequest.self, from: data)
 	if request.op == .dialog {
-		guard request.button == nil, request.field == nil, request.text == nil else {
+		guard request.button == nil, request.field == nil, request.text == nil, request.path == nil else {
 			throw DialogError("Listing a dialog takes only a target.")
 		}
 		let target = try dialogTarget(request.target)
@@ -191,20 +193,25 @@ private func readDialog(
 private func answerDialog(
 	_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHandshakeResponse, request: DialogRequest
 ) async throws -> Data {
-	var result = DialogResult(button: request.button, field: request.field)
+	var result = DialogResult(button: request.button, field: request.field, path: request.path)
 	var receipt: Receipt?
 	var target: DialogTarget?
 	var invoked = false
 	do {
-		let pressing = request.button != nil
-		guard pressing ? request.field == nil && request.text == nil : request.field != nil && request.text != nil else {
-			throw DialogError("Answer a dialog with exactly one button title, or one field index and its text.")
+		let answers = [request.button != nil, request.field != nil || request.text != nil, request.path != nil]
+		guard answers.filter({ $0 }).count == 1, (request.field == nil) == (request.text == nil) else {
+			throw DialogError("Answer a dialog with exactly one button title, one field index and its text, or one path.")
 		}
 		let resolvedTarget = try dialogTarget(request.target)
 		target = resolvedTarget
 		if let button = request.button {
 			guard !button.isEmpty, button.utf16.count <= 512 else { throw DialogError("Use one exact button title of at most 512 UTF-16 code units.") }
 			try requireOperations(handshake, [.targetedDialogListElements, .prepareDialogAction, .exactDialogClickButton])
+		} else if let path = request.path {
+			guard path.hasPrefix("/"), !path.contains("\0"), path.utf8.count <= 4096 else {
+				throw DialogError("Use one absolute path of at most 4096 bytes.")
+			}
+			try requireOperations(handshake, [.targetedDialogListElements, .exactFileDialogPath])
 		} else {
 			guard let field = request.field, (0...1000).contains(field), let text = request.text, text.utf16.count <= 8192 else {
 				throw DialogError("Use a listed field index and at most 8192 UTF-16 code units of text.")
@@ -264,6 +271,40 @@ private func answerDialog(
 				process_start_identity_decimal: String(identity.ownerProcessStartIdentity))
 			result.requires_fresh_observation = outcome.dispatchState.mutationDispatched
 			result.outcome = outcome.state == .confirmedChange ? "completed" : "unknown"
+		} else if let path = request.path {
+			guard elements.dialogInfo.isFileDialog else {
+				throw DesktopActionFailure.preDispatchRefusal(
+					reason: .operationUnsupported, message: "The dialog is not an Open or Save panel, so it takes no path.",
+					hint: "Answer it with a button title, or a field index and text."
+				)
+			}
+			try Task.checkCancellation()
+			invoked = true
+			// The host activates the panel's app and uses Go to Folder or the panel's path field, then reads the result back.
+			let action = try await client.exactFileDialogPath(FileDialogPathRequest(target: resolvedTarget.selector, path: path))
+			result.native_outcome = action.outcome
+			result.details = action.details
+			guard let signed = await client.lastOperationReceipt(), signed.payload.operation == .exactFileDialogPath,
+				let outcome = action.outcome, signed.payload.outcome?.outcome == outcome,
+				resolvedTarget.matches(action.targetReceipt),
+				case let .window(identity) = signed.payload.target, identity.processIdentity == process,
+				identity.windowID == action.targetReceipt?.windowID
+			else {
+				throw DialogError("The dialog path entry returned without its matching signed process-generation receipt and outcome.")
+			}
+			receipt = Receipt(pid: identity.ownerProcessIdentifier, window_id: identity.windowID,
+				process_start_identity_decimal: String(identity.ownerProcessStartIdentity))
+			result.requires_fresh_observation = outcome.dispatchState.mutationDispatched
+			if outcome.state == .confirmedChange {
+				result.outcome = "completed"
+			} else {
+				result.outcome = "unknown"
+				result.error = DialogMessage(
+					code: "DESKTOP_ACTION_UNVERIFIED",
+					message: "The path was entered, but the panel didn't read back the chosen folder\(action.details["filename"] == nil ? "" : " and name").",
+					hint: "List the dialog to check its folder and name before pressing its default button; do not blindly repeat the path."
+				)
+			}
 		} else {
 			let field = request.field!
 			let fields = elements.textFields.filter { $0.index == field }

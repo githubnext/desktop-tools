@@ -591,13 +591,20 @@ function validateAction(request: DesktopAction) {
 			) throw new Error("Use one exact dialog button title of at most 512 UTF-16 code units.");
 			return;
 		}
+		if ("path" in request && keys.length === 1) {
+			if (
+				typeof request.path !== "string" || !request.path.startsWith("/") || request.path.includes("\0")
+				|| Buffer.byteLength(request.path) > 4096
+			) throw new Error("Use one absolute file-dialog path of at most 4096 bytes.");
+			return;
+		}
 		if (
 			!("field" in request) || keys.join() !== "field,text" || !Number.isInteger(request.field)
 			|| request.field < 0 || request.field > 1000 || typeof request.text !== "string"
 			|| request.text.length > 8192
 		) {
 			throw new Error(
-				"Answer a dialog with exactly one button title, or one listed field index and at most 8192 UTF-16 code units of text.",
+				"Answer a dialog with exactly one button title, one listed field index and at most 8192 UTF-16 code units of text, or one path.",
 			);
 		}
 		return;

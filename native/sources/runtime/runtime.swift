@@ -91,7 +91,7 @@ private final class Desktop {
 						.launchApplicationWithOptions, .activateApplication, .quitApplication, .hideApplication, .backgroundCloseWindow,
 						.focusWindow, .minimizeWindow, .restoreWindow, .maximizeWindow,
 						.moveWindow, .resizeWindow,
-						.targetedDialogListElements, .prepareDialogAction, .exactDialogClickButton, .exactDialogEnterText,
+						.targetedDialogListElements, .prepareDialogAction, .exactDialogClickButton, .exactDialogEnterText, .exactFileDialogPath,
 						.listMenuBarItems, .clickMenuBarItemIndex, .listDockItems, .launchDockItem, .rightClickDockItem,
 					],
 					hostKind: .gui,

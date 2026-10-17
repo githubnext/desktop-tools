@@ -370,6 +370,22 @@ a fallback here; wait, refuse, and let the caller retry. The SCK gate lock stays
 apps overlap ScreenCaptureKit calls again, which is what it prevents. `ScreenCaptureKitQuarantineGraceTests.swift` covers the
 grace period and the message.
 
+`peekaboo-dialog-path.patch` adds `exactFileDialogPath`, which chooses one absolute path in one exact
+Open or Save panel without pressing its default button. Upstream `dialogHandleFile` finds the panel by a
+fuzzy app name, clicks the panel's center to focus it, and presses the default button in the same call. The
+new operation resolves the panel the way exact forced dismissal does, from an app, PID, or window selector,
+and refuses a dialog that is not a file panel. An existing folder becomes the panel's folder; any other path
+must name a file in an existing folder, which a Save panel (one with `saveAsNameTextField`) takes as its
+folder and name, and an Open panel selects through Go to Folder. Folder and file paths resolve symlinks
+before input, so `/tmp` compares as `/private/tmp`. The host focuses the retained panel's window, checks that the
+panel holds keyboard focus before each key, expands a collapsed panel, sets the expanded panel's
+`PathTextField` and presses Return, and falls back to Go to Folder (Command-Shift-G), whose new field is
+set through Accessibility when it can be and typed otherwise. Nothing clicks the panel. The result is
+`confirmedChange` only when the path field reads back the folder and, in a Save panel, the name field
+reads back the name; otherwise it is `dispatchedUnverified`. Details report the readback. The descriptor,
+permission set, semantic policy and result contract are listed in the upstream inventory tests, and new
+tests cover path resolution and request validation.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.
