@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { failureAvailability, windowAvailability } from "./availability.js";
+import { canonicalDate } from "./date-value.js";
 
 import {
 	DESKTOP_BUTTONS,
@@ -807,8 +808,13 @@ function validateAction(request: DesktopAction) {
 	if (
 		request.op === "set-value" && typeof request.value !== "boolean"
 		&& (typeof request.value !== "number" || !Number.isFinite(request.value))
+		&& (typeof request.value !== "string" || canonicalDate(request.value) === undefined)
 	) {
-		throw new Error("Set a finite number or true/false; use desktop_type for text.");
+		throw new Error(
+			typeof request.value === "string"
+				? "Set a date as ISO 8601: 2026-10-17, 2026-10-17T15:30 (local time) or 2026-10-17T15:30:00Z. Use desktop_type for text."
+				: "Set a finite number, true/false or an ISO 8601 date; use desktop_type for text.",
+		);
 	}
 	if (request.op === "type" && (typeof request.text !== "string" || request.text.length > 8192)) {
 		throw new Error("Replacement text must contain at most 8192 UTF-16 code units.");
@@ -1053,6 +1059,8 @@ async function act(
 					format: request.format,
 					image: await clipboardImageInput(request.path, signal),
 				}
+				: request.op === "set-value" && typeof request.value === "string"
+				? { ...request, value: canonicalDate(request.value) }
 				: request;
 		const operation = request.op === "menu"
 			? "menu"
@@ -1100,6 +1108,13 @@ async function act(
 		}, outcome);
 	}
 	const outcome = data.outcome as DesktopOutcome;
+	if (request.op === "set-value" && typeof request.value === "string" && outcome !== "completed") {
+		data = {
+			...data,
+			keyboard_route:
+				"If the date control refuses Accessibility, click its first field (such as the month) with desktop_click, type its digits with desktop_key, and press Tab to move to the next field, or Up and Down to step the focused field; then inspect to read the value back.",
+		};
+	}
 	if (request.op === "menu") {
 		const receipt = data.target_receipt as Reply["target_receipt"];
 		if (

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { failureAvailability, windowAvailability } from "./availability.js";
+import { canonicalDate } from "./date-value.js";
 import { DESKTOP_BUTTONS, DESKTOP_CLICKS, DESKTOP_DIRECTIONS, DESKTOP_ELEMENT_ACTIONS, DESKTOP_MODIFIERS, DESKTOP_SELECTIONS, isDesktopAction, isDesktopKey, isDesktopManagement, } from "./protocol.js";
 import { NOTIFICATIONS_MS, notificationAction, readNotifications, validateNotificationAction, } from "./notifications.js";
 import { waitFor } from "./wait.js";
@@ -674,8 +675,11 @@ function validateAction(request) {
         throw new Error(`Choose one of ${DESKTOP_ELEMENT_ACTIONS.join(", ")}.`);
     }
     if (request.op === "set-value" && typeof request.value !== "boolean"
-        && (typeof request.value !== "number" || !Number.isFinite(request.value))) {
-        throw new Error("Set a finite number or true/false; use desktop_type for text.");
+        && (typeof request.value !== "number" || !Number.isFinite(request.value))
+        && (typeof request.value !== "string" || canonicalDate(request.value) === undefined)) {
+        throw new Error(typeof request.value === "string"
+            ? "Set a date as ISO 8601: 2026-10-17, 2026-10-17T15:30 (local time) or 2026-10-17T15:30:00Z. Use desktop_type for text."
+            : "Set a finite number, true/false or an ISO 8601 date; use desktop_type for text.");
     }
     if (request.op === "type" && (typeof request.text !== "string" || request.text.length > 8192)) {
         throw new Error("Replacement text must contain at most 8192 UTF-16 code units.");
@@ -876,7 +880,9 @@ async function act(native, request, signal) {
                 format: request.format,
                 image: await clipboardImageInput(request.path, signal),
             }
-            : request;
+            : request.op === "set-value" && typeof request.value === "string"
+                ? { ...request, value: canonicalDate(request.value) }
+                : request;
         const operation = request.op === "menu"
             ? "menu"
             : request.op === "dialog-answer"
@@ -924,6 +930,12 @@ async function act(native, request, signal) {
         }, outcome);
     }
     const outcome = data.outcome;
+    if (request.op === "set-value" && typeof request.value === "string" && outcome !== "completed") {
+        data = {
+            ...data,
+            keyboard_route: "If the date control refuses Accessibility, click its first field (such as the month) with desktop_click, type its digits with desktop_key, and press Tab to move to the next field, or Up and Down to step the focused field; then inspect to read the value back.",
+        };
+    }
     if (request.op === "menu") {
         const receipt = data.target_receipt;
         if ((outcome === "completed" || receipt) && (!receipt || receipt.window_id !== undefined

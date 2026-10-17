@@ -103,7 +103,7 @@ A status item is pressed through Accessibility in its owner process without movi
 | `desktop_press` | Press and hold an element or point for up to 10 seconds, then release in place |
 | `desktop_type` | Replace an editable field's whole value |
 | `desktop_select` | Select literal text in a field, or put the caret before or after it |
-| `desktop_set_value` | Set a slider, stepper or level indicator to a number, or a checkbox, switch or disclosure triangle on or off, and read it back |
+| `desktop_set_value` | Set a slider, stepper or level indicator to a number, a checkbox, switch or disclosure triangle on or off, or a date or time picker to an ISO 8601 date, and read it back |
 | `desktop_element_action` | Perform one Accessibility action an element lists, such as `AXShowMenu`, `AXIncrement`, `AXDecrement`, `AXPick` or `AXCancel` |
 | `desktop_insert` | Insert text at the caret or over the selection with one temporary paste, then restore the clipboard; where no text control can be observed, type it into the window's keyboard focus |
 | `desktop_key` | Press one key with optional Command, Control, Option and Shift: any character key, such as `,` or `/`, or a named key |

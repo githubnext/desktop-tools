@@ -226,7 +226,7 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     op: "set-value";
     snapshot: string;
     element: string;
-    value: number | boolean;
+    value: number | boolean | string;
 } | {
     op: "select";
     snapshot: string;

@@ -459,6 +459,18 @@ exact window, and a signed confirmed response must carry the requested state. Te
 rules and the signed postcondition for both states; the operation inventory counts rise to 128.
 
 
+`peekaboo-date-value.patch` lets set-value write a date. Date and time controls such as `NSDatePicker` expose an
+`NSDate` as `AXValue`, which upstream `setValue` cannot read back (`ElementValueReadback` has no date) and
+would overwrite with a string. With the patch, when the element's current value is a date and the request is
+a string, the driver takes a date path: the string must be UTC ISO 8601 to the second
+(`2026-10-17T15:30:00Z`, the one spelling `ElementDateValue` formats), anything else is refused as
+`valueNotSettable` before dispatch, and an equal current value completes with no change. Otherwise it writes
+an `NSDate` through the new `setAutomationDate`, polls the value for up to one second, and confirms only when
+it reads back the same string; else the outcome is the usual unverified value mutation. The verification
+reports the readback as a string in the same spelling, so the existing signed set-value binding, which
+compares the readback with the requested string, applies unchanged. Other values and elements take the
+existing path. Tests cover the write, the no-change case, refused spellings and a mismatched readback.
+
 When updating Peekaboo, review the upstream fixes and these patches together. Update the revision
 guard and patches deliberately, or remove each patch when the dependency includes its fix.
 Revalidate real button clicks, changed-focus refusal, literal multiline insertion, clipboard
