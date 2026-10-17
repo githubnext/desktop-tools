@@ -349,6 +349,27 @@ outcome stays indeterminate, since the activation or click may have reached the 
 no keys or paste were sent. The caller sends keys only after preparation returns. The existing preparation
 test checks the new wording.
 
+`peekaboo-sck-quarantine.patch` makes a quarantined ScreenCaptureKit gate wait briefly and then
+explain itself. When an SCK call times out, Peekaboo abandons it and quarantines the gate (and keeps
+its cross-process lock) until that call's late callback arrives. A new capture now waits up to 2 s
+for that callback before refusing, outside its own budget. The refusal says the quarantine is
+temporary, is usually caused by another busy capture on the Mac, and clears by itself; it asks the
+caller to wait a few seconds and retry. A timed-out wait for another process's capture says the same.
+The private `SCShareableContent.fetchWindowForWindowID` lookup now has 3 s instead of 1 s: under
+ordinary load its 1 s budget timed out and quarantined every later capture. The application inventory
+budget grows from 1 s to 2.5 s, since a healthy inventory took 0.95 s; upstream deliberately refuses
+an inventory that misses its deadline instead of returning it partial, so this patch keeps that.
+
+There is deliberately no fallback around a quarantine. Peekaboo's "CGWindowList" window engine
+captures through the private SCK lookup or `/usr/sbin/screencapture -l`, and `screencapture` itself
+uses ScreenCaptureKit in its own process. `CGWindowListCreateImage` is obsoleted. Every remaining
+capture path would therefore start ScreenCaptureKit beside the abandoned call, which upstream rules
+out (`allowsSystemFallback`, "Private SCK fallback never crosses an abandoned operation"). Don't add
+a fallback here; wait, refuse, and let the caller retry. The SCK gate lock stays per-user in
+`$TMPDIR`, shared with every Peekaboo process; keying it to the host app would let separate
+apps overlap ScreenCaptureKit calls again, which is what it prevents. `ScreenCaptureKitQuarantineGraceTests.swift` covers the
+grace period and the message.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.

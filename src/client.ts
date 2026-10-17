@@ -465,7 +465,7 @@ async function availability(
 ): Promise<Record<string, unknown>> {
 	if (signal.aborted) return { error: "The desktop call ended before availability could be read." };
 	const deadline = new AbortController();
-	const timer = setTimeout(() => deadline.abort(), 2500);
+	const timer = setTimeout(() => deadline.abort(), 3500);
 	try {
 		const context = AbortSignal.any([signal, deadline.signal]);
 		const results = await Promise.allSettled([
