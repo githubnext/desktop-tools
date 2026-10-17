@@ -4,6 +4,10 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Added
+
+- The Desktop Tools app has an icon, a placeholder for now, in Finder, its disk image and its prompts.
+
 ## [0.14.1] - 2026-10-17
 
 ### Fixed
