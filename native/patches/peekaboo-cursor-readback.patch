@@ -1,0 +1,101 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/SyntheticInputDriver.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/SyntheticInputDriver.swift
+index 8f07ac605..df11f0520 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/SyntheticInputDriver.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/SyntheticInputDriver.swift
+@@ -241,11 +241,16 @@ enum CursorRestorationOwnership {
+         let activityToken: SharedInputActivityToken
+     }
+ 
++    /// How long a posted move may take to reach the window server before its readback counts as failed.
++    nonisolated static let readbackAttempts = 20
++    nonisolated static let readbackInterval: TimeInterval = 0.01
++
+     static func restore(
+         _ receipt: Receipt,
+         currentActivity: () -> SharedInputActivityToken,
+         currentLocation: () -> CGPoint?,
+-        move: (CGPoint) throws -> Void) throws -> SharedDesktopRestorationStatus
++        move: (CGPoint) throws -> Void,
++        pause: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) throws -> SharedDesktopRestorationStatus
+     {
+         let original = receipt.original
+         let lastWritten = receipt.lastWritten
+@@ -268,7 +273,17 @@ enum CursorRestorationOwnership {
+             return .preservedNewerState
+         }
+         try move(original)
+-        guard currentLocation().map({ self.pointsMatch($0, original) }) == true else {
++        // The move is posted to the HID event tap, and the window server applies it after the post returns, so
++        // an immediate read still finds the click point. Only a pointer that never arrives is unverified.
++        var arrived = false
++        for attempt in 0..<self.readbackAttempts {
++            if attempt > 0 { pause(self.readbackInterval) }
++            if currentLocation().map({ self.pointsMatch($0, original) }) == true {
++                arrived = true
++                break
++            }
++        }
++        guard arrived else {
+             throw DesktopActionFailure.indeterminate(
+                 delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                 evidence: .completionUnknown,
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ForegroundModifierClickExecutorTests+Restoration.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ForegroundModifierClickExecutorTests+Restoration.swift
+index 05114c0c1..2026d6ea7 100644
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ForegroundModifierClickExecutorTests+Restoration.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/ForegroundModifierClickExecutorTests+Restoration.swift
+@@ -96,6 +96,55 @@ extension ForegroundModifierClickExecutorTests {
+         }
+     }
+ 
++    @Test(arguments: [1, 5, CursorRestorationOwnership.readbackAttempts])
++    func `restoration waits for the posted move to reach the window server`(readsUntilArrival: Int) throws {
++        let token = SharedInputActivityToken.trackedZero
++        let original = CGPoint(x: 10, y: 10)
++        let lastWritten = CGPoint(x: 20, y: 20)
++        var moved = false
++        var readsAfterMove = 0
++        var pauses: [TimeInterval] = []
++
++        let status = try CursorRestorationOwnership.restore(
++            CursorRestorationOwnership.Receipt(original: original, lastWritten: lastWritten, activityToken: token),
++            currentActivity: { token },
++            currentLocation: {
++                guard moved else { return lastWritten }
++                readsAfterMove += 1
++                return readsAfterMove >= readsUntilArrival ? original : lastWritten
++            },
++            move: { _ in moved = true },
++            pause: { pauses.append($0) })
++
++        #expect(status == .restored)
++        #expect(readsAfterMove == readsUntilArrival)
++        #expect(pauses == Array(repeating: CursorRestorationOwnership.readbackInterval, count: readsUntilArrival - 1))
++    }
++
++    @Test
++    func `a pointer that never arrives stays unverified after a bounded wait`() {
++        let token = SharedInputActivityToken.trackedZero
++        let lastWritten = CGPoint(x: 20, y: 20)
++        var readsAfterMove = 0
++        var moved = false
++        var pauses = 0
++
++        #expect(throws: DesktopActionFailure.self) {
++            _ = try CursorRestorationOwnership.restore(
++                CursorRestorationOwnership.Receipt(
++                    original: CGPoint(x: 10, y: 10), lastWritten: lastWritten, activityToken: token),
++                currentActivity: { token },
++                currentLocation: {
++                    if moved { readsAfterMove += 1 }
++                    return lastWritten
++                },
++                move: { _ in moved = true },
++                pause: { _ in pauses += 1 })
++        }
++        #expect(readsAfterMove == CursorRestorationOwnership.readbackAttempts)
++        #expect(pauses == CursorRestorationOwnership.readbackAttempts - 1)
++    }
++
+     @Test(arguments: SharedDesktopInterruption.allCases)
+     func `newer shared input suppresses cursor and focus cleanup`(
+         _ interruption: SharedDesktopInterruption) async throws
