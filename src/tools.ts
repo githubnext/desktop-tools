@@ -175,6 +175,12 @@ const saveProperties: Record<string, JsonSchema> = {
 		},
 	},
 };
+const webAccessibility: JsonSchema = {
+	type: "boolean",
+	description: "false leaves a Chromium or Electron app's web accessibility as it is, so its web content may be missing.",
+};
+const webAccessibilityNote =
+	"in a Chromium or Electron app, or a window whose web area is nearly empty, it first turns on the app's web accessibility so web content appears, once per app launch, and reports web_accessibility; it stays on until the app quits. Pass web_accessibility false to leave the app as it is.";
 const saveNote =
 	"save_path, an absolute .png path in an existing folder, keeps the full-resolution capture; region, in global points, saves only part of it; an existing file needs overwrite true.";
 
@@ -588,7 +594,7 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 			name: "desktop_inspect",
 			op: "inspect",
 			description:
-				`Read one window's Accessibility elements and a screenshot by pid and window, returning the single-use snapshot_id that input tools take. Read-only; never activates or focuses. mode pixels, for windows Accessibility can't read, gives a snapshot for point clicks, scrolls and drags only. A large window lists its first 200 elements and reports truncated: pass scope (a container's snapshot and element from an earlier inspection) to list its subtree with a much larger budget. ocr true adds recognized_text, whose box centers are points for this snapshot. ${saveNote}`,
+				`Read one window's Accessibility elements and a screenshot by pid and window, returning the single-use snapshot_id that input tools take. Read-only and never activates or focuses, except that ${webAccessibilityNote} mode pixels, for windows Accessibility can't read, gives a snapshot for point clicks, scrolls and drags only. A large window lists its first 200 elements and reports truncated: pass scope (a container's snapshot and element from an earlier inspection) to list its subtree with a much larger budget. ocr true adds recognized_text, whose box centers are points for this snapshot. ${saveNote}`,
 			parameters: {
 				type: "object",
 				required: ["pid", "window"],
@@ -598,6 +604,7 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 					mode: { type: "string", enum: ["accessibility", "pixels"] },
 					ocr: { type: "boolean" },
 					scope: scope,
+					web_accessibility: webAccessibility,
 					...saveProperties,
 				},
 			},
@@ -606,7 +613,7 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 			name: "desktop_read",
 			op: "read",
 			description:
-				`Read one window's text by pid and window through Accessibility, up to 96 KB, including content scrolled out of view; scope reads one inspected element's subtree. Read-only, with no snapshot. Windows without Accessibility text, such as canvases, return empty text: use desktop_inspect with ocr. With table true and a scope, it reads the first table there instead: columns, rows with their cells, row element IDs for desktop_click, selected, and depth/expanded for outlines; page with row_offset and max_rows (default ${TABLE_ROWS_DEFAULT}, at most ${TABLE_ROWS_MAX}).`,
+				`Read one window's text by pid and window through Accessibility, up to 96 KB, including content scrolled out of view; scope reads one inspected element's subtree. Read-only, with no snapshot, except that it turns on web accessibility as desktop_inspect does. Windows without Accessibility text, such as canvases, return empty text: use desktop_inspect with ocr. With table true and a scope, it reads the first table there instead: columns, rows with their cells, row element IDs for desktop_click, selected, and depth/expanded for outlines; page with row_offset and max_rows (default ${TABLE_ROWS_DEFAULT}, at most ${TABLE_ROWS_MAX}).`,
 			parameters: {
 				type: "object",
 				required: ["pid", "window"],
@@ -614,6 +621,7 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 					pid: { type: "integer", minimum: 1 },
 					window: { type: "integer", minimum: 1 },
 					scope: scope,
+					web_accessibility: webAccessibility,
 					table: { type: "boolean", const: true },
 					row_offset: { type: "integer", minimum: 0, maximum: 100_000 },
 					max_rows: { type: "integer", minimum: 1, maximum: TABLE_ROWS_MAX },

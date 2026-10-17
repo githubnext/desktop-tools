@@ -111,12 +111,16 @@ export type DesktopRequest =
 		mode?: "accessibility" | "pixels";
 		ocr?: boolean;
 		scope?: DesktopScope;
+		/** false leaves a Chromium or Electron app's web accessibility as it is. */
+		web_accessibility?: boolean;
 	} & DesktopCaptureSave
 	| {
 		op: "read";
 		pid: number;
 		window: number;
 		scope?: DesktopScope;
+		/** false leaves a Chromium or Electron app's web accessibility as it is. */
+		web_accessibility?: boolean;
 		/** Reads the scope as a table of rows and cells instead of text. */
 		table?: boolean;
 		row_offset?: number;

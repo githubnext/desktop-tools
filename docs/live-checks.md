@@ -17,6 +17,7 @@ What it touches:
 - It makes its own fixtures in a new `/tmp/desktop-tools-live-*` folder: a plain and a rich TextEdit document, a Finder folder of eight files and a subfolder, a PNG, and a web page with a React-style controlled input, a date input, a contenteditable, a table with `<th>` headers and a grid of inputs. The folder is removed at the end unless `--keep-fixtures` is passed.
 - It opens those fixtures in TextEdit, Finder and Safari with `desktop_open`, and acts only on the new windows. At the end, even after a failure or Control-C, it closes each window it opened and quits only the apps it launched itself. A fixture document that asks to save is answered with Delete or Don't Save, on that document only.
 - Web checks are skipped while Safari has windows open, since a fixture page could open as a tab in one of them.
+- The Chromium check (#107) runs only when Google Chrome is installed and not running. It opens the fixture page in Chrome, which may also restore the user's last Chrome session, and quits Chrome at the end.
 - Clipboard checks run only when the clipboard holds plain text, and that text is written back at the end. The input-source check selects another enabled keyboard layout, then the original again.
 - Modifier clicks (#77) and `desktop_system_key` (#89) use the real keyboard and pointer, as they always do; nothing else needs the foreground.
 
@@ -38,5 +39,7 @@ These stay manual, because they are destructive, change system settings, need a 
 - **#90 input methods:** typing in an input method's mode, such as Japanese Hiragana, needs that method enabled.
 - **#86 and #92 in other apps:** Numbers, Excel, Mail and Chrome, and a long Finder folder of 300 or more files.
 - **#88 in other apps:** Chrome, read-only native text views and Preview PDFs.
+- **#107 web accessibility in Electron apps:** inspect a Slack, VS Code or Discord window and check that `web_accessibility` is `enabled` once per launch and the web content's fields are listed, that the app's window still moves and resizes normally, that All Activity lists **Turn on web accessibility** once, and that it still runs while input is paused.
+- **#5 background paste into web content (spike, before any patch):** with a WebKit app such as Safari in the background and a textarea focused, answer: (1) is Edit > Paste `AXEnabled`, with and without the host's background key-window preparation; (2) does an Accessibility press of Edit > Paste paste into the focused textarea; (3) must the textarea get `AXFocused` first?
 - **#27 Codex:** adding the server to Codex's configuration.
 - Anything that asks for a password or an administrator's approval.

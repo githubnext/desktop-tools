@@ -73,6 +73,7 @@ private let activityNames: [PeekabooBridgeOperation: String] = [
 	.hotkey: "System key",
 	.systemDefinedKey: "Media key",
 	.selectInputSource: "Select input source",
+	.enableWebAccessibility: "Turn on web accessibility",
 	.exactWindowTargetedTypeActions: "Type",
 	.selectText: "Select text",
 	.literalInsert: "Insert text",
@@ -147,6 +148,8 @@ private let clipboardWrites: Set<PeekabooBridgeOperation> = [.clipboardTextWrite
 private let pauseExempt: Set<PeekabooBridgeOperation> = [
 	.createSnapshot, .cleanSnapshot, .ownsSnapshot, .getDetectionResult, .finishSnapshotMutation,
 	.releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer, .disconnectExactWindowHeldPointerOwner,
+	// It lets a Chromium or Electron app's web content be read, and sends no input.
+	.enableWebAccessibility,
 ]
 
 /// Records one finished request when it is worth listing. Runs while the client still waits for its reply,
@@ -156,6 +159,7 @@ func recordActivity(_ record: PeekabooBridgeOperationRecord) {
 	guard !activityHidden.contains(operation),
 		let name = activityNames[operation] ?? (record.mutatesDesktop ? operation.rawValue : nil)
 	else { return }
+	if operation == .enableWebAccessibility, !WebAccessibilityLaunches.shared.isFirst(record) { return }
 	let parent = parentProcess(of: record.clientProcessIdentifier)
 	let agent = agentName(of: record.clientProcessIdentifier)
 		?? parent.flatMap(processName)
@@ -171,6 +175,34 @@ func recordActivity(_ record: PeekabooBridgeOperationRecord) {
 			&& Pause.blocks(operation, mutatesDesktop: record.mutatesDesktop) ? "paused" : record.outcome.rawValue,
 		count: 1
 	))
+}
+
+/// Inspections ask for web accessibility on every read of a Chromium or Electron app, and the host sets it at most
+/// once per launch, so only the first request per launch is listed.
+private final class WebAccessibilityLaunches: @unchecked Sendable {
+	static let shared = WebAccessibilityLaunches()
+	private let lock = NSLock()
+	private var listed: Set<String> = []
+
+	/// Whether this is the first request that may have changed this launch of the app; refusals changed nothing.
+	func isFirst(_ record: PeekabooBridgeOperationRecord) -> Bool {
+		guard record.outcome != .refused, let process = record.targetProcessIdentifier,
+			let start = processStart(process)
+		else { return false }
+		lock.lock()
+		defer { lock.unlock() }
+		return listed.insert("\(process) \(start)").inserted
+	}
+}
+
+/// When the process started, which tells two launches with the same pid apart.
+private func processStart(_ process: pid_t) -> String? {
+	var info = kinfo_proc()
+	var size = MemoryLayout<kinfo_proc>.stride
+	var mib = [CTL_KERN, KERN_PROC, KERN_PROC_PID, process]
+	guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+	let start = info.kp_proc.p_un.__p_starttime
+	return "\(start.tv_sec).\(start.tv_usec)"
 }
 
 private func parentProcess(of process: pid_t) -> pid_t? {

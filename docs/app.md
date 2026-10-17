@@ -15,9 +15,9 @@ Anything running as the user can use those grants while the app serves, so grant
 - the time;
 - the outcome: completed, unknown, refused, or paused for a request refused because input was paused.
 
-Identical operations in a row fold into one line with a count. Every desktop change is listed, and so are screen captures and clipboard reads. Listings and snapshot bookkeeping are not. Only the operation and its target are kept, never typed text, clipboard contents or values. The list lives in memory and is gone when the app quits.
+Identical operations in a row fold into one line with a count. Every desktop change is listed, and so are screen captures and clipboard reads. Turning on an app's web accessibility for a read is listed once per launch of that app. Listings and snapshot bookkeeping are not. Only the operation and its target are kept, never typed text, clipboard contents or values. The list lives in memory and is gone when the app quits.
 
-**Pause All Input** stops agents from changing anything until you turn it off again. While paused, the app refuses every click, key, typing, scroll, drag, menu command, app or window change, dialog action and clipboard write before it is sent. The refusal tells the agent to ask you to resume. Agents can still observe: listings, the accessibility tree, screen captures and clipboard reads keep working. The menu bar icon becomes a pause sign while input is paused. Only this menu item changes it; no client can pause or resume. Pausing isn't saved, so the app starts resumed.
+**Pause All Input** stops agents from changing anything until you turn it off again. While paused, the app refuses every click, key, typing, scroll, drag, menu command, app or window change, dialog action and clipboard write before it is sent. The refusal tells the agent to ask you to resume. Agents can still observe: listings, the accessibility tree, screen captures and clipboard reads keep working. So does turning on a Chromium or Electron app's web accessibility before a read, since it only lets the app's web content be read and sends no input (see [tools](tools.md#input)). The menu bar icon becomes a pause sign while input is paused. Only this menu item changes it; no client can pause or resume. Pausing isn't saved, so the app starts resumed.
 
 ## Build
 

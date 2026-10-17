@@ -141,6 +141,14 @@ A `desktop_click` with `modifiers` (any of `command`, `option` and `shift`), suc
 
 `desktop_inspect` reads at most 200 elements of a window, so a long web page, mail list or Finder folder is cut short and reports `truncated`. Two tools reach further without input. `desktop_read` reads the window's text with a budget of 4,000 elements, 64 levels deep and 1,000 children per element, within about 18 seconds; it returns the text in tree order, one line per visual line, and names each limit that cut it short. Pass `scope`, a `snapshot_id` and an element ID from an earlier inspection of the same window, to read only that element, such as the page's web area. `desktop_inspect` takes the same `scope`: it reads the window with that larger budget and lists only the scope element and its descendants, each with `attributes.depth`. The scope element is found again by its role, depth, bounds, label, title and identifier, so it must not have moved; listed IDs belong to the new snapshot, like any inspection.
 
+Chromium and Electron apps, such as Chrome, Edge, Slack, VS Code and Discord, build the Accessibility tree of their web content only after an assistive app asks for it. Until then a web view lists few or no elements. So before `desktop_inspect` or `desktop_read` reads an app whose bundle ships an Electron, Chromium Embedded or Chromium framework, the host sets `AXManualAccessibility` on that app. It also does so after a read that finds a web area with at most one element under it, and then reads the window once more. It waits half a second after turning it on, so the page can build its tree. The host sets it at most once per launch of the app, and it stays on until the app quits, since VoiceOver or another assistive app may rely on it too. It never sets `AXEnhancedUserInterface`, which changes how some apps animate and place their windows. The result reports `web_accessibility`:
+- **`enabled`**: this read turned it on.
+- **`already_on`**: it was already on, from an earlier read or another assistive app.
+- **`unsupported`**: the app doesn't accept it, and nothing changed.
+- **`unknown`**: the request failed or wasn't confirmed; the read went ahead with the tree as it was.
+
+Pass `web_accessibility: false` to leave the app as it is; its web content may then be missing. Turning it on sends no input, so it runs while input is paused, and the app's activity list shows it once per app launch as **Turn on web accessibility**. A table read uses the tree as an earlier inspection left it.
+
 `desktop_read` with `table: true` reads a table instead of text. Its `scope` is a table, outline or grid from an accessibility inspection, such as a Finder list, a Mail message list, a Numbers table or a web table, or an area that holds one, such as the scroll area or web area; the first table in it is read, and `tables_in_scope` counts the others. It reads Accessibility alone, with `desktop_read`'s budget and no screenshot, and returns:
 
 - `columns`: the header titles in order. They come from the table's columns, from the header buttons a scroll view draws just above the table, or from a web table's header row; `null` when there are none. Scope the scroll area rather than the table when a list's headers are missing.
@@ -230,6 +238,7 @@ These are the rest of each tool's contract, beyond its description.
 - **Accessibility mode** (the default) can return an action snapshot with element IDs.
 - **Pixels mode** returns a snapshot with no element IDs and no focused control. It authorizes only point clicks, point scrolls and drags in that exact window.
 - **After an action,** the automatic observation uses accessibility mode. If it fails, inspect again with pixels mode.
+- **In a Chromium or Electron app,** it first turns on the app's web accessibility, once per launch, unless `web_accessibility` is false. The result's `web_accessibility` says what happened; see [Input](#input).
 
 **`desktop_click`.** A single left click on a supported editable text field, by element or point, also requests keyboard focus. The result says whether focus was verified; use `desktop_select` to choose a range or caret position. Points stay bound to the captured window, even when the returned screenshot was scaled.
 
