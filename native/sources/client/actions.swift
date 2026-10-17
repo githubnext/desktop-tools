@@ -484,6 +484,7 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 		invoked = true
 		let evidence: ActionEvidence
 		var verified = true
+		var typedIntoWeb = false
 		switch request.op {
 		case .hover:
 			// Tracking areas follow the real pointer, so hovering moves it; this is foreground input.
@@ -518,9 +519,30 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 		case .drag:
 			evidence = try await ActionEvidence(client.dragExactWindow(drag!))
 		case .type:
-			evidence = try await ActionEvidence(client.setValueWithOutcome(
-				target: request.element!, value: .string(request.text!), snapshotId: request.snapshot
-			))
+			do {
+				evidence = try await ActionEvidence(client.setValueWithOutcome(
+					target: request.element!, value: .string(request.text!), snapshotId: request.snapshot
+				))
+			} catch let failure as DesktopActionFailure
+				where failure.message == WebTextFieldValueRefusal.message && !failure.outcome.dispatchState.mutationDispatched
+			{
+				// Page scripts ignore an Accessibility value write, so web fields get key events instead.
+				try await client.finishSnapshotMutation(lease!, requiresFreshObservation: false)
+				lease = nil
+				invoked = false
+				let focusedElement = try webTypingReceiver(
+					request, observed: detection.elements.findById(request.element!)!, focused: context.focusedElement,
+					handshake: handshake
+				)
+				lease = try await client.beginSnapshotMutation(snapshotId: request.snapshot)
+				invoked = true
+				result.receiver = "observed_control"
+				typedIntoWeb = true
+				evidence = try await ActionEvidence(client.typeActionsWithOutcome(
+					[.clear, .text(request.text!)], cadence: .fixed(milliseconds: 2), snapshotId: request.snapshot,
+					target: .init(windowIdentity: identity, windowBounds: bounds, focusedElement: focusedElement)
+				))
+			}
 		case .setValue:
 			let set = try await client.setValueWithOutcome(
 				target: request.element!, value: request.value!, snapshotId: request.snapshot
@@ -610,6 +632,15 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 				hint: "Inspect the window, or capture it with desktop_screen, to check the text before acting again; do not repeat the insertion blindly."
 			)
 		}
+		// The host reads a web field back after typing; anything short of that leaves the text unknown.
+		if typedIntoWeb, result.outcome == "completed", outcome.state != .confirmedChange, outcome.state != .confirmedNoChange {
+			result.outcome = "unknown"
+			result.error = ActionMessage(
+				code: "TYPING_UNVERIFIED",
+				message: "The web field's text was typed with key events, but the host could not read back the result.",
+				hint: "Inspect the window to check the field before acting again; do not repeat the typing blindly."
+			)
+		}
 		if !verified, result.outcome != "refused" {
 			result.outcome = "unknown"
 			result.error = ActionMessage(
@@ -654,6 +685,42 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 	}
 	await explainMinimized(client, &result, receipt: receipt)
 	return try JSONEncoder().encode(ActionReply(data: result, target_receipt: receipt))
+}
+
+/// The observed web field that typing may replace: it must be the snapshot's keyboard focus, since a click to focus
+/// it could also act on the page.
+private func webTypingReceiver(
+	_ request: ActionRequest, observed: DetectedElement, focused: FocusedElementIdentity?,
+	handshake: PeekabooBridgeHandshakeResponse
+) throws -> FocusedElementIdentity {
+	let text = request.text!
+	guard let focused, focused.role == observed.attributes["role"],
+		abs(focused.frame.minX - observed.bounds.minX) <= 1, abs(focused.frame.minY - observed.bounds.minY) <= 1,
+		abs(focused.frame.width - observed.bounds.width) <= 1, abs(focused.frame.height - observed.bounds.height) <= 1
+	else {
+		throw ActionError(
+			"This is a web text field, which takes typed text only while it has keyboard focus, and the snapshot shows focus elsewhere. Nothing was typed.",
+			hint: "Click the field with desktop_click, inspect the window again, then repeat desktop_type with the new snapshot."
+		)
+	}
+	guard text.utf16.count <= maximumTypedInsertion,
+		!text.unicodeScalars.contains(where: { $0.properties.generalCategory == .control })
+	else {
+		throw ActionError(
+			"A web text field is typed into with key events, which take at most \(maximumTypedInsertion) UTF-16 code units and no newlines, tabs or other control characters. Nothing was typed.",
+			hint: "Use desktop_insert with route paste for long or multi-line text, after selecting the field's text if it should be replaced."
+		)
+	}
+	guard (handshake.enabledOperations ?? handshake.supportedOperations).contains(.exactWindowTargetedTypeActions) else {
+		throw ActionError("The native runtime does not allow typing into web fields. Update the desktop runtime before acting.")
+	}
+	if IsSecureEventInputEnabled() {
+		throw ActionError(
+			"Secure keyboard entry is on, as for a password field or a terminal's Secure Keyboard Entry, so typed text can't be delivered. Nothing was typed.",
+			hint: "Use a field that isn't secure, or turn off Secure Keyboard Entry in the app."
+		)
+	}
+	return focused
 }
 
 /// Replaces a refusal's low-level cause when the target window turns out to be minimized.

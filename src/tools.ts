@@ -747,7 +747,7 @@ Optional modifiers (command, control, option and shift, each at most once) are h
 			name: "desktop_type",
 			op: "type",
 			description:
-				`Replace the entire string value of one editable Accessibility element from a fresh desktop_inspect result. This sets that exact field's value; it does not append text or send keystrokes. Pass snapshot_id as snapshot and its element ID as element. The snapshot binds the action to that application process and window and is single-use. Inspect again after the action; never repeat an interrupted action without checking the current state.`,
+				`Replace the entire string value of one editable Accessibility element from a fresh desktop_inspect result. A native field's value is set through Accessibility, with no keystrokes. A text field in web content, such as a browser page or an Electron app, ignores that, so desktop_type types into it instead: it selects the field's text and types the replacement with key events to the app, in the background, so page scripts see input and change events, and completes only when it reads the new text back. That field must be the snapshot's keyboard focus, or the action is refused before input: click it with desktop_click, inspect again, and repeat. Typed web text takes at most 1000 UTF-16 code units and no newlines or tabs; use desktop_insert with route paste for longer text. Neither route appends. Pass snapshot_id as snapshot and its element ID as element. The snapshot binds the action to that application process and window and is single-use. Inspect again after the action; never repeat an interrupted action without checking the current state.`,
 			parameters: {
 				type: "object",
 				required: ["snapshot", "element", "text"],
