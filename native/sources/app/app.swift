@@ -73,9 +73,12 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		let bin = Bundle.main.executableURL!.deletingLastPathComponent()
 		runtime = Runtime(bin.appendingPathComponent("libDesktopTools.dylib").path)
 		// A development build takes another state directory so it never relinks the installed app's client.
+		// One with the development identity defaults to its own, even when opened without the variable.
 		let state = ProcessInfo.processInfo.environment["DESKTOP_TOOLS_STATE"] ?? ""
+		let dev = Bundle.main.bundleIdentifier!.hasSuffix(".dev")
 		let home = state.isEmpty
-			? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/state/desktop-tools")
+			? FileManager.default.homeDirectoryForCurrentUser
+				.appendingPathComponent(dev ? ".local/state/desktop-tools-dev" : ".local/state/desktop-tools")
 			: URL(fileURLWithPath: state)
 		try! FileManager.default.createDirectory(
 			at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

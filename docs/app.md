@@ -25,15 +25,12 @@ Identical operations in a row fold into one line with a count. Every desktop cha
 node dist/app.js --out build --identity "Developer ID Application: … (TEAM)" --release
 ```
 
-`assemble(out, scratch?)` and `sign(app, identity, release)` in `dist/app.js` are what the release workflow uses.
+`assemble(out, scratch?)` and `sign(app, identity, release)` in `dist/app.js` are what the release workflow uses. `assemble(out, scratch, true)` builds the development app instead, and `sign` takes the client's identifier from the bundle's.
 
 ## Development
 
-A development build run alongside the installed app needs its own state directory. Otherwise it relinks `~/.local/state/desktop-tools/desktop-client` to its own client; it cannot take over `desktop.sock` while the installed app serves it. Set `DESKTOP_TOOLS_STATE` for both the app and the MCP server:
+Run development builds with `npm run dev-app`, described in [Install and build](build.md#development-app). It installs one `Desktop Tools Dev.app` (`dev.githubnext.desktop-tools.dev`) at a fixed path and serves `~/.local/state/desktop-tools-dev/desktop.sock`, so it never relinks the installed app's `~/.local/state/desktop-tools/desktop-client` or takes its socket. Point the MCP server at it:
 
 ```sh
-open -n --env DESKTOP_TOOLS_STATE=/tmp/desktop-dev "build/Desktop Tools.app"
-DESKTOP_TOOLS_STATE=/tmp/desktop-dev node dist/mcp.js
+DESKTOP_TOOLS_STATE=~/.local/state/desktop-tools-dev node dist/mcp.js
 ```
-
-The app then serves `/tmp/desktop-dev/desktop.sock` and links its client there, and the MCP server uses both by default. A build signed with the same identity and identifier as the installed app shares its macOS grants.

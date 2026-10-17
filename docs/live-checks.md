@@ -4,12 +4,13 @@ The live checks in [#42](https://github.com/githubnext/desktop-tools/issues/42) 
 
 ```sh
 npm run live-check                    # the installed app
-DESKTOP_TOOLS_STATE=/tmp/dev npm run live-check -- --only 82,88
+npm run dev-app                       # build and open the development app (see build.md)
+DESKTOP_TOOLS_STATE=~/.local/state/desktop-tools-dev npm run live-check -- --only 82,88
 npm run live-check -- --list          # list the checks without running them
 npm run live-check -- --json /tmp/live.json
 ```
 
-It drives the installed Desktop Tools, or the dev app whose state folder `DESKTOP_TOOLS_STATE` names. Each check prints `PASS`, `FAIL` or `SKIP` with its evidence, and a summary groups them by PR. The exit status is 1 when any check fails, and 2 when nothing could run.
+It drives the installed Desktop Tools, or the dev app whose state folder `DESKTOP_TOOLS_STATE` names. Use `npm run dev-app` for the dev app, never a copy launched from a build folder. Each check prints `PASS`, `FAIL` or `SKIP` with its evidence, and a summary groups them by PR. The exit status is 1 when any check fails, and 2 when nothing could run.
 
 What it touches:
 

@@ -20,6 +20,7 @@
 		"check": "rm -rf .check && tsc --outDir .check && diff -r .check dist && rm -rf .check",
 		"build:native": "node dist/build.js --out build",
 		"build:app": "node dist/app.js --out build",
+		"dev-app": "node dist/dev-app.js",
 		"live-check": "node scripts/live-check.mjs",
 		"peekaboo-test": "node scripts/peekaboo-test.mjs"
 	},
