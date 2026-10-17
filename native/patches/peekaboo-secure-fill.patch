@@ -166,7 +166,7 @@ index 77a11d7ae..f1f6ee689 100644
      // Windows
      case listWindows
 diff --git a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
-index 943448ed0..2144852cc 100644
+index ad5b3949f..3afc1f1aa 100644
 --- a/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
 +++ b/Core/PeekabooCore/Sources/PeekabooBridge/PeekabooBridgeOperation+Policy.swift
 @@ -80,6 +80,7 @@ extension PeekabooBridgeOperation {
