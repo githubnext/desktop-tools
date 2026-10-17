@@ -28,6 +28,8 @@ jobs:
       - run: npm ci
       # The release imports the checked-in dist/, so it must match the source it ships.
       - run: npm run check
+      # The release notes are this version's CHANGELOG.md section; stop before the long build if it's missing.
+      - run: node scripts/changelog.ts > "$RUNNER_TEMP/notes.md"
       - name: Install signing credentials
         env:
           DT_CERTIFICATE_P12: ${{ secrets.DT_CERTIFICATE_P12 }}
@@ -52,7 +54,7 @@ jobs:
         run: |
           version=$(node -p "require('./package.json').version")
           gh release create "v$version" build/release/*.dmg \
-            --target "$GITHUB_SHA" --title "Desktop Tools $version" --generate-notes
+            --target "$GITHUB_SHA" --title "Desktop Tools $version" --notes-file "$RUNNER_TEMP/notes.md"
       - name: Remove signing credentials
         if: always()
         run: node scripts/credentials.ts clean
