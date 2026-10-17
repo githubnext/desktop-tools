@@ -1,0 +1,141 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Utilities/FocusUtilities.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Utilities/FocusUtilities.swift
+index 903caea8c..4f856182f 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Utilities/FocusUtilities.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Utilities/FocusUtilities.swift
+@@ -901,22 +901,19 @@ public final class FocusManagementService {
+                 dispatchGuard: dispatchGuard,
+                 pollCount: 30,
+                 interval: .milliseconds(100),
+-                isSettled: {
+-                    runningApp.isActive ||
+-                        NSWorkspace.shared.frontmostApplication?.processIdentifier == runningApp.processIdentifier
+-                })
++                isSettled: { Self.isFrontmost(runningApp) })
+         } else {
+-            try await self.waitForCondition(
+-                timeout: 3.0,
+-                interval: 0.1,
+-                condition: {
+-                    runningApp.isActive ||
+-                        NSWorkspace.shared.frontmostApplication?.processIdentifier == runningApp.processIdentifier
+-                })
+-            activationSettled = true
++            activationSettled = try await FocusAcceptedActivationSettlement.wait(
++                dispatchGuard: nil,
++                pollCount: 30,
++                interval: .milliseconds(100),
++                isSettled: { Self.isFrontmost(runningApp) })
+         }
+         guard activationSettled else {
+-            throw FocusError.timeoutWaitingForCondition
++            throw FocusError.activationNotObserved(
++                application: runningApp.localizedName ?? "The application",
++                processIdentifier: runningApp.processIdentifier,
++                requested: activationAccepted)
+         }
+         if activationAccepted {
+             try dispatchGuard?.didCompleteDispatch(.applicationActivation)
+@@ -1134,7 +1131,9 @@ public final class FocusManagementService {
+                     from: $0,
+                     messagingTimeout: Float(min(0.1, remainingTimeout)))
+             }
+-            let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
++            let frontmostPID = Self.isFrontmost(processIdentifier: ownerPID)
++                ? ownerPID
++                : NSWorkspace.shared.frontmostApplication?.processIdentifier
+             let preparedGenerationMatches = attachedDialog.map {
+                 SystemIdentityResolver.processStartIdentity(ownerPID) == $0.parentIdentity.ownerProcessStartIdentity
+             } ?? true
+@@ -1263,21 +1262,26 @@ public final class FocusManagementService {
+         return windowTitle.localizedCaseInsensitiveContains(title)
+     }
+ 
+-    private func waitForCondition(
+-        timeout: TimeInterval,
+-        interval: TimeInterval,
+-        condition: () -> Bool) async throws
+-    {
+-        let startTime = Date()
++    /// Whether the app is frontmost, by AppKit's view or the Accessibility server's.
++    ///
++    /// `isActive` and `frontmostApplication` are refreshed by notifications on the host's main run loop and
++    /// can lag; the system-wide `AXFocusedApplication` read asks the Accessibility server directly.
++    static func isFrontmost(_ application: NSRunningApplication) -> Bool {
++        application.isActive || self.isFrontmost(processIdentifier: application.processIdentifier)
++    }
+ 
+-        while Date().timeIntervalSince(startTime) < timeout {
+-            if condition() {
+-                return
+-            }
+-            try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
++    static func isFrontmost(processIdentifier: pid_t) -> Bool {
++        if NSWorkspace.shared.frontmostApplication?.processIdentifier == processIdentifier {
++            return true
+         }
+-
+-        throw FocusError.timeoutWaitingForCondition
++        let system = AXUIElementCreateSystemWide()
++        AXUIElementSetMessagingTimeout(system, 0.05)
++        var value: CFTypeRef?
++        guard AXUIElementCopyAttributeValue(system, kAXFocusedApplicationAttribute as CFString, &value) == .success,
++              let value, CFGetTypeID(value) == AXUIElementGetTypeID()
++        else { return false }
++        var focusedPID: pid_t = 0
++        return AXUIElementGetPid(value as! AXUIElement, &focusedPID) == .success && focusedPID == processIdentifier
+     }
+ }
+ 
+@@ -1291,6 +1295,7 @@ public enum FocusError: LocalizedError {
+     case focusVerificationFailed(CGWindowID)
+     case focusVerificationTimeout(CGWindowID)
+     case timeoutWaitingForCondition
++    case activationNotObserved(application: String, processIdentifier: pid_t, requested: Bool)
+ 
+     public var errorDescription: String? {
+         switch self {
+@@ -1308,6 +1313,14 @@ public enum FocusError: LocalizedError {
+             "Timeout while verifying focus for window ID \(id)"
+         case .timeoutWaitingForCondition:
+             "Timeout while waiting for condition"
++        case let .activationNotObserved(application, processIdentifier, requested):
++            (requested
++                ? "\(application) (pid \(processIdentifier)) did not become the active app within 3 seconds of " +
++                "the activation request, so its window was not raised. macOS can decline activation requested " +
++                "from the background."
++                : "\(application) (pid \(processIdentifier)) is not the active app and macOS did not accept the " +
++                "activation request, so its window was not raised.") +
++                " Activate the app, then retry; if it still isn't frontmost, ask the user to click the window."
+         }
+     }
+ }
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/FocusActivationObservationTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/FocusActivationObservationTests.swift
+new file mode 100644
+index 000000000..d6c252733
+--- /dev/null
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/FocusActivationObservationTests.swift
+@@ -0,0 +1,24 @@
++import AppKit
++import Testing
++@testable import PeekabooAutomationKit
++
++@MainActor
++struct FocusActivationObservationTests {
++    @Test
++    func `An unobserved activation names the app and what to do next`() throws {
++        let requested = try #require(FocusError.activationNotObserved(
++            application: "TextEdit", processIdentifier: 4242, requested: true).errorDescription)
++        #expect(requested.contains("TextEdit (pid 4242) did not become the active app within 3 seconds"))
++        #expect(requested.contains("Activate the app, then retry"))
++        #expect(!requested.contains("waiting for condition"))
++
++        let declined = try #require(FocusError.activationNotObserved(
++            application: "TextEdit", processIdentifier: 4242, requested: false).errorDescription)
++        #expect(declined.contains("did not accept the activation request"))
++    }
++
++    @Test
++    func `A process that does not exist is never frontmost`() {
++        #expect(!FocusManagementService.isFrontmost(processIdentifier: 999_999))
++    }
++}

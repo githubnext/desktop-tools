@@ -330,6 +330,17 @@ Other users' processes can't be read and are left out. With no process found, th
 and the hint says to wait and observe again. The refusal stays a pre-dispatch timeout. Two tests in
 `LockFileHoldersTests.swift` use a temporary coordination root.
 
+`peekaboo-focus-activation.patch` makes window focus see an app that is already frontmost and say why it
+stopped when one isn't. Focusing a window first waits for its app to become active, and that wait read only
+`NSRunningApplication.isActive` and `NSWorkspace.frontmostApplication`. Both are refreshed by notifications on
+the host's main run loop and can lag. When the wait gave up, the error was "Timeout while waiting for
+condition". The wait and the focus verification now also accept the system-wide `AXFocusedApplication`, read
+from the Accessibility server with a 50 ms messaging timeout. A wait that still ends without the app in front
+throws `FocusError.activationNotObserved`. That error names the app and pid, says whether macOS accepted the
+activation request, and suggests activating the app and retrying, or asking the user to click the window.
+Activation is still requested once, and the 3-second budget is unchanged. Two tests cover the message and a
+process that doesn't exist.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.
