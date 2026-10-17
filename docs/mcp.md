@@ -3,7 +3,7 @@
 `desktop-tools-mcp` (`dist/mcp.js`) serves the desktop tools over stdio MCP, with Ace's native-first guidance as its instructions. By default it uses the [Desktop Tools app](app.md)'s signed client and socket in `~/.local/state/desktop-tools`. Run it from this repository with `npx`, pinned to a release tag, or from a checkout with `node`:
 
 ```sh
-claude mcp add desktop -- npx -y --package=github:githubnext/desktop-tools#v0.8.0 desktop-tools-mcp
+claude mcp add desktop -- npx -y --package=github:githubnext/desktop-tools#v0.9.0 desktop-tools-mcp
 claude mcp add desktop -- node <path>/dist/mcp.js
 ```
 
@@ -23,7 +23,7 @@ For Codex, in `~/.codex/config.toml`:
 ```toml
 [mcp_servers.desktop]
 command = "npx"
-args = ["-y", "--package=github:githubnext/desktop-tools#v0.8.0", "desktop-tools-mcp"]
+args = ["-y", "--package=github:githubnext/desktop-tools#v0.9.0", "desktop-tools-mcp"]
 ```
 
 The tool names, descriptions, and argument schemas come from `@githubnext/desktop-tools/tools` (`desktopTools`, `desktopRequest`), which Ace's `desktop_*` tools also use. [Tools](tools.md) lists them.
