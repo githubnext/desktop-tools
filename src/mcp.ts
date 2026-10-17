@@ -7,7 +7,7 @@ import { parseArgs } from "node:util";
 
 import { type DesktopConfig, createDesktop } from "./client.js";
 import { type DesktopRequest, isDesktopAction } from "./protocol.js";
-import { type DesktopTool, desktopRequest, desktopTools } from "./tools.js";
+import { type DesktopTool, desktopRequest, desktopToolRules, desktopTools } from "./tools.js";
 
 const { values } = parseArgs({
 	options: { client: { type: "string" }, socket: { type: "string" }, name: { type: "string" } },
@@ -29,7 +29,7 @@ const { version } = JSON.parse(
 // Newest first; an unsupported client version gets the newest, as the MCP lifecycle requires.
 const VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
-// Guidance mirrors Ace's desktop extension so agents behave alike; tools come from the shared definitions.
+// Guidance mirrors Ace's desktop extension so agents behave alike; tools and their shared rules come from the shared definitions.
 const instructions = [
 	`Use desktop_* tools to observe and operate native apps on this Mac through ${host}, which holds the macOS permissions.`,
 	"Shell commands remain appropriate for builds, files, and preparing clipboard fixtures directly.",
@@ -43,6 +43,8 @@ const instructions = [
 	"Action results start with their outcome: completed, refused, or unknown.",
 	"For a refusal before dispatch, follow its concrete recovery hint once when applicable, then refresh the observation; a refusal alone does not prove the capability is missing.",
 	"After completed, interrupted, or uncertain input, inspect the current target before deciding whether another action is needed. Never replay input just because its follow-up observation failed.",
+	"",
+	...desktopToolRules(host),
 ].join("\n");
 
 const tools = desktopTools({ place: "this Mac", app: host });

@@ -23,7 +23,7 @@ test("media, volume and brightness keys take no modifiers", macOS, async () => {
 
 test("desktop_system_key lists the media keys", () => {
 	const tool = desktopTools({ place: "this Mac", app: "Desktop Tools" }).find((tool) => tool.name === "desktop_system_key");
-	const keys = tool.parameters.properties.key.anyOf.map((option) => option.const).filter(Boolean);
+	const keys = tool.parameters.properties.key.anyOf[0].enum;
 	for (const key of ["play_pause", "next_track", "volume_down", "brightness_up", "keyboard_brightness_down", "escape"]) {
 		assert.ok(keys.includes(key), key);
 	}

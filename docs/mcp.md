@@ -26,7 +26,7 @@ command = "npx"
 args = ["-y", "--package=github:githubnext/desktop-tools#v0.10.0", "desktop-tools-mcp"]
 ```
 
-The tool names, descriptions, and argument schemas come from `@githubnext/desktop-tools/tools` (`desktopTools`, `desktopRequest`), which Ace's `desktop_*` tools also use. [Tools](tools.md) lists them.
+The tool names, descriptions, and argument schemas come from `@githubnext/desktop-tools/tools` (`desktopTools`, `desktopRequest`), which Ace's `desktop_*` tools also use. [Tools](tools.md) lists them. The descriptions don't repeat the rules every tool shares: exact targets, single-use snapshots, background and foreground input, what each outcome means, pausing, `desktop_wait` and `expect`, and the recipes. `desktopToolRules(app)` returns those rules, and the server adds them to its instructions; a host with its own agent guidance should include them too.
 
 The server names the agent in the host's window highlight from the MCP client's `clientInfo`: Claude, Codex, Cursor, Gemini or Copilot when the client name contains one, otherwise the client's `title`, otherwise "Agent".
 

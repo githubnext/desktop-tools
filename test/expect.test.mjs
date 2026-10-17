@@ -115,7 +115,7 @@ test("click, key, system_key, drag and insert take expect; other actions don't",
 	assert.deepEqual(taking, ["desktop_click", "desktop_drag", "desktop_insert", "desktop_key", "desktop_system_key"]);
 	const expect = tools.find((tool) => tool.name === "desktop_click").parameters.properties.expect;
 	assert.equal(expect.properties.timeout_ms.maximum, EXPECT_MAX_MS);
-	assert.ok(expect.properties.until.anyOf.length > 10);
+	assert.ok(expect.properties.until.enum.length > 10);
 });
 
 const desktop = createDesktop({ client: "/nonexistent/desktop-client", socket: "/nonexistent/desktop.sock", name: "test" });
