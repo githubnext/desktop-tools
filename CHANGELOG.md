@@ -4,6 +4,12 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Changed
+
+- `desktop_wait` also turns on Chromium and Electron web accessibility before its element and text polls, so it finds web content as inspect and read do. ([#110](https://github.com/githubnext/desktop-tools/pull/110))
+
+## [0.11.0] - 2026-10-17
+
 ### Added
 
 - `desktop_insert` pastes an image or files into a native text area, such as TextEdit rich text, Mail or Notes, and restores the clipboard once the attachment reads back. `clipboard: "replace"` pastes into any other receiver and leaves the item on the clipboard. ([#99](https://github.com/githubnext/desktop-tools/pull/99))
@@ -15,6 +21,10 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - `desktop_input_source` selects through the host, so Pause All Input and the activity list cover it. ([#101](https://github.com/githubnext/desktop-tools/pull/101))
 - Shorter MCP tool descriptions and schemas. The shared rules are stated once in the server instructions, and longer contracts moved to the docs' Details by tool section. ([#103](https://github.com/githubnext/desktop-tools/pull/103))
+
+### Fixed
+
+- `desktop_inspect` and `desktop_read` see web content in Chromium and Electron apps: the host turns on their web accessibility once per app launch. ([#107](https://github.com/githubnext/desktop-tools/pull/107))
 
 ## [0.10.0] - 2026-10-17
 
@@ -136,7 +146,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The first release: a signed, notarized Desktop Tools menu bar app, and the desktop tools served over MCP. ([#28](https://github.com/githubnext/desktop-tools/pull/28), [#29](https://github.com/githubnext/desktop-tools/pull/29), [#12](https://github.com/githubnext/desktop-tools/pull/12))
 
-[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/githubnext/desktop-tools/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/githubnext/desktop-tools/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/githubnext/desktop-tools/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/githubnext/desktop-tools/compare/v0.7.0...v0.8.0
