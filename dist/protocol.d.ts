@@ -126,6 +126,8 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
 } | {
     op: "clipboard-read";
     format?: "text" | "image" | "files";
+    save_path?: string;
+    overwrite?: boolean;
 } | {
     op: "clipboard-write";
     text: string;

@@ -10,8 +10,18 @@ export type SavedCapture = { path: string; width: number; height: number; region
 type Run = (file: string, args: string[], signal: AbortSignal) => Promise<string>;
 type Dimensions = (path: string, signal: AbortSignal) => Promise<{ width: number; height: number }>;
 
+/** File extensions a clipboard image may be saved with, by its type. */
+const CLIPBOARD_EXTENSIONS: Record<string, string[]> = {
+	"public.png": ["png"],
+	"public.jpeg": ["jpg", "jpeg"],
+	"public.tiff": ["tif", "tiff"],
+};
+
 /** Checks save_path, overwrite and region before anything is captured. */
-export async function validateSave(request: CaptureSave): Promise<string | undefined> {
+export async function validateSave(
+	request: CaptureSave,
+	extensions: string[] = ["png"],
+): Promise<string | undefined> {
 	const { save_path: path, overwrite, region } = request;
 	if (overwrite !== undefined && typeof overwrite !== "boolean") throw new Error("Choose overwrite true or false.");
 	if (path === undefined) {
@@ -22,9 +32,14 @@ export async function validateSave(request: CaptureSave): Promise<string | undef
 	}
 	if (
 		typeof path !== "string" || !isAbsolute(path) || normalize(path) !== path || path.length > 1024
-		|| path.includes("\0") || !/\.png$/i.test(path)
+		|| path.includes("\0") || !extensions.includes(path.split(".").at(-1)!.toLowerCase())
 	) {
-		throw new Error("save_path must be a normalized absolute path ending in .png.");
+		const names = extensions.map((extension) => "." + extension);
+		throw new Error(
+			`save_path must be a normalized absolute path ending in ${
+				names.length > 1 ? names.slice(0, -1).join(", ") + " or " + names.at(-1) : names[0]
+			}.`,
+		);
 	}
 	if (region !== undefined) regionOf(region);
 	const parent = await stat(dirname(path)).catch(() => undefined);
@@ -106,6 +121,37 @@ export async function saveCapture(
 	// Exclusive unless overwrite was asked for, so a file created since validation is never replaced.
 	await copyFile(source, path, request.overwrite === true ? 0 : constants.COPYFILE_EXCL);
 	return { path, width: saved.width, height: saved.height, region };
+}
+
+export const CLIPBOARD_SAVE_EXTENSIONS = Object.values(CLIPBOARD_EXTENSIONS).flat();
+export type SavedClipboardImage = { path: string; uti: string; mime_type: string; bytes: number; width: number; height: number };
+
+/**
+ * Saves the clipboard image's original bytes, exported to a private file, at path. The bytes are copied
+ * unchanged, so path's extension must name the image's own type.
+ */
+export async function saveClipboardImage(
+	exported: string,
+	path: string,
+	overwrite: boolean,
+	source: { uti: string; mimeType: string; bytes: number; width: number; height: number },
+	signal: AbortSignal,
+): Promise<SavedClipboardImage> {
+	const extensions = CLIPBOARD_EXTENSIONS[source.uti];
+	if (!extensions) throw new Error(`The clipboard image type ${source.uti} can't be saved.`);
+	if (!extensions.includes(path.split(".").at(-1)!.toLowerCase())) {
+		throw new Error(
+			`The clipboard holds a ${source.mimeType} image; save it with a .${extensions.join(" or .")} path. Nothing was written.`,
+		);
+	}
+	const exportedFile = await lstat(exported);
+	if (!exportedFile.isFile() || exportedFile.size !== source.bytes) {
+		throw new Error("The exported clipboard image is incomplete. Nothing was written.");
+	}
+	signal.throwIfAborted();
+	// Exclusive unless overwrite was asked for, so a file created since validation is never replaced.
+	await copyFile(exported, path, overwrite ? 0 : constants.COPYFILE_EXCL);
+	return { path, uti: source.uti, mime_type: source.mimeType, bytes: source.bytes, width: source.width, height: source.height };
 }
 
 async function isPng(path: string): Promise<boolean> {

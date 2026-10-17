@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { saveCapture, validateSave } from "../dist/capture-file.js";
+import { CLIPBOARD_SAVE_EXTENSIONS, saveCapture, saveClipboardImage, validateSave } from "../dist/capture-file.js";
 
 const exec = promisify(execFile);
 const tools = {
@@ -128,4 +128,34 @@ test("a non-PNG capture is converted", { skip }, async (t) => {
 	const saved = await saveCapture(join(directory, "capture.bmp"), directory, path, { save_path: path }, undefined, tools, signal);
 	assert.equal(saved.width, 200);
 	assert.ok(isPng(await readFile(path)));
+});
+
+test("a clipboard image is saved byte for byte under a path that names its type", async (t) => {
+	const folder = await mkdtemp(join(tmpdir(), "clipboard-save-"));
+	t.after(() => rm(folder, { recursive: true, force: true }));
+	const exported = join(folder, "original");
+	const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+	await writeFile(exported, bytes);
+	const source = { uti: "public.jpeg", mimeType: "image/jpeg", bytes: bytes.length, width: 4, height: 2 };
+
+	await assert.rejects(validateSave({ save_path: join(folder, "a.gif") }, CLIPBOARD_SAVE_EXTENSIONS), /\.png, \.jpg, \.jpeg, \.tif or \.tiff/);
+	assert.equal(await validateSave({ save_path: join(folder, "a.JPG") }, CLIPBOARD_SAVE_EXTENSIONS), join(folder, "a.JPG"));
+	await assert.rejects(validateSave({ save_path: join(folder, "a.jpg") }), /ending in \.png\./);
+
+	await assert.rejects(
+		saveClipboardImage(exported, join(folder, "a.png"), false, source, signal),
+		/image\/jpeg image; save it with a \.jpg or \.jpeg path/,
+	);
+	assert.equal(existsSync(join(folder, "a.png")), false);
+
+	const saved = await saveClipboardImage(exported, join(folder, "a.jpeg"), false, source, signal);
+	assert.deepEqual(saved, { path: join(folder, "a.jpeg"), uti: "public.jpeg", mime_type: "image/jpeg", bytes: 8, width: 4, height: 2 });
+	assert.deepEqual(await readFile(join(folder, "a.jpeg")), bytes);
+
+	await assert.rejects(saveClipboardImage(exported, join(folder, "a.jpeg"), false, source, signal), /EEXIST/);
+	await saveClipboardImage(exported, join(folder, "a.jpeg"), true, source, signal);
+	await assert.rejects(
+		saveClipboardImage(exported, join(folder, "b.jpg"), false, { ...source, bytes: 9 }, signal),
+		/incomplete/,
+	);
 });

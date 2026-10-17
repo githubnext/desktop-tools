@@ -16,6 +16,8 @@ private struct ClipboardRequest: Decodable {
 	let text: String?
 	let image: Data?
 	let paths: [String]?
+	/// For an image read, a new file in the caller's private folder that receives the original bytes.
+	let export_path: String?
 }
 
 private struct ClipboardReply<T: Encodable>: Encodable {
@@ -49,12 +51,26 @@ func nativeClipboard(_ client: PeekabooBridgeClient) async throws -> Data {
 	}
 	let request = try JSONDecoder().decode(ClipboardRequest.self, from: data)
 	if request.op == .read {
-		guard request.text == nil, request.image == nil, request.paths == nil, data.count <= 65_536 else {
+		guard request.text == nil, request.image == nil, request.paths == nil, data.count <= 65_536,
+			request.export_path == nil || request.format == .image else {
 			throw DesktopActionFailure.preDispatchRefusal(reason: .invalidRequest,
 				message: "Clipboard reads do not accept content and must fit 64 KiB.")
 		}
 		if request.format == .files {
 			let result = try await client.clipboardFilesRead()
+			return try JSONEncoder().encode(ClipboardReply(data: result))
+		}
+		if request.format == .image, let path = request.export_path {
+			guard path.hasPrefix("/") else {
+				throw DesktopActionFailure.preDispatchRefusal(reason: .invalidRequest,
+					message: "The clipboard image export path must be absolute.")
+			}
+			var result = try await client.clipboardImageExport()
+			// The original goes to the file, never into the reply.
+			if let original = result.original {
+				try original.write(to: URL(fileURLWithPath: path), options: [.withoutOverwriting])
+			}
+			result.original = nil
 			return try JSONEncoder().encode(ClipboardReply(data: result))
 		}
 		if request.format == .image {
