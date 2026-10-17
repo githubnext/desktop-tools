@@ -12,7 +12,7 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 ### Changed
 
 - Agent input aimed at any Desktop Tools process, including another build of it, or sent while one of its prompts or menus is open, is refused with `SELF_TARGET_REFUSED`, so only the user can answer its prompts or choose Pause All Input. Agents can still observe them. ([#120](https://github.com/githubnext/desktop-tools/pull/120))
-- **Behavior change:** while a password field has keyboard focus, `desktop_key` refuses keys that type characters and Command-V, and `desktop_insert` refuses all its routes, with `SECURE_FIELD_REQUIRES_FILL`. Nothing is sent. Return, Tab, Escape, arrows, Delete and other shortcuts still work. Passwords go in only through `desktop_fill_password` and its approval. ([#122](https://github.com/githubnext/desktop-tools/pull/122))
+- **Behavior change:** while a password field has keyboard focus, `desktop_key` refuses keys that type characters and Command-V, and `desktop_insert` refuses all its routes, and `desktop_menu` refuses Paste commands (found by their Command-V shortcut, whatever the title), with `SECURE_FIELD_REQUIRES_FILL`. Nothing is sent. Return, Tab, Escape, arrows, Delete and other shortcuts still work. Passwords go in only through `desktop_fill_password` and its approval. ([#122](https://github.com/githubnext/desktop-tools/pull/122))
 
 ### Fixed
 

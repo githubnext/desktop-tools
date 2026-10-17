@@ -312,7 +312,7 @@ export function desktopTools({ place, app }) {
         {
             name: "desktop_menu",
             op: "menu",
-            description: `Run one menu command in an app by its desktop_apps target and exact title path from desktop_menus, punctuation included ('Save…'). Background: one Accessibility press of the final item, without opening menus or activating the app, though the app may come forward itself. Completed means the press was accepted, not that the command finished; a modal command can be unknown while its dialog is open. created_windows lists new windows. Missing titles are refused with the titles found at that level; disabled items are refused. ${app} itself can't be targeted.`,
+            description: `Run one menu command in an app by its desktop_apps target and exact title path from desktop_menus, punctuation included ('Save…'). Background: one Accessibility press of the final item, without opening menus or activating the app, though the app may come forward itself. Completed means the press was accepted, not that the command finished; a modal command can be unknown while its dialog is open. created_windows lists new windows. Missing titles are refused with the titles found at that level; disabled items are refused. ${app} itself can't be targeted. A Paste command (Command-V) is refused with SECURE_FIELD_REQUIRES_FILL while a password field has keyboard focus.`,
             parameters: {
                 type: "object",
                 required: ["target", "path"],

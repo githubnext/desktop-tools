@@ -99,7 +99,9 @@ func nativeMenuCommand(_ client: PeekabooBridgeClient, handshake: PeekabooBridge
 			receipt = Receipt(pid: process.processIdentifier, window_id: nil, process_start_identity_decimal: String(process.processStartIdentity))
 		}
 		result.requires_fresh_observation = failure.outcome.dispatchState.mutationDispatched || failure.outcome.escalation == .refreshTarget
-		result.error = MenuCommandMessage(code: failure.standardErrorCode?.rawValue ?? "DESKTOP_ACTION_FAILED", message: failure.message, hint: failure.hint)
+		result.error = failure.message == SecureTextFillRefusal.secureFocus
+			? MenuCommandMessage(code: secureFieldRequiresFill.code, message: failure.message, hint: secureFieldRequiresFill.hint)
+			: MenuCommandMessage(code: failure.standardErrorCode?.rawValue ?? "DESKTOP_ACTION_FAILED", message: failure.message, hint: failure.hint)
 	} catch {
 		result.outcome = invoked ? "unknown" : "refused"
 		result.requires_fresh_observation = invoked

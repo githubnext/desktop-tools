@@ -185,7 +185,7 @@ A secure text field, such as a password field, reports the role `AXTextField` wi
 
 The host replaces the field's contents with key events. The fill is completed when the field then shows only mask characters, exactly as many as the password has; otherwise it is `unknown`. Results and Recent Activity record that a fill happened and where, never the password or its length. A fill refused by the user, by the Keychain, or after a minute without an answer sends nothing. System password prompts, such as the administrator prompt (SecurityAgent), are refused. Touch ID isn't supported.
 
-Some ways to paste remain outside these checks: choosing Paste from a menu with `desktop_menu`, clicking Paste in a context menu, and dragging text onto the field.
+`desktop_menu` refuses a Paste command the same way while the app's focused element is a secure field. The item counts as Paste by its shortcut, Command-V with or without other modifiers, or by an identifier naming a paste action, so localized titles and variants such as Paste and Match Style are covered. Two ways to paste remain outside these checks: clicking Paste in a context menu with `desktop_click`, and dragging text onto the field.
 
 `desktop_insert` also pastes an image or files into a native text area, such as TextEdit's rich text, Mail or Notes, in place of text; see [the details](#details-by-tool) for how it confirms the paste and when it refuses.
 
