@@ -105,6 +105,17 @@ export type DesktopWait = {
     text?: string;
     timeout_ms?: number;
 };
+/** Writes the full-resolution capture, or the part under region in global desktop points, as a PNG. */
+export type DesktopCaptureSave = {
+    save_path?: string;
+    overwrite?: boolean;
+    region?: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    };
+};
 export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | DesktopDialogAnswer | {
     op: "dialog";
     target: DesktopAppTarget | DesktopWindowTarget;
@@ -150,14 +161,14 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
 } | {
     op: "switch-space";
     space_id: number;
-} | {
+} | ({
     op: "inspect";
     pid: number;
     window: number;
     mode?: "accessibility" | "pixels";
     ocr?: boolean;
     scope?: DesktopScope;
-} | {
+} & DesktopCaptureSave) | {
     op: "read";
     pid: number;
     window: number;
@@ -168,11 +179,11 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     op: "notification-action";
     id: string;
     action: string;
-} | {
+} | ({
     op: "screen";
     display?: number;
     ocr?: boolean;
-} | {
+} & DesktopCaptureSave) | {
     op: "click";
     snapshot: string;
     element?: string;
