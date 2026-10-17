@@ -7,6 +7,8 @@ const desktop = createDesktop({
 	client: "/Applications/Example.app/Contents/MacOS/desktop-tools-client",
 	socket: "/path/to/desktop.sock",
 	name: "Example",
+	// Optional: names the agent in the host's window highlight, such as "Claude is using TextEdit".
+	agent: "Claude",
 });
 const apps = await desktop({ op: "apps" }, AbortSignal.timeout(30_000));
 ```
