@@ -1,0 +1,292 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ClickService.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ClickService.swift
+index eef938542..724b7f253 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ClickService.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ClickService.swift
+@@ -1305,7 +1305,9 @@ extension ClickService {
+         snapshotId: String?,
+         automationTarget: UIAutomationTarget,
+         validatesProcessIdentity: Bool = false,
+-        allowsAccessibilityValueDelivery: Bool = true) async throws -> UIInputExecutionResult
++        allowsAccessibilityValueDelivery: Bool = true,
++        lanePreparation: @escaping @MainActor @Sendable () async -> Void = {}) async throws
++        -> UIInputExecutionResult
+     {
+         try await self.executeClick(ClickExecutionRequest(
+             target: target,
+@@ -1315,7 +1317,7 @@ extension ClickService {
+             validatesProcessIdentity: validatesProcessIdentity,
+             allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery,
+             acquireLane: true,
+-            lanePreparation: {},
++            lanePreparation: lanePreparation,
+             laneCompletion: { _ in }))
+     }
+ 
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ExactWindowDrag.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ExactWindowDrag.swift
+index 2ebae30da..149f897e0 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ExactWindowDrag.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ExactWindowDrag.swift
+@@ -82,7 +82,9 @@ extension UIAutomationService: ExactWindowDragServiceProtocol {
+         _ request: ExactWindowDragRequest,
+         boundTo processIdentity: ApplicationProcessIdentity? = nil) async throws -> UIAutomationActionResult<Void>
+     {
+-        try await self.heldPointerLifecycle.drag(request: request, boundTo: processIdentity) {
++        // Before the hold exists, so feedback never spends the hold's expiry budget.
++        if (try? request.validate()) != nil { await self.showAgentCursorDrag(request) }
++        return try await self.heldPointerLifecycle.drag(request: request, boundTo: processIdentity) {
+             let detection = try await self.snapshotManager.getDetectionResult(snapshotId: request.snapshotID)
+             let receipt = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
+                 snapshotID: request.snapshotID,
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+AgentCursor.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+AgentCursor.swift
+new file mode 100644
+index 000000000..e45c99924
+--- /dev/null
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+AgentCursor.swift
+@@ -0,0 +1,100 @@
++import CoreGraphics
++import Foundation
++import PeekabooFoundation
++
++extension UIAutomationService {
++    /// Longest a background pointer input waits for its feedback before it proceeds without it.
++    nonisolated static let agentCursorFeedbackLimit: Duration = .milliseconds(600)
++
++    /// Shows advisory feedback before background pointer input is dispatched.
++    ///
++    /// Feedback cannot throw and never decides the input: dispatch continues when it returns or when
++    /// `agentCursorFeedbackLimit` elapses, whichever comes first. A late feedback task keeps running alone.
++    func showAgentCursorFeedback(_ feedback: @escaping @MainActor @Sendable () async -> Void) async {
++        guard !(self.feedbackClient is NoopAutomationFeedbackClient) else { return }
++        let gate = AgentCursorFeedbackGate()
++        await withCheckedContinuation { continuation in
++            gate.install(continuation)
++            Task { @MainActor in
++                await feedback()
++                gate.resume()
++            }
++            Task {
++                try? await Task.sleep(for: Self.agentCursorFeedbackLimit)
++                gate.resume()
++            }
++        }
++    }
++
++    func showAgentCursorClick(target: ClickTarget, clickType: ClickType, snapshotId: String?) async {
++        await self.showAgentCursorFeedback {
++            guard let point = await self.agentCursorPoint(element: target.agentCursorElementID, snapshotId: snapshotId)
++                ?? target.agentCursorPoint
++            else { return }
++            _ = await self.feedbackClient.showClickFeedback(at: point, type: clickType, target: nil)
++        }
++    }
++
++    func showAgentCursorScroll(_ request: ScrollRequest) async {
++        await self.showAgentCursorFeedback {
++            guard let point = await self.agentCursorPoint(element: request.target, snapshotId: request.snapshotId)
++                ?? request.point
++            else { return }
++            _ = await self.feedbackClient.showScrollFeedback(
++                at: point,
++                direction: request.direction,
++                amount: request.amount,
++                target: nil)
++        }
++    }
++
++    func showAgentCursorDrag(_ request: ExactWindowDragRequest) async {
++        await self.showAgentCursorFeedback {
++            _ = await self.feedbackClient.showSwipeGesture(
++                from: request.from,
++                to: request.to,
++                duration: TimeInterval(request.durationMilliseconds) / 1000,
++                target: nil)
++        }
++    }
++
++    /// An element target's center in its snapshot, in global screen coordinates.
++    private func agentCursorPoint(element: String?, snapshotId: String?) async -> CGPoint? {
++        guard let element, let snapshotId,
++              let result = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId),
++              let detected = result.elements.findById(element)
++        else { return nil }
++        return CGPoint(x: detected.bounds.midX, y: detected.bounds.midY)
++    }
++}
++
++extension ClickTarget {
++    fileprivate var agentCursorPoint: CGPoint? {
++        if case let .coordinates(point) = self { return point }
++        return nil
++    }
++
++    fileprivate var agentCursorElementID: String? {
++        if case let .elementId(id) = self { return id }
++        return nil
++    }
++}
++
++private final class AgentCursorFeedbackGate: @unchecked Sendable {
++    private let lock = NSLock()
++    private var continuation: CheckedContinuation<Void, Never>?
++
++    func install(_ continuation: CheckedContinuation<Void, Never>) {
++        self.lock.lock()
++        self.continuation = continuation
++        self.lock.unlock()
++    }
++
++    func resume() {
++        self.lock.lock()
++        let continuation = self.continuation
++        self.continuation = nil
++        self.lock.unlock()
++        continuation?.resume()
++    }
++}
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+Operations.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+Operations.swift
+index b75d186fc..106bbcd2b 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+Operations.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+Operations.swift
+@@ -245,7 +245,10 @@ extension UIAutomationService {
+                 snapshotId: snapshotId,
+                 automationTarget: automationTarget,
+                 validatesProcessIdentity: true,
+-                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
++                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery,
++                lanePreparation: {
++                    await self.showAgentCursorClick(target: target, clickType: clickType, snapshotId: snapshotId)
++                })
+         }
+ 
+         await self.visualizeClick(
+@@ -325,7 +328,10 @@ extension UIAutomationService {
+                 snapshotId: snapshotId,
+                 automationTarget: automationTarget,
+                 validatesProcessIdentity: true,
+-                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
++                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery,
++                lanePreparation: {
++                    await self.showAgentCursorClick(target: target, clickType: clickType, snapshotId: snapshotId)
++                })
+         }
+ 
+         await self.visualizeClick(
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+PointerKeyboardOperations.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+PointerKeyboardOperations.swift
+index 7096ea4b6..95c0c972a 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+PointerKeyboardOperations.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/UIAutomationService+PointerKeyboardOperations.swift
+@@ -30,6 +30,7 @@ extension UIAutomationService {
+                 request,
+                 lanePreparation: {
+                     visualizerTarget = await self.visualizerTargetWindow(snapshotId: request.snapshotId)
++                    if !request.foreground { await self.showAgentCursorScroll(request) }
+                 },
+                 laneCompletion: { result in
+                     await self.visualizeScroll(
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/UIAutomationServiceAgentCursorTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/UIAutomationServiceAgentCursorTests.swift
+new file mode 100644
+index 000000000..85ff22b78
+--- /dev/null
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/UIAutomationServiceAgentCursorTests.swift
+@@ -0,0 +1,101 @@
++import CoreGraphics
++import Foundation
++import PeekabooFoundation
++import Testing
++@testable import PeekabooAutomationKit
++
++struct UIAutomationServiceAgentCursorTests {
++    @Test
++    @MainActor
++    func `background pointer feedback receives the resolved point before dispatch`() async {
++        let feedback = StallingAgentCursorFeedbackClient(stalls: false)
++        let service = UIAutomationService(feedbackClient: feedback)
++
++        await service.showAgentCursorClick(
++            target: .coordinates(CGPoint(x: 10, y: 20)),
++            clickType: .double,
++            snapshotId: nil)
++        await service.showAgentCursorScroll(ScrollRequest(
++            direction: .down,
++            amount: 3,
++            point: CGPoint(x: 30, y: 40),
++            foreground: false))
++
++        #expect(feedback.clicks == [CGPoint(x: 10, y: 20)])
++        #expect(feedback.scrolls == [CGPoint(x: 30, y: 40)])
++    }
++
++    @Test
++    @MainActor
++    func `stalled feedback never holds pointer input past its limit`() async {
++        let feedback = StallingAgentCursorFeedbackClient(stalls: true)
++        let service = UIAutomationService(feedbackClient: feedback)
++        let clock = ContinuousClock()
++
++        let elapsed = await clock.measure {
++            await service.showAgentCursorClick(
++                target: .coordinates(CGPoint(x: 10, y: 20)),
++                clickType: .single,
++                snapshotId: nil)
++        }
++
++        #expect(feedback.clicks.count == 1)
++        #expect(elapsed >= UIAutomationService.agentCursorFeedbackLimit)
++        #expect(elapsed < UIAutomationService.agentCursorFeedbackLimit + .seconds(2))
++        feedback.release()
++    }
++
++    @Test
++    @MainActor
++    func `no feedback client adds no wait`() async {
++        let service = UIAutomationService()
++        let clock = ContinuousClock()
++
++        let elapsed = await clock.measure {
++            await service.showAgentCursorClick(
++                target: .coordinates(CGPoint(x: 10, y: 20)),
++                clickType: .single,
++                snapshotId: nil)
++        }
++
++        #expect(elapsed < .milliseconds(100))
++    }
++}
++
++@MainActor
++private final class StallingAgentCursorFeedbackClient: AutomationFeedbackClient {
++    private let stalls: Bool
++    private var waiting: [CheckedContinuation<Void, Never>] = []
++    private(set) var clicks: [CGPoint] = []
++    private(set) var scrolls: [CGPoint] = []
++
++    init(stalls: Bool) {
++        self.stalls = stalls
++    }
++
++    func release() {
++        let waiting = self.waiting
++        self.waiting = []
++        for continuation in waiting {
++            continuation.resume()
++        }
++    }
++
++    func showClickFeedback(at point: CGPoint, type _: ClickType, target _: VisualizerTargetWindow?) async -> Bool {
++        self.clicks.append(point)
++        if self.stalls {
++            await withCheckedContinuation { self.waiting.append($0) }
++        }
++        return true
++    }
++
++    func showScrollFeedback(
++        at point: CGPoint,
++        direction _: ScrollDirection,
++        amount _: Int,
++        target _: VisualizerTargetWindow?) async -> Bool
++    {
++        self.scrolls.append(point)
++        return true
++    }
++}

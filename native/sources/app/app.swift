@@ -8,6 +8,7 @@ private struct Runtime {
 	let stop: @convention(c) () -> Void
 	let free: @convention(c) (UnsafeMutableRawPointer?) -> Void
 	let permission: @convention(c) (UnsafePointer<CChar>) -> Void
+	let setCursor: @convention(c) (Bool) -> Void
 
 	init(_ path: String) {
 		guard let handle = dlopen(path, RTLD_NOW) else { fatalError(String(cString: dlerror())) }
@@ -20,6 +21,7 @@ private struct Runtime {
 		stop = symbol("desktop_tools_stop")
 		free = symbol("desktop_tools_free")
 		permission = symbol("desktop_tools_permission")
+		setCursor = symbol("desktop_tools_set_cursor")
 	}
 }
 
@@ -39,6 +41,8 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 	private let menu = NSMenu()
 	private var serving = true
+	// The app shows the agent cursor unless the user turned it off; embedding apps start with it off.
+	private var cursor = UserDefaults.standard.object(forKey: "agentCursor") as? Bool ?? true
 
 	override init() {
 		let bin = Bundle.main.executableURL!.deletingLastPathComponent()
@@ -66,6 +70,7 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		item.button?.image = NSImage(systemSymbolName: "cursorarrow.rays", accessibilityDescription: "Desktop Tools")
 		menu.delegate = self
 		item.menu = menu
+		runtime.setCursor(cursor)
 		runtime.start(socket, client)
 		render()
 	}
@@ -111,6 +116,10 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		toggle.target = self
 		toggle.state = serving ? .on : .off
 		menu.addItem(toggle)
+		let pointer = NSMenuItem(title: "Show agent cursor", action: #selector(toggleCursor), keyEquivalent: "")
+		pointer.target = self
+		pointer.state = cursor ? .on : .off
+		menu.addItem(pointer)
 		menu.addItem(.separator())
 		menu.addItem(withTitle: "Quit Desktop Tools", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 	}
@@ -122,6 +131,12 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	@objc private func toggle() {
 		serving.toggle()
 		if serving { runtime.start(socket, client) } else { runtime.stop() }
+	}
+
+	@objc private func toggleCursor() {
+		cursor.toggle()
+		UserDefaults.standard.set(cursor, forKey: "agentCursor")
+		runtime.setCursor(cursor)
 	}
 }
 

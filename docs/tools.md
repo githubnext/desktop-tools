@@ -48,7 +48,7 @@ Window operations other than focus use background Accessibility and don't activa
 | `desktop_dialog_answer` | Press one dialog button by its exact title, or replace one dialog text field's value |
 | `desktop_clipboard_write` | Replace the clipboard with text, an image, or file references |
 
-Pointer input is delivered to the exact window without moving the physical pointer.
+Pointer input is delivered to the exact window without moving the physical pointer. When the host turns on the agent cursor, an orange arrow first glides to each click, scroll or drag point, about a third of a second before the input is sent. It then shows a ripple for clicks, chevrons for scrolls and a trail for drags, and fades after a few seconds idle. The cursor never takes clicks or focus and is left out of `desktop_inspect` and `desktop_screen` captures. It is decoration only: if it fails or is slow, input proceeds unchanged after at most 600 ms. Keyboard input, `desktop_type` and `desktop_select` don't show it.
 
 ## Not supported
 
