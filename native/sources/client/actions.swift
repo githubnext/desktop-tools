@@ -253,9 +253,13 @@ func customActionName(_ action: String) -> String? {
 private let booleanValueRoles: Set<String> = ["AXCheckBox", "AXSwitch", "AXToggle", "AXDisclosureTriangle"]
 /// Roles whose Accessibility value is one number.
 private let numericValueRoles: Set<String> = ["AXSlider", "AXIncrementor", "AXStepper", "AXLevelIndicator"]
+/// Roles whose Accessibility value is one date, which the host writes as an NSDate.
+private let dateValueRoles: Set<String> = ["AXDateTimeArea", "AXDateField", "AXTimeField"]
 private let textValueRoles: Set<String> = [
 	"AXTextField", "AXTextArea", "AXComboBox", "AXSearchField", "AXSecureTextField",
 ]
+
+let dateKeyboardRoute = "To enter the date from the keyboard instead, click the control's first field (such as the month) with desktop_click, type its digits with desktop_key, and press Tab to move to the next field, or Up and Down to step the focused field; then inspect to read the value back."
 
 private let pointerClicks: Set<String> = ["single", "double", "right", "middle", "triple"]
 let semanticShortcuts = [
@@ -845,6 +849,18 @@ private func checkElementRequest(_ request: ActionRequest, _ observed: DetectedE
 	case .setValue:
 		if textValueRoles.contains(role) {
 			throw ActionError("Use desktop_type to replace a text control's value.")
+		}
+		if dateValueRoles.contains(role) {
+			guard case .string = request.value! else {
+				throw ActionError("A \(role) takes an ISO 8601 date, such as 2026-10-17T15:30.")
+			}
+			guard observed.attributes["isValueSettable"] != "false" else {
+				throw ActionError("This \(role) has no settable value. " + dateKeyboardRoute)
+			}
+			return
+		}
+		if case .string = request.value! {
+			throw ActionError("Only date and time controls take a date; this element is \(role.isEmpty ? "unknown" : role).")
 		}
 		let boolean = booleanValueRoles.contains(role)
 		guard boolean || numericValueRoles.contains(role) else {
