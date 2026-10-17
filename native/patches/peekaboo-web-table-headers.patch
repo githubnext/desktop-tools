@@ -1,0 +1,38 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
+index dd1d99036..cad7ad3f0 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
+@@ -629,6 +629,14 @@ enum DetachedAXObservationWorker {
+         if let source = request.source {
+             attributes["source"] = source
+         }
++        if normalizedRole == "axtable" {
++            // A web table names its header cells here; their role description no longer says so on macOS 27.
++            if let headers = self.rawAttribute("AXColumnHeaderUIElements", of: element) as? [AXUIElement] {
++                state.columnHeaders.append(contentsOf: headers.prefix(Self.maximumColumnHeaders))
++            }
++        } else if normalizedRole == "axcell", state.columnHeaders.contains(where: { CFEqual($0, element) }) {
++            attributes["columnHeader"] = "true"
++        }
+         if normalizedRole == "axrow" {
+             // Outline rows are flat siblings; only their disclosure level shows the hierarchy.
+             attributes.merge(
+@@ -974,6 +982,9 @@ extension DetachedAXObservationWorker {
+         return attributes
+     }
+ 
++    /// Header cells kept per table; a wider header is matched only this far.
++    static let maximumColumnHeaders = 64
++
+     static func booleanAttributeValue(_ value: Any?) -> Bool? {
+         self.boolValue(value)
+     }
+@@ -1212,6 +1223,8 @@ private struct TraversalState {
+     var incompleteAccessibilityRead = false
+     /// Only Notification Center's custom action names are listed; elsewhere they are arbitrary app text.
+     var listsCustomActions = false
++    /// The header cells that tables seen so far name, so each cell is matched without another read.
++    var columnHeaders: [AXUIElement] = []
+ 
+     var truncationInfo: DetectionTruncationInfo? {
+         guard self.maxDepthReached || self.maxElementCountReached || self.maxChildrenPerNodeReached ||

@@ -78,6 +78,11 @@ const patches = [
     "peekaboo-focus-budget.patch",
     "peekaboo-cursor-readback.patch",
     "peekaboo-secure-fill.patch",
+    "peekaboo-web-table-headers.patch",
+    "peekaboo-web-text-markers.patch",
+    "peekaboo-finder-path-bar.patch",
+    "peekaboo-date-settable.patch",
+    "peekaboo-close-window-server-absence.patch",
 ].map((name) => join(native, "patches", name));
 function spawn(command, env) {
     return spawnSync(command[0], command.slice(1), { encoding: "utf8", env: env ?? process.env });

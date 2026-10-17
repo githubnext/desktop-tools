@@ -193,8 +193,11 @@ private struct ActionRequest: Decodable {
 					break
 				case let .double(number)? where number.isFinite:
 					break
+				// An ISO 8601 date, which the element check accepts only for date and time controls.
+				case .string?:
+					break
 				default:
-					throw ActionError("Set a finite number or true/false; use desktop_type for text.")
+					throw ActionError("Set a finite number, true/false or an ISO 8601 date; use desktop_type for text.")
 				}
 			}
 		case .type, .select:

@@ -23,6 +23,8 @@ export type TableElement = {
 	selected?: boolean | null;
 	disclosure_level?: number | null;
 	disclosing?: boolean | null;
+	/** A web table lists this cell among its column headers. */
+	column_header?: boolean | null;
 };
 
 type TableRow = {
@@ -154,9 +156,10 @@ function tableLayout(elements: TableElement[]) {
 		}
 	}
 	if (!columns && rows.length) {
-		// A web table's header cells say so in their role description.
+		// A web table's header cells say so: the table lists them, or, before macOS 27, their role description.
 		const first = inside.filter((index) => parents[index] === rows[0]);
-		if (first.length && first.every((index) => /header/i.test(elements[index]!.role_description ?? ""))) {
+		const header = (element: TableElement) => element.column_header === true || /header/i.test(element.role_description ?? "");
+		if (first.length && first.every((index) => header(elements[index]!))) {
 			columns = first.map(cellText);
 			rows = rows.slice(1);
 		}

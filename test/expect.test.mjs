@@ -154,3 +154,27 @@ test("expect on an action that doesn't take it, or with a bad condition, is refu
 	assert.equal(click.outcome, "refused");
 	assert.match(click.data.action.reason, /timeout_ms/);
 });
+
+test("app conditions find a bundle ID that a long, cut app list would drop, and a cut list never proves a quit", async () => {
+	// Like desktop_apps with many apps running: the full list is cut to fit, and a query matches natively.
+	const reads = {
+		async observe(request) {
+			assert.equal(request.op, "apps");
+			const apps = request.query === "app.target"
+				? [{ pid: 9, bundle_id: "app.target", is_active_known: true, is_active: true }]
+				: [{ pid: 1, bundle_id: "app.other", is_active_known: true, is_active: false }];
+			return { text: JSON.stringify({ apps, inventory_completeness: "complete", truncated: request.query === undefined }) };
+		},
+	};
+	let acts = 0;
+	const act = async () => {
+		acts++;
+		return { text: JSON.stringify({ action: { outcome: "unknown" } }), outcome: "unknown", isError: true };
+	};
+	const held = await expectAfter(reads, validateExpect({ until: "app_frontmost", bundle_id: "app.target" }), act);
+	assert.equal(held.outcome, "refused");
+	assert.equal(acts, 0);
+	const quit = await expectAfter(reads, validateExpect({ until: "app_quit", pid: 9, timeout_ms: 300 }), act);
+	assert.equal(quit.outcome, "unknown");
+	assert.notEqual(JSON.parse(quit.text).expectation.status, "matched");
+});

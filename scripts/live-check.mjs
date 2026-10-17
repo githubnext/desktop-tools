@@ -150,6 +150,10 @@ function evidence(result, ...keys) {
 	const code = dig(act, "code");
 	if (code && !keys.includes("code")) parts.push(`code ${code}`);
 	if (result.outcome !== "completed" && !result.outcome && result.isError) parts.push(brief(result.text, 160));
+	else if (result.outcome && result.outcome !== "completed") {
+		const message = dig(act, "message");
+		if (message && !keys.includes("message")) parts.push(`message ${brief(message, 200)}`);
+	}
 	return parts.join(", ");
 }
 
@@ -275,7 +279,10 @@ function makeFixtures() {
 	for (const name of ["pasted-a.txt", "pasted-b.txt", "item-02.txt"]) writeFileSync(join(sources, name), `${name}\n`);
 	const image = join(root, "fixture.png");
 	writeFileSync(image, png(64, 48, 17));
-	return { root, folder, plain, rich, rtfd, page, image, sources, captures: join(root, "captures") };
+	// Saving refuses a folder that doesn't exist yet.
+	const captures = join(root, "captures");
+	mkdirSync(captures);
+	return { root, folder, plain, rich, rtfd, page, image, sources, captures };
 }
 
 // ---------- session: what the harness opened, and how to put it back ----------
@@ -367,7 +374,11 @@ class Session {
 				skip("Safari is open with the user's windows, and a fixture page could open as a tab in one; quit Safari to run web checks");
 			}
 			const win = await this.openWindow(this.fixtures.page, SAFARI, `Live page ${run}`, "Safari fixture page");
-			await sleep(1500); // The web tree fills in after load.
+			// A freshly launched Safari lists the window seconds before its web area holds the page.
+			const loaded = await this.mcp.call("desktop_wait", {
+				until: "text_contains", pid: win.pid, window: win.window, text: "quick brown fox", timeout_ms: 20000,
+			});
+			if (loaded.data?.status !== "matched") throw new Error(`The Safari fixture page didn't load: ${brief(loaded.text, 200)}`);
 			return win;
 		});
 	}
@@ -720,13 +731,32 @@ check(90, "desktop_input_source switches to another layout, reads it back, and d
 	);
 });
 
+check(90, "desktop_input_source switches to an input method's mode, reads it back, and restores the layout", async (s, m) => {
+	const list = await m.call("desktop_input_source", {});
+	const current = list.data.current;
+	const mode = (list.data.sources ?? []).find((src) => src.kind === "input_mode" && src.id !== current);
+	if (!current || !mode) skip("no input method mode is enabled; add one (for example Japanese) to run this");
+	s.restore.push(async () => m.call("desktop_input_source", { select: current }));
+	const result = await m.call("desktop_input_source", { select: mode.id });
+	// An input method types through a layout of its own choosing, which desktop_key and desktop_apps both report.
+	const layout = dig(result.data, "keyboard_layout");
+	const apps = await m.call("desktop_apps", { query: "com.apple.finder" });
+	const reported = apps.data.system?.input?.keyboard_layout?.id;
+	const back = await m.call("desktop_input_source", { select: current });
+	return expect(
+		result.outcome === "completed" && dig(result.data, "current") === mode.id && layout && reported === layout
+			&& back.outcome === "completed" && dig(back.data, "current") === current,
+		`${evidence(result, "current", "keyboard_layout")}; desktop_apps layout ${reported}; restored ${evidence(back, "current")}`,
+	);
+});
+
 check(89, "expect: a condition that already holds is refused and no key is sent", async (s, m) => {
 	const win = await s.textedit("plain");
 	const { snap } = await s.inspect(win);
 	const apps = await m.call("desktop_apps", { query: TEXTEDIT });
 	const front = apps.data.system?.focus?.bundle_id ?? skip("no frontmost app reported");
 	const result = await m.call("desktop_key", { snapshot: snap, key: "right", expect: { until: "app_frontmost", bundle_id: front } });
-	return expect(result.outcome === "refused", evidence(result, "expectation"));
+	return expect(result.outcome === "refused", `front ${front}; ${evidence(result, "expectation")}`);
 });
 
 check(89, "expect: a condition that never holds stays unknown, input sent once", async (s, m) => {
@@ -902,7 +932,6 @@ check(82, "desktop_type into a native TextEdit text area still completes with re
 
 check(81, "desktop_inspect save_path writes the full-resolution PNG", async (s, m) => {
 	const win = await s.textedit("plain");
-	mkdirSync(s.fixtures.captures, { recursive: true });
 	const out = join(s.fixtures.captures, "inspect.png");
 	const { result } = await s.inspect(win, { save_path: out });
 	const saved = result.data.saved;
@@ -915,7 +944,6 @@ check(81, "desktop_inspect save_path writes the full-resolution PNG", async (s, 
 
 check(81, "save_path refuses an existing file without overwrite, before capturing", async (s, m) => {
 	const win = await s.textedit("plain");
-	mkdirSync(s.fixtures.captures, { recursive: true });
 	const out = join(s.fixtures.captures, "existing.png");
 	writeFileSync(out, "keep");
 	const result = await m.call("desktop_inspect", { pid: win.pid, window: win.window, save_path: out });
@@ -924,7 +952,6 @@ check(81, "save_path refuses an existing file without overwrite, before capturin
 
 check(81, "desktop_screen save_path with region saves only that part", async (s, m) => {
 	const win = await s.textedit("plain");
-	mkdirSync(s.fixtures.captures, { recursive: true });
 	const out = join(s.fixtures.captures, "region.png");
 	const b = win.info.bounds;
 	const region = { x: b.x + 10, y: b.y + 10, width: 200, height: 100 };
@@ -937,18 +964,22 @@ check(81, "desktop_screen save_path with region saves only that part", async (s,
 	);
 });
 
-check(79, "desktop_set_value sets a web date input to an ISO 8601 date", async (s, m) => {
+check(79, "desktop_set_value sets a web date input to an ISO 8601 date, or refuses an unsettable one before input", async (s, m) => {
 	const win = await s.web();
 	const { snap, els } = await s.inspect(win);
 	const date = els.find((e) => /Date field/.test(label(e))) ?? skip("date input not in the inspection");
-	const result = await m.call("desktop_set_value", { snapshot: snap, element: date.id, value: "2026-10-17" });
+	// Not today's date, which an empty date input already shows.
+	const result = await m.call("desktop_set_value", { snapshot: snap, element: date.id, value: "2026-03-04" });
 	await sleep(300);
 	const page = await s.read(win);
+	const changed = page.text.includes("date:2026-03-04");
+	// Safari on macOS 27 reports its date input's value as not settable: a refusal naming the keyboard route is right.
+	const refused = result.outcome === "refused" && /no settable value/.test(result.text) && /keyboard/.test(result.text) && !changed;
 	return expect(
-		result.outcome === "completed",
-		`${evidence(result, "value", "readback")}; role ${date.role}; page ${page.text.includes("date:2026-10-17") ? "saw the input event" : "did not see an input event"}`,
+		(result.outcome === "completed" && changed) || refused,
+		`${evidence(result, "value", "readback")}; role ${date.attributes?.role ?? date.role}; page ${changed ? "saw the input event" : "did not see an input event"}`,
 	);
-}, "Safari's date input may not be an AXDateTimeArea; a refusal names what it is.");
+});
 
 check(77, "desktop_click refuses control modifiers and right-click with modifiers, before input", async (s, m) => {
 	const win = await s.textedit("plain");

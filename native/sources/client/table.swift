@@ -24,6 +24,8 @@ private struct TableElement: Encodable {
 	let selected: Bool?
 	let disclosure_level: Int?
 	let disclosing: Bool?
+	/// A web table names this cell as one of its column headers.
+	let column_header: Bool?
 }
 
 private struct TableScope: Encodable {
@@ -124,7 +126,8 @@ func nativeTable(_ client: PeekabooBridgeClient) async throws -> Data {
 			bounds: Bounds(element.bounds),
 			selected: element.isSelected,
 			disclosure_level: attributes["disclosureLevel"].flatMap(Int.init),
-			disclosing: attributes["disclosing"].map { $0 == "true" }
+			disclosing: attributes["disclosing"].map { $0 == "true" },
+			column_header: attributes["columnHeader"] == "true" ? true : nil
 		)
 		bytes += try JSONEncoder().encode(row).count + 1
 		guard bytes <= tableOutputLimit else {

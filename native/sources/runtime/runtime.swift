@@ -105,6 +105,7 @@ private final class Desktop {
 					// The requesting client is still waiting for its reply, so its environment is readable now.
 					let agent = agentName(of: target.clientProcessIdentifier)
 					DispatchQueue.main.async {
+						AgentCursor.shared.window = target.windowID
 						AgentWindow.shared.target(window: target.windowID, process: target.processIdentifier, agent: agent)
 					}
 				}

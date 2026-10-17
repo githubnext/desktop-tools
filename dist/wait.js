@@ -122,9 +122,12 @@ function validateMatch(element, forText) {
 }
 /** Apps with the bundle ID or PID, from one complete-or-partial inventory. */
 async function findApps(reads, request, signal) {
-    const data = parseResult(await reads.observe({ op: "apps" }, signal));
+    // With many apps running, the whole list is cut to fit a result, so a bundle ID is matched natively first.
+    const query = request.pid === undefined ? request.bundle_id : undefined;
+    const data = parseResult(await reads.observe({ op: "apps", ...(query === undefined ? {} : { query }) }, signal));
     const rows = data.apps.filter((app) => request.pid !== undefined ? app.pid === request.pid : app.bundle_id === request.bundle_id);
-    return { rows, complete: data.inventory_completeness === "complete" };
+    // A cut list may have dropped the app, so it never proves the app is gone.
+    return { rows, complete: data.inventory_completeness === "complete" && data.truncated !== true };
 }
 async function listWindows(reads, pid, signal) {
     const data = parseResult(await reads.observe({ op: "windows", pid }, signal));

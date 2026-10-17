@@ -117,6 +117,7 @@ private struct ManagementMessage: Encodable {
 	let code: String
 	let message: String
 	let hint: String?
+	var cause: String?
 }
 
 private struct ManagementResult: Encodable {
@@ -314,7 +315,7 @@ func nativeManagement(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeH
 			receipt = Receipt(pid: closing.ownerProcessIdentifier, window_id: closing.windowID, process_start_identity_decimal: String(closing.ownerProcessStartIdentity))
 		}
 		result.requires_fresh_observation = failure.outcome.dispatchState.mutationDispatched || failure.outcome.escalation == .refreshTarget
-		result.error = ManagementMessage(code: failure.standardErrorCode?.rawValue ?? "DESKTOP_ACTION_FAILED", message: failure.message, hint: failure.hint)
+		result.error = ManagementMessage(code: failure.standardErrorCode?.rawValue ?? "DESKTOP_ACTION_FAILED", message: failure.message, hint: failure.hint, cause: failure.causeDescription)
 	} catch {
 		result.outcome = invoked ? "unknown" : "refused"
 		result.requires_fresh_observation = invoked
