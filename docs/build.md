@@ -40,6 +40,29 @@ The build does not sign or stage the Swift runtime. Embedding apps own both. If 
 
 CI checks that `dist/` matches a fresh compile and that the modules import on Linux. It also builds the native artifacts, unsigned, on macOS with Xcode 26.2.
 
+## Development app
+
+Test native changes in the real app with:
+
+```sh
+npm run dev-app            # build, sign, install and open
+npm run dev-app -- --stop  # quit it
+```
+
+Every checkout and worktree installs the same `~/Library/Application Support/desktop-tools/dev/Desktop Tools Dev.app`. It has its own bundle identity, `dev.githubnext.desktop-tools.dev`, nested under the release app's, and the name **Desktop Tools Dev**. Building quits the running copy, replaces the bundle in place and opens it again through LaunchServices with `open`. Launching its executable directly can attribute permission checks to the launching terminal or agent instead of the app.
+
+This exists because macOS ties permissions to the app. The Accessibility, Screen Recording and Keyboard input grants belong to a bundle identity and its signing requirement. Screen capture also needs a separate, dated approval to "bypass the system private window picker", which macOS appears to ask for again for each copy of an app that captures, even when the grant is on. Development builds therefore never use the release identity, which would swap the installed app's binaries under its grants, and never run from scattered build folders, each of which would ask again. Grant **Desktop Tools Dev** once in System Settings, and approve its capture prompt once; rebuilds keep both.
+
+The app serves `~/.local/state/desktop-tools-dev/desktop.sock`, the default for the development identity, or `DESKTOP_TOOLS_STATE` when set at build time, which is passed with `open --env`. Point the MCP server or `npm run live-check` at the same folder with `DESKTOP_TOOLS_STATE`. Its approved agents are kept in that folder too, so the development app asks about each agent once, separately from the installed app.
+
+Every build is signed with one identity, so the designated requirement stays the same across rebuilds: `DESKTOP_TOOLS_CODESIGN_IDENTITY` when set, otherwise the repository's Git setting `desktopTools.codesignIdentity`. Set the Git value once per Mac to the SHA-1 of an Apple Development or Developer ID identity from `security find-identity -v -p codesigning`, since several certificates can share a name:
+
+```sh
+git config desktopTools.codesignIdentity <SHA-1>
+```
+
+It lives in the repository's `.git/config`, which all worktrees share, and is never committed. Ad-hoc signing (`-`) is refused, because it can't keep permissions across builds. Builds use `native/.build` as scratch unless you pass `--scratch <directory>`; give concurrent builds their own. Don't install a development build in `/Applications`.
+
 ## Releases
 
 Each change that users would notice adds a bullet under `## [Unreleased]` in [CHANGELOG.md](https://github.com/githubnext/desktop-tools/blob/main/CHANGELOG.md), under Added, Changed or Fixed, with its PR link. To cut a release:

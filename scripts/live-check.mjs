@@ -23,8 +23,8 @@ const { values } = parseArgs({
 if (values.help) {
 	console.log(`Usage: npm run live-check -- [--only <pr>[,<pr>]] [--list] [--json <path>] [--keep-fixtures]
 
-Drives the installed Desktop Tools, or the dev app whose state folder is DESKTOP_TOOLS_STATE,
-through dist/mcp.js. Refuses to run while the screen is locked. See docs/live-checks.md.`);
+Drives the installed Desktop Tools, or the dev app whose state folder is DESKTOP_TOOLS_STATE
+(~/.local/state/desktop-tools-dev for npm run dev-app), through dist/mcp.js. Refuses to run while the screen is locked. See docs/live-checks.md.`);
 	process.exit(0);
 }
 const only = new Set((values.only ?? []).flatMap((v) => v.split(",")).map((v) => v.trim().replace(/^#/, "")).filter(Boolean));
