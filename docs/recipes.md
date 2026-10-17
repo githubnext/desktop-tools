@@ -204,3 +204,20 @@ There is no pinch or rotate gesture. Use the app's own command: it acts on an ex
 - An `unknown` result means the readback didn't match. Autocomplete or input masks can reformat the text, such as phone numbers. Inspect before retrying.
 - Password fields are refused, because password entry is not supported.
 - An autocomplete popup can take focus after typing. Press `escape` with `desktop_key` before the next click if it covers the next field.
+
+## Copy text from a web page
+
+1. inspect the browser window. If the inspection is `truncated`, inspect again with `scope` set to the page's `AXWebArea` element.
+2. Find the element that holds the text, such as an `AXStaticText` or `AXHeading`. Pick the smallest one that contains all of it.
+3. `desktop_select` that element with `text` set to the exact text, and `prefix` or `suffix` if it occurs more than once. Expect `completed` with `selection` read back.
+4. `desktop_key` with `key: "c"`, `modifiers: ["command"]` and the snapshot from step 3's result.
+5. `desktop_clipboard_read`.
+
+**Verify:** the clipboard text equals the requested text. If you only need the text, `desktop_read` the window instead; it changes neither the selection nor the clipboard.
+
+**Goes wrong:**
+
+- Text that spans several elements, such as a paragraph with a link inside, can't be selected in one call. Select within one element, or use `desktop_read`.
+- A long element can be refused when the host can't find the range within its step limit. Select within a smaller element.
+- `unknown` means the page's selection didn't read back as the requested range, for example because a script changed it. Inspect before retrying.
+- Some pages block copying, or put other text on the clipboard. Check the clipboard.
