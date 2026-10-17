@@ -571,6 +571,30 @@ function validateAction(request: DesktopAction) {
 		}
 		return;
 	}
+	if (request.op === "hover" || request.op === "press") {
+		if ((request.element === undefined) === (request.point === undefined)) {
+			throw new Error("Choose exactly one observed element ID or normalized screenshot point.");
+		}
+		if (request.point !== undefined) validatePoint(request.point);
+		else if (
+			typeof request.element !== "string" || !request.element || request.element.length > 256
+		) {
+			throw new Error("Choose an element ID from the inspected snapshot.");
+		}
+		if (request.op === "press") {
+			if (request.button !== undefined && !DESKTOP_BUTTONS.includes(request.button)) {
+				throw new Error("Choose the left or right mouse button for a press.");
+			}
+			if (
+				request.duration_ms !== undefined
+				&& (!Number.isInteger(request.duration_ms) || request.duration_ms < 1
+					|| request.duration_ms > 10000)
+			) {
+				throw new Error("Press duration must be 1 to 10000 milliseconds.");
+			}
+		}
+		return;
+	}
 	if (request.op === "click" || request.op === "scroll") {
 		if ((request.element === undefined) === (request.point === undefined)) {
 			throw new Error("Choose exactly one observed element ID or normalized screenshot point.");
@@ -1195,6 +1219,8 @@ async function execute(
 			"select",
 			"scroll",
 			"drag",
+			"hover",
+			"press",
 			"activate",
 			"launch",
 			"open",

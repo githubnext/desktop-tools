@@ -266,6 +266,14 @@ drag. Requests for screens, apps, menus or the clipboard report nothing, and not
 refused peers. The report is advisory: it cannot fail the request and changes no target check, route
 or outcome. Without an observer the server does no extra work.
 
+`peekaboo-press.patch` shows a held pointer on the agent cursor, for `desktop_press`. Before the
+service begins an exact-window hold, it sends long-press click feedback at the hold's point, under the
+same 600 ms limit as other background pointer feedback. After a release, revoke or owner disconnect
+that ends a hold, however it ended, it sends a single click at the receipt's point, so the overlay can
+show the button coming up. A disconnect that finds no active hold sends nothing. Drags use the
+lifecycle internally and are unchanged. Holds, receipts, cleanup and outcomes are unchanged, and the
+test checks the feedback order and points.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.

@@ -74,6 +74,15 @@ export type DesktopRequest =
 		button?: DesktopButton;
 		duration_ms?: number;
 	}
+	| { op: "hover"; snapshot: string; element?: string; point?: DesktopPoint }
+	| {
+		op: "press";
+		snapshot: string;
+		element?: string;
+		point?: DesktopPoint;
+		button?: DesktopButton;
+		duration_ms?: number;
+	}
 	| { op: "type"; snapshot: string; element: string; text: string }
 	| { op: "insert"; snapshot: string; text: string }
 	| {
@@ -175,6 +184,8 @@ export type DesktopAction = Extract<
 			| "select"
 			| "scroll"
 			| "drag"
+			| "hover"
+			| "press"
 			| "activate"
 			| "launch"
 			| "open"
@@ -208,7 +219,8 @@ export type DesktopResult = {
 export function isDesktopAction(request: DesktopRequest): request is DesktopAction {
 	return request.op === "click" || request.op === "type" || request.op === "key"
 		|| request.op === "insert" || request.op === "select" || request.op === "scroll"
-		|| request.op === "drag" || request.op === "clipboard-write" || request.op === "launch"
+		|| request.op === "drag" || request.op === "hover" || request.op === "press"
+		|| request.op === "clipboard-write" || request.op === "launch"
 		|| request.op === "open" || request.op === "menu" || request.op === "dialog-answer"
 		|| request.op === "menubar-click" || request.op === "dock"
 		|| isDesktopManagement(request);

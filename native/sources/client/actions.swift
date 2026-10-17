@@ -6,7 +6,7 @@ import PeekabooFoundation
 
 private struct ActionRequest: Decodable {
 	enum Operation: String, Decodable {
-		case click, type, key, insert, select, scroll, drag
+		case click, type, key, insert, select, scroll, drag, hover, press
 	}
 
 	let op: Operation
@@ -43,13 +43,29 @@ private struct ActionRequest: Decodable {
 		if op != .scroll, direction != nil || amount != nil {
 			throw ActionError("Only scrolling accepts direction or amount.")
 		}
-		if op != .drag, from != nil || to != nil || button != nil || duration_ms != nil {
-			throw ActionError("Only dragging accepts endpoints, button, or duration.")
+		if op != .drag, from != nil || to != nil {
+			throw ActionError("Only dragging accepts endpoints.")
 		}
-		if op != .click, op != .scroll, point != nil {
-			throw ActionError("Only clicks or scrolling accept a target point.")
+		if op != .drag, op != .press, button != nil || duration_ms != nil {
+			throw ActionError("Only dragging or pressing accepts a button or duration.")
+		}
+		if op != .click, op != .scroll, op != .hover, op != .press, point != nil {
+			throw ActionError("Only clicks, scrolling, hovering, or pressing accept a target point.")
 		}
 		switch op {
+		case .hover, .press:
+			guard (element == nil) != (point == nil), text == nil, key == nil else {
+				throw ActionError("Choose exactly one observed element ID or normalized screenshot point.")
+			}
+			if let element, element.isEmpty || element.utf16.count > 256 {
+				throw ActionError("Choose a literal element ID from the inspected snapshot.")
+			}
+			try point?.validate()
+			if op == .press {
+				guard button == nil || ExactWindowHeldPointerButton(rawValue: button!) != nil,
+					(1...10000).contains(duration_ms ?? 1000)
+				else { throw ActionError("Choose a left or right press lasting 1 to 10000 milliseconds.") }
+			}
 		case .click, .scroll:
 			guard (element == nil) != (point == nil), text == nil, key == nil else {
 				throw ActionError("Choose exactly one observed element ID or normalized screenshot point.")
@@ -161,6 +177,12 @@ private struct ActionEvidence {
 		target = result.targetIdentity
 		selected = result.selectedLeafEvidence
 	}
+
+	init(outcome: DesktopActionOutcome?, target: DesktopTargetIdentity?) {
+		self.outcome = outcome
+		self.target = target
+		selected = nil
+	}
 }
 
 private struct ActionResult: Encodable {
@@ -174,6 +196,8 @@ private struct ActionResult: Encodable {
 	var clipboard_cleanup: String?
 	var clipboard_ownership: String?
 	var consumption: String?
+	var pointer_moved: Bool?
+	var release: String?
 	var requires_fresh_observation = false
 	var error: ActionMessage?
 }
@@ -191,7 +215,7 @@ private struct ActionReply: Encodable {
 	let target_receipt: Receipt?
 }
 
-func nativeAction(_ client: PeekabooBridgeClient) async throws -> Data {
+func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHandshakeResponse) async throws -> Data {
 	let request = try readAction()
 	var result = ActionResult(outcome: "refused", action: request.op.rawValue, snapshot_id: request.snapshot)
 	var receipt: Receipt?
@@ -220,7 +244,10 @@ func nativeAction(_ client: PeekabooBridgeClient) async throws -> Data {
 			guard let observed = detection.elements.findById(element) else {
 				throw ActionError("The element ID is not in this snapshot. Inspect the window again.")
 			}
-			guard observed.knownIsEnabled != false else { throw ActionError("The observed element is disabled.") }
+			// Disabled controls still show tooltips, so only hovering may target one.
+			guard request.op == .hover || observed.knownIsEnabled != false else {
+				throw ActionError("The observed element is disabled.")
+			}
 		}
 		if request.op == .key || request.op == .insert, context.focusedElement == nil {
 			// Peekaboo resolves keyboard receivers from the window's focused element; without one the key has no target.
@@ -258,10 +285,18 @@ func nativeAction(_ client: PeekabooBridgeClient) async throws -> Data {
 		}
 		var point: CGPoint?
 		var drag: ExactWindowDragRequest?
-		if request.point != nil || request.op == .drag {
+		if request.point != nil || request.op == .drag || request.op == .hover || request.op == .press {
 			// Normalized coordinates survive host image resizing; authority stays in the bridge's capture.
 			let authority = try coordinateAuthority(request.snapshot, detection, window: window)
-			point = try request.point?.mapped(in: authority)
+			point = try request.point?.mapped(in: authority) ?? request.element.map { element in
+				// Hover and press act on a point, so an element target resolves to its observed center.
+				let frame = detection.elements.findById(element)!.bounds
+				let center = CGPoint(x: frame.midX, y: frame.midY)
+				guard bounds.contains(center) else {
+					throw ActionError("The element's center is outside its exact captured window.")
+				}
+				return center
+			}
 			if request.op == .drag {
 				// Drag validates the full capture receipt; coordinate authority intentionally omits focus.
 				let dragWindow = try UIAutomationTarget.ExactWindow(
@@ -276,10 +311,31 @@ func nativeAction(_ client: PeekabooBridgeClient) async throws -> Data {
 				try drag!.validate()
 			}
 		}
+		let host = handshake.hostIdentity?.processIdentifier
+		if request.op == .hover, !exposes(point!, in: window, ignoring: host) {
+			throw ActionError("Another window covers this point, or the window moved since the snapshot. Inspect the window again; bring it forward with desktop_focus if it is covered.")
+		}
 		lease = try await client.beginSnapshotMutation(snapshotId: request.snapshot)
 		invoked = true
 		let evidence: ActionEvidence
+		var verified = true
 		switch request.op {
+		case .hover:
+			// Tracking areas follow the real pointer, so hovering moves it; this is foreground input.
+			let moved = try await client.moveMouseWithOutcome(to: point!, duration: 250, steps: 15, profile: .linear)
+			let location = CGEvent(source: nil)?.location
+			result.pointer_moved = location.map { hypot($0.x - point!.x, $0.y - point!.y) <= 1 } ?? false
+			verified = result.pointer_moved! && exposes(point!, in: window, ignoring: host)
+			evidence = ActionEvidence(outcome: moved.outcome, target: DesktopTargetIdentity(exactWindow: window))
+		case .press:
+			let released = try await hold(client, ExactWindowHeldPointerRequest(
+				point: point!, windowIdentity: identity, windowBounds: bounds,
+				button: request.button.flatMap(ExactWindowHeldPointerButton.init(rawValue:)) ?? .left,
+				expiresAfterSeconds: Double(request.duration_ms ?? 1000) / 1000 + 2
+			), for: request.duration_ms ?? 1000)
+			result.release = released.payload.reason.rawValue
+			verified = released.payload.reason == .released
+			evidence = ActionEvidence(released)
 		case .click:
 			evidence = try await ActionEvidence(client.clickWithOutcome(
 				target: point.map(ClickTarget.coordinates) ?? .elementId(request.element!),
@@ -343,7 +399,19 @@ func nativeAction(_ client: PeekabooBridgeClient) async throws -> Data {
 		case .indeterminate, .partial:
 			result.outcome = "unknown"
 		default:
-			result.outcome = outcome.evidence == .operationStillRunning ? "unknown" : "completed"
+			result.outcome = outcome.evidence == .operationStillRunning || !verified ? "unknown" : "completed"
+		}
+		if !verified, result.outcome != "refused" {
+			result.outcome = "unknown"
+			result.error = ActionMessage(
+				code: "DESKTOP_ACTION_UNVERIFIED",
+				message: request.op == .hover
+					? result.pointer_moved == true
+						? "The pointer arrived, but the exact window was no longer frontmost there."
+						: "The pointer could not be confirmed at the requested point."
+					: "The press ended before its planned release (\(result.release ?? "unknown")); the button was released by cleanup.",
+				hint: "Inspect the target before retrying; the action may already have happened."
+			)
 		}
 	} catch let failure as DesktopActionFailure {
 		result.outcome = failure.outcome.dispatchState.mutationDispatched ? "unknown" : "refused"
@@ -374,6 +442,45 @@ func nativeAction(_ client: PeekabooBridgeClient) async throws -> Data {
 		// Unknown completion leaves the host's pending lease in place, including client death or response loss.
 	}
 	return try JSONEncoder().encode(ActionReply(data: result, target_receipt: receipt))
+}
+
+/// Holds the button for the duration, then releases it; the owner is always disconnected afterward.
+private func hold(
+	_ client: PeekabooBridgeClient, _ request: ExactWindowHeldPointerRequest, for milliseconds: Int
+) async throws -> UIAutomationActionResult<ExactWindowHeldPointerTermination> {
+	let owner = try await client.createExactWindowHeldPointerOwner()
+	do {
+		let begun = try await client.beginExactWindowPointerHold(owner: owner, request: request)
+		try? await Task.sleep(for: .milliseconds(milliseconds))
+		let released = try await client.releaseExactWindowPointerHold(owner: owner, receipt: begun.payload)
+		_ = try? await client.disconnectExactWindowHeldPointerOwner(owner)
+		return released
+	} catch {
+		// Disconnecting releases a button still held; the hold's expiry is the host's own backstop.
+		_ = try? await client.disconnectExactWindowHeldPointerOwner(owner)
+		throw error
+	}
+}
+
+/// Whether the exact window is on screen at its snapshot bounds and frontmost at the point.
+///
+/// The host's own overlays ignore the mouse, so they never count as covering the point.
+private func exposes(_ point: CGPoint, in window: UIAutomationTarget.ExactWindow, ignoring host: pid_t?) -> Bool {
+	guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
+	else { return false }
+	for info in list {
+		guard let frame = (info[kCGWindowBounds as String] as? NSDictionary)
+			.flatMap({ CGRect(dictionaryRepresentation: $0 as CFDictionary) }),
+			frame.contains(point)
+		else { continue }
+		if let host, info[kCGWindowOwnerPID as String] as? pid_t == host { continue }
+		if (info[kCGWindowAlpha as String] as? Double ?? 1) == 0 { continue }
+		let bounds = window.bounds
+		return info[kCGWindowNumber as String] as? Int == window.identity.windowID
+			&& abs(frame.minX - bounds.minX) < 1 && abs(frame.minY - bounds.minY) < 1
+			&& abs(frame.width - bounds.width) < 1 && abs(frame.height - bounds.height) < 1
+	}
+	return false
 }
 
 func snapshotWindow(

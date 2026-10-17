@@ -15,6 +15,8 @@ final class AgentCursor: AutomationFeedbackClient {
 	private static let tint = NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1).cgColor
 	private static let secondary = NSColor(srgbRed: 0.38, green: 0.62, blue: 1, alpha: 1).cgColor
 	private static let idle: Duration = .seconds(3)
+	/// The longest a held button can last, which is the Bridge's own limit for a hold's expiry.
+	private static let longestHold: TimeInterval = 30
 
 	/// Off until an embedding app turns it on with `desktop_tools_set_cursor`.
 	var enabled = false {
@@ -24,6 +26,7 @@ final class AgentCursor: AutomationFeedbackClient {
 	private var overlays: [Overlay] = []
 	private var position: CGPoint?
 	private var fade: Task<Void, Never>?
+	private var holding = false
 
 	private init() {
 		NotificationCenter.default.addObserver(
@@ -40,12 +43,19 @@ final class AgentCursor: AutomationFeedbackClient {
 		case .triple: 3
 		default: 1
 		}
-		press(for: type == .longPress ? 1.2 : 0.16)
+		// A long press is a held button: the cursor stays down until the next feedback releases it.
+		if type == .longPress {
+			hold()
+		} else if holding {
+			lift()
+		} else {
+			press(for: 0.16)
+		}
 		for index in 0..<count {
 			ripple(at: point, color: type == .right ? Self.secondary : Self.tint, dashed: type == .right,
 				delay: Double(index) * 0.12)
 		}
-		rest()
+		rest(after: type == .longPress ? Self.longestHold : 0)
 		return true
 	}
 
@@ -79,6 +89,7 @@ final class AgentCursor: AutomationFeedbackClient {
 		fade?.cancel()
 		fade = nil
 		discard()
+		holding = false
 		position = nil
 	}
 
@@ -92,6 +103,11 @@ final class AgentCursor: AutomationFeedbackClient {
 		let start = currentPosition() ?? realPointer() ?? point
 		position = point
 		let distance = hypot(point.x - start.x, point.y - start.y)
+		if distance < 1, overlays.first?.isVisible == true {
+			// Already there, as when a held button is released: arrive at once so the input isn't delayed.
+			for overlay in overlays { overlay.place(at: point) }
+			return true
+		}
 		let duration = 0.25 + min(distance / 1600, 1) * 0.15
 		let path = Self.curve(from: start, to: point)
 		for overlay in overlays {
@@ -151,7 +167,28 @@ final class AgentCursor: AutomationFeedbackClient {
 
 	// MARK: Effects
 
+	/// Squeezes the cursor and keeps it squeezed, for at most the longest hold.
+	private func hold() {
+		holding = true
+		let squeeze = CAKeyframeAnimation(keyPath: "transform.scale")
+		squeeze.values = [1, 0.82, 0.82, 1]
+		squeeze.keyTimes = [0, NSNumber(value: 0.04 / Self.longestHold), 0.999, 1]
+		squeeze.duration = Self.longestHold
+		for overlay in overlays { overlay.cursor.add(squeeze, forKey: "press") }
+	}
+
+	/// Releases a held squeeze.
+	private func lift() {
+		holding = false
+		let release = CABasicAnimation(keyPath: "transform.scale")
+		release.fromValue = 0.82
+		release.toValue = 1
+		release.duration = 0.12
+		for overlay in overlays { overlay.cursor.add(release, forKey: "press") }
+	}
+
 	private func press(for duration: TimeInterval) {
+		holding = false
 		let squeeze = CAKeyframeAnimation(keyPath: "transform.scale")
 		squeeze.values = [1, 0.82, 0.82, 1]
 		squeeze.keyTimes = [0, 0.25, 0.75, 1]
