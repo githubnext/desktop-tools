@@ -31,6 +31,7 @@ private enum Client {
 		guard (operation == "apps" && args.count == 2)
 			|| (operation == "windows" && args.count == 3)
 			|| (operation == "inspect" && (args.count == 5 || args.count == 6))
+			|| (operation == "screen" && (args.count == 3 || args.count == 4))
 			|| (operation == "action" && args.count == 2)
 			|| (operation == "management" && args.count == 2)
 			|| (operation == "launch" && args.count == 2)
@@ -72,6 +73,14 @@ private enum Client {
 			return try await nativeLaunch(client, handshake: handshake)
 		case "open":
 			return try await nativeLaunch(client, handshake: handshake, opensItem: true)
+		case "screen":
+			guard args[2].hasPrefix("/") else { throw ClientError.usage }
+			var display: Int?
+			if args.count == 4 {
+				guard let index = Int(args[3]), index >= 0 else { throw ClientError.usage }
+				display = index
+			}
+			return try await nativeScreen(client, path: args[2], index: display)
 		case "apps":
 			let inventory = try await client.listApplicationMutationInventory()
 			var metadata: [ServiceApplicationInfo] = []
@@ -364,7 +373,7 @@ private enum ClientError: LocalizedError {
 	var errorDescription: String? {
 		switch self {
 		case .usage:
-			"Usage: desktop-tools-client <socket> apps | windows <pid> | inspect <pid> <window> <absolute-output-path> [accessibility|pixels] | menus|menu|action|management|launch|open|clipboard < JSON"
+			"Usage: desktop-tools-client <socket> apps | windows <pid> | inspect <pid> <window> <absolute-output-path> [accessibility|pixels] | screen <absolute-output-path> [display] | menus|menu|action|management|launch|open|clipboard < JSON"
 		case .target:
 			"The native observation did not confirm the requested process and window. Refresh the window list and try again."
 		case .image:
