@@ -423,6 +423,12 @@ them. Like `moveMouse`, it needs only event posting, has a global target, and re
 dispatch whose effect is not verified. The keys are play/pause, next, previous, volume up and down, mute,
 display brightness up and down, and keyboard backlight up and down.
 
+`peekaboo-row-disclosure.patch` adds `attributes.disclosureLevel` and `attributes.disclosing` to observed
+`AXRow` elements that report `AXDisclosureLevel` and `AXDisclosing`. Outline rows, as in Finder's list view, are
+flat siblings in the Accessibility tree, so these are the only record of the hierarchy and of which rows are
+expanded. The two attributes are read only for rows, one call each, and a level outside 0 to 1000 or a Boolean
+in place of a number is dropped. No Bridge operation is added.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.

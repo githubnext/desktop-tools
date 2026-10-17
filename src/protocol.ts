@@ -103,7 +103,16 @@ export type DesktopRequest =
 		ocr?: boolean;
 		scope?: DesktopScope;
 	} & DesktopCaptureSave
-	| { op: "read"; pid: number; window: number; scope?: DesktopScope }
+	| {
+		op: "read";
+		pid: number;
+		window: number;
+		scope?: DesktopScope;
+		/** Reads the scope as a table of rows and cells instead of text. */
+		table?: boolean;
+		row_offset?: number;
+		max_rows?: number;
+	}
 	| DesktopWait
 	| { op: "notifications" }
 	| { op: "notification-action"; id: string; action: string }

@@ -173,6 +173,10 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
     pid: number;
     window: number;
     scope?: DesktopScope;
+    /** Reads the scope as a table of rows and cells instead of text. */
+    table?: boolean;
+    row_offset?: number;
+    max_rows?: number;
 } | DesktopWait | {
     op: "notifications";
 } | {

@@ -1,0 +1,62 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
+index f68cb86a4..26ede934d 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/DetachedAXObservationWorker.swift
+@@ -622,6 +622,14 @@ enum DetachedAXObservationWorker {
+         if let source = request.source {
+             attributes["source"] = source
+         }
++        if normalizedRole == "axrow" {
++            // Outline rows are flat siblings; only their disclosure level shows the hierarchy.
++            attributes.merge(
++                self.rowDisclosureAttributes(
++                    level: self.rawAttribute("AXDisclosureLevel", of: element),
++                    disclosing: self.rawAttribute("AXDisclosing", of: element)),
++                uniquingKeysWith: { current, _ in current })
++        }
+         // Pre-order IDs plus depth let a reader recover each element's subtree from the flat result.
+         attributes["depth"] = String(request.depth)
+ 
+@@ -934,6 +942,20 @@ extension DetachedAXObservationWorker {
+         value as? String
+     }
+ 
++    /// An outline row's nesting level from 0, and whether it is expanded; a flat table row has neither.
++    static func rowDisclosureAttributes(level: Any?, disclosing: Any?) -> [String: String] {
++        var attributes: [String: String] = [:]
++        if let level = level as? NSNumber, CFGetTypeID(level) != CFBooleanGetTypeID(),
++           (0...1000).contains(level.intValue)
++        {
++            attributes["disclosureLevel"] = String(level.intValue)
++        }
++        if let disclosing = self.boolValue(disclosing) {
++            attributes["disclosing"] = String(disclosing)
++        }
++        return attributes
++    }
++
+     static func booleanAttributeValue(_ value: Any?) -> Bool? {
+         self.boolValue(value)
+     }
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedAXObservationWorkerTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedAXObservationWorkerTests.swift
+index 66ace3d2e..0915f9d38 100644
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedAXObservationWorkerTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/DetachedAXObservationWorkerTests.swift
+@@ -63,6 +63,17 @@ struct DetachedAXObservationWorkerTests {
+         #expect(DetachedAXObservationWorker.booleanAttributeValue(NSNumber(value: 0)) == false)
+     }
+ 
++    @Test
++    func `outline rows report their disclosure level and expansion`() {
++        let attributes = DetachedAXObservationWorker.rowDisclosureAttributes
++        #expect(attributes(NSNumber(value: 2), kCFBooleanTrue) == ["disclosureLevel": "2", "disclosing": "true"])
++        #expect(attributes(NSNumber(value: 0), NSNumber(value: 0)) == ["disclosureLevel": "0", "disclosing": "false"])
++        #expect(attributes(nil, nil).isEmpty)
++        #expect(attributes(kCFBooleanTrue, nil).isEmpty)
++        #expect(attributes(NSNumber(value: -1), nil).isEmpty)
++        #expect(attributes("1", "true").isEmpty)
++    }
++
+     @Test
+     func `observation focus decoder rejects unreadable values`() {
+         #expect(DetachedAXObservationWorker.booleanAttributeValue(nil) == nil)

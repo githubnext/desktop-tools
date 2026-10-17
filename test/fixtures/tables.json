@@ -1,0 +1,896 @@
+{
+	"finder": [
+		{
+			"id": "elem_20",
+			"role": "AXScrollArea",
+			"depth": 5,
+			"bounds": {
+				"x": 100,
+				"y": 100,
+				"width": 600,
+				"height": 300
+			}
+		},
+		{
+			"id": "elem_21",
+			"role": "AXOutline",
+			"depth": 6,
+			"bounds": {
+				"x": 100,
+				"y": 124,
+				"width": 600,
+				"height": 276
+			},
+			"description": "list view"
+		},
+		{
+			"id": "elem_22",
+			"role": "AXRow",
+			"depth": 7,
+			"bounds": {
+				"x": 100,
+				"y": 124,
+				"width": 600,
+				"height": 24
+			},
+			"disclosure_level": 0,
+			"selected": false,
+			"disclosing": true
+		},
+		{
+			"id": "elem_23",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 100,
+				"y": 124,
+				"width": 250,
+				"height": 24
+			}
+		},
+		{
+			"id": "elem_24",
+			"role": "AXImage",
+			"depth": 9,
+			"bounds": {
+				"x": 104,
+				"y": 126,
+				"width": 20,
+				"height": 20
+			},
+			"description": "folder"
+		},
+		{
+			"id": "elem_25",
+			"role": "AXTextField",
+			"depth": 9,
+			"bounds": {
+				"x": 128,
+				"y": 126,
+				"width": 200,
+				"height": 20
+			},
+			"value": "Documents"
+		},
+		{
+			"id": "elem_26",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 350,
+				"y": 124,
+				"width": 150,
+				"height": 24
+			}
+		},
+		{
+			"id": "elem_27",
+			"role": "AXStaticText",
+			"depth": 9,
+			"bounds": {
+				"x": 354,
+				"y": 126,
+				"width": 142,
+				"height": 20
+			},
+			"value": "Today at 09:12"
+		},
+		{
+			"id": "elem_28",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 500,
+				"y": 124,
+				"width": 80,
+				"height": 24
+			}
+		},
+		{
+			"id": "elem_29",
+			"role": "AXStaticText",
+			"depth": 9,
+			"bounds": {
+				"x": 504,
+				"y": 126,
+				"width": 72,
+				"height": 20
+			},
+			"value": "--"
+		},
+		{
+			"id": "elem_30",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 580,
+				"y": 124,
+				"width": 120,
+				"height": 24
+			}
+		},
+		{
+			"id": "elem_31",
+			"role": "AXStaticText",
+			"depth": 9,
+			"bounds": {
+				"x": 584,
+				"y": 126,
+				"width": 112,
+				"height": 20
+			},
+			"value": "Folder"
+		},
+		{
+			"id": "elem_32",
+			"role": "AXRow",
+			"depth": 7,
+			"bounds": {
+				"x": 100,
+				"y": 148,
+				"width": 600,
+				"height": 24
+			},
+			"disclosure_level": 1,
+			"selected": true
+		},
+		{
+			"id": "elem_33",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 100,
+				"y": 148,
+				"width": 250,
+				"height": 24
+			}
+		},
+		{
+			"id": "elem_34",
+			"role": "AXImage",
+			"depth": 9,
+			"bounds": {
+				"x": 104,
+				"y": 150,
+				"width": 20,
+				"height": 20
+			},
+			"description": null
+		},
+		{
+			"id": "elem_35",
+			"role": "AXTextField",
+			"depth": 9,
+			"bounds": {
+				"x": 128,
+				"y": 150,
+				"width": 200,
+				"height": 20
+			},
+			"value": "Notes.txt"
+		},
+		{
+			"id": "elem_36",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 350,
+				"y": 148,
+				"width": 150,
+				"height": 24
+			}
+		},
+		{
+			"id": "elem_37",
+			"role": "AXStaticText",
+			"depth": 9,
+			"bounds": {
+				"x": 354,
+				"y": 150,
+				"width": 142,
+				"height": 20
+			},
+			"value": "Yesterday at 17:40"
+		},
+		{
+			"id": "elem_38",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 500,
+				"y": 148,
+				"width": 80,
+				"height": 24
+			}
+		},
+		{
+			"id": "elem_39",
+			"role": "AXStaticText",
+			"depth": 9,
+			"bounds": {
+				"x": 504,
+				"y": 150,
+				"width": 72,
+				"height": 20
+			},
+			"value": "2 KB"
+		},
+		{
+			"id": "elem_40",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 580,
+				"y": 148,
+				"width": 120,
+				"height": 24
+			}
+		},
+		{
+			"id": "elem_41",
+			"role": "AXStaticText",
+			"depth": 9,
+			"bounds": {
+				"x": 584,
+				"y": 150,
+				"width": 112,
+				"height": 20
+			},
+			"value": "Plain Text"
+		},
+		{
+			"id": "elem_42",
+			"role": "AXRow",
+			"depth": 7,
+			"bounds": {
+				"x": 100,
+				"y": 172,
+				"width": 600,
+				"height": 24
+			},
+			"disclosure_level": 0,
+			"selected": false,
+			"disclosing": false
+		},
+		{
+			"id": "elem_43",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 100,
+				"y": 172,
+				"width": 250,
+				"height": 24
+			}
+		},
+		{
+			"id": "elem_44",
+			"role": "AXImage",
+			"depth": 9,
+			"bounds": {
+				"x": 104,
+				"y": 174,
+				"width": 20,
+				"height": 20
+			},
+			"description": "folder"
+		},
+		{
+			"id": "elem_45",
+			"role": "AXTextField",
+			"depth": 9,
+			"bounds": {
+				"x": 128,
+				"y": 174,
+				"width": 200,
+				"height": 20
+			},
+			"value": "Projects"
+		},
+		{
+			"id": "elem_46",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 350,
+				"y": 172,
+				"width": 150,
+				"height": 24
+			}
+		},
+		{
+			"id": "elem_47",
+			"role": "AXStaticText",
+			"depth": 9,
+			"bounds": {
+				"x": 354,
+				"y": 174,
+				"width": 142,
+				"height": 20
+			},
+			"value": "12 Oct 2026 at 10:01"
+		},
+		{
+			"id": "elem_48",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 500,
+				"y": 172,
+				"width": 80,
+				"height": 24
+			}
+		},
+		{
+			"id": "elem_49",
+			"role": "AXStaticText",
+			"depth": 9,
+			"bounds": {
+				"x": 504,
+				"y": 174,
+				"width": 72,
+				"height": 20
+			},
+			"value": "--"
+		},
+		{
+			"id": "elem_50",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 580,
+				"y": 172,
+				"width": 120,
+				"height": 24
+			}
+		},
+		{
+			"id": "elem_51",
+			"role": "AXStaticText",
+			"depth": 9,
+			"bounds": {
+				"x": 584,
+				"y": 174,
+				"width": 112,
+				"height": 20
+			},
+			"value": "Folder"
+		},
+		{
+			"id": "elem_52",
+			"role": "AXColumn",
+			"depth": 7,
+			"bounds": {
+				"x": 100,
+				"y": 124,
+				"width": 250,
+				"height": 276
+			}
+		},
+		{
+			"id": "elem_53",
+			"role": "AXColumn",
+			"depth": 7,
+			"bounds": {
+				"x": 350,
+				"y": 124,
+				"width": 150,
+				"height": 276
+			}
+		},
+		{
+			"id": "elem_54",
+			"role": "AXColumn",
+			"depth": 7,
+			"bounds": {
+				"x": 500,
+				"y": 124,
+				"width": 80,
+				"height": 276
+			}
+		},
+		{
+			"id": "elem_55",
+			"role": "AXColumn",
+			"depth": 7,
+			"bounds": {
+				"x": 580,
+				"y": 124,
+				"width": 120,
+				"height": 276
+			}
+		},
+		{
+			"id": "elem_56",
+			"role": "AXButton",
+			"depth": 6,
+			"bounds": {
+				"x": 100,
+				"y": 100,
+				"width": 250,
+				"height": 24
+			},
+			"title": "Name"
+		},
+		{
+			"id": "elem_57",
+			"role": "AXButton",
+			"depth": 6,
+			"bounds": {
+				"x": 350,
+				"y": 100,
+				"width": 150,
+				"height": 24
+			},
+			"title": "Date Modified"
+		},
+		{
+			"id": "elem_58",
+			"role": "AXButton",
+			"depth": 6,
+			"bounds": {
+				"x": 500,
+				"y": 100,
+				"width": 80,
+				"height": 24
+			},
+			"title": "Size"
+		},
+		{
+			"id": "elem_59",
+			"role": "AXButton",
+			"depth": 6,
+			"bounds": {
+				"x": 580,
+				"y": 100,
+				"width": 120,
+				"height": 24
+			},
+			"title": "Kind"
+		},
+		{
+			"id": "elem_60",
+			"role": "AXScrollBar",
+			"depth": 6,
+			"bounds": {
+				"x": 690,
+				"y": 124,
+				"width": 10,
+				"height": 276
+			}
+		}
+	],
+	"numbers": [
+		{
+			"id": "elem_40",
+			"role": "AXTable",
+			"depth": 6,
+			"bounds": {
+				"x": 50,
+				"y": 200,
+				"width": 500,
+				"height": 120
+			},
+			"title": "Table 1"
+		},
+		{
+			"id": "elem_41",
+			"role": "AXRow",
+			"depth": 7,
+			"bounds": {
+				"x": 50,
+				"y": 200,
+				"width": 500,
+				"height": 20
+			}
+		},
+		{
+			"id": "elem_42",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 50,
+				"y": 200,
+				"width": 100,
+				"height": 20
+			},
+			"value": "Item"
+		},
+		{
+			"id": "elem_43",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 150,
+				"y": 200,
+				"width": 100,
+				"height": 20
+			},
+			"value": "Qty"
+		},
+		{
+			"id": "elem_44",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 250,
+				"y": 200,
+				"width": 100,
+				"height": 20
+			},
+			"value": "Price"
+		},
+		{
+			"id": "elem_45",
+			"role": "AXRow",
+			"depth": 7,
+			"bounds": {
+				"x": 50,
+				"y": 220,
+				"width": 500,
+				"height": 20
+			}
+		},
+		{
+			"id": "elem_46",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 50,
+				"y": 220,
+				"width": 100,
+				"height": 20
+			},
+			"value": "Apples"
+		},
+		{
+			"id": "elem_47",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 150,
+				"y": 220,
+				"width": 100,
+				"height": 20
+			},
+			"value": "3"
+		},
+		{
+			"id": "elem_48",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 250,
+				"y": 220,
+				"width": 100,
+				"height": 20
+			},
+			"value": "1.20"
+		},
+		{
+			"id": "elem_49",
+			"role": "AXRow",
+			"depth": 7,
+			"bounds": {
+				"x": 50,
+				"y": 240,
+				"width": 500,
+				"height": 20
+			}
+		},
+		{
+			"id": "elem_50",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 50,
+				"y": 240,
+				"width": 100,
+				"height": 20
+			},
+			"value": "Pears"
+		},
+		{
+			"id": "elem_51",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 150,
+				"y": 240,
+				"width": 100,
+				"height": 20
+			},
+			"value": "5"
+		},
+		{
+			"id": "elem_52",
+			"role": "AXCell",
+			"depth": 8,
+			"bounds": {
+				"x": 250,
+				"y": 240,
+				"width": 100,
+				"height": 20
+			}
+		},
+		{
+			"id": "elem_53",
+			"role": "AXColumn",
+			"depth": 7,
+			"bounds": {
+				"x": 50,
+				"y": 200,
+				"width": 100,
+				"height": 60
+			}
+		},
+		{
+			"id": "elem_54",
+			"role": "AXColumn",
+			"depth": 7,
+			"bounds": {
+				"x": 150,
+				"y": 200,
+				"width": 100,
+				"height": 60
+			}
+		},
+		{
+			"id": "elem_55",
+			"role": "AXColumn",
+			"depth": 7,
+			"bounds": {
+				"x": 250,
+				"y": 200,
+				"width": 100,
+				"height": 60
+			}
+		}
+	],
+	"web": [
+		{
+			"id": "elem_60",
+			"role": "AXWebArea",
+			"depth": 4,
+			"bounds": {
+				"x": 0,
+				"y": 80,
+				"width": 1000,
+				"height": 800
+			},
+			"title": "Prices"
+		},
+		{
+			"id": "elem_61",
+			"role": "AXHeading",
+			"depth": 5,
+			"bounds": {
+				"x": 10,
+				"y": 90,
+				"width": 300,
+				"height": 30
+			},
+			"title": "Prices"
+		},
+		{
+			"id": "elem_62",
+			"role": "AXTable",
+			"depth": 5,
+			"bounds": {
+				"x": 10,
+				"y": 130,
+				"width": 600,
+				"height": 90
+			}
+		},
+		{
+			"id": "elem_63",
+			"role": "AXRow",
+			"depth": 6,
+			"bounds": {
+				"x": 10,
+				"y": 130,
+				"width": 600,
+				"height": 30
+			}
+		},
+		{
+			"id": "elem_64",
+			"role": "AXCell",
+			"depth": 7,
+			"bounds": {
+				"x": 10,
+				"y": 130,
+				"width": 300,
+				"height": 30
+			},
+			"role_description": "column header"
+		},
+		{
+			"id": "elem_65",
+			"role": "AXStaticText",
+			"depth": 8,
+			"bounds": {
+				"x": 14,
+				"y": 134,
+				"width": 200,
+				"height": 20
+			},
+			"value": "Plan"
+		},
+		{
+			"id": "elem_66",
+			"role": "AXCell",
+			"depth": 7,
+			"bounds": {
+				"x": 310,
+				"y": 130,
+				"width": 300,
+				"height": 30
+			},
+			"role_description": "column header"
+		},
+		{
+			"id": "elem_67",
+			"role": "AXStaticText",
+			"depth": 8,
+			"bounds": {
+				"x": 314,
+				"y": 134,
+				"width": 200,
+				"height": 20
+			},
+			"value": "Price"
+		},
+		{
+			"id": "elem_68",
+			"role": "AXRow",
+			"depth": 6,
+			"bounds": {
+				"x": 10,
+				"y": 160,
+				"width": 600,
+				"height": 30
+			}
+		},
+		{
+			"id": "elem_69",
+			"role": "AXCell",
+			"depth": 7,
+			"bounds": {
+				"x": 10,
+				"y": 160,
+				"width": 300,
+				"height": 30
+			},
+			"role_description": "cell"
+		},
+		{
+			"id": "elem_70",
+			"role": "AXStaticText",
+			"depth": 8,
+			"bounds": {
+				"x": 14,
+				"y": 164,
+				"width": 200,
+				"height": 20
+			},
+			"value": "Basic"
+		},
+		{
+			"id": "elem_71",
+			"role": "AXCell",
+			"depth": 7,
+			"bounds": {
+				"x": 310,
+				"y": 160,
+				"width": 300,
+				"height": 30
+			},
+			"role_description": "cell"
+		},
+		{
+			"id": "elem_72",
+			"role": "AXStaticText",
+			"depth": 8,
+			"bounds": {
+				"x": 314,
+				"y": 164,
+				"width": 200,
+				"height": 20
+			},
+			"value": "$5"
+		},
+		{
+			"id": null,
+			"role": "AXRow",
+			"depth": 6,
+			"bounds": {
+				"x": 10,
+				"y": 190,
+				"width": 600,
+				"height": 30
+			}
+		},
+		{
+			"id": "elem_74",
+			"role": "AXCell",
+			"depth": 7,
+			"bounds": {
+				"x": 10,
+				"y": 190,
+				"width": 300,
+				"height": 30
+			},
+			"role_description": "cell"
+		},
+		{
+			"id": "elem_75",
+			"role": "AXStaticText",
+			"depth": 8,
+			"bounds": {
+				"x": 14,
+				"y": 194,
+				"width": 200,
+				"height": 20
+			},
+			"value": "Pro"
+		},
+		{
+			"id": "elem_76",
+			"role": "AXCell",
+			"depth": 7,
+			"bounds": {
+				"x": 310,
+				"y": 190,
+				"width": 300,
+				"height": 30
+			},
+			"role_description": "cell"
+		},
+		{
+			"id": "elem_77",
+			"role": "AXStaticText",
+			"depth": 8,
+			"bounds": {
+				"x": 314,
+				"y": 194,
+				"width": 200,
+				"height": 20
+			},
+			"value": "$20 per month, billed yearly"
+		},
+		{
+			"id": "elem_78",
+			"role": "AXStaticText",
+			"depth": 5,
+			"bounds": {
+				"x": 10,
+				"y": 240,
+				"width": 400,
+				"height": 20
+			},
+			"value": "Prices exclude tax."
+		}
+	]
+}
