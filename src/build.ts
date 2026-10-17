@@ -95,7 +95,8 @@ if (peekaboo?.state.version !== "4.8.0" || peekaboo.state.revision !== revision)
 }
 const checkout = dependencies.get("peekaboo");
 if (!checkout) throw new Error("The resolved Peekaboo checkout is missing");
-const git = ["git", "-C", join(checkouts, checkout)];
+const checkoutPath = join(checkouts, checkout);
+const git = ["git", "-C", checkoutPath];
 const head = spawn([...git, "rev-parse", "HEAD"]);
 if (head.status !== 0 || head.stdout.trim() !== revision) {
 	throw new Error(`The Peekaboo checkout must be at ${revision} before applying the patches`);
@@ -126,13 +127,15 @@ try {
 	}
 	if (applied < 0) {
 		// The checkout is build scratch; an earlier revision of an existing patch leaves no valid prefix.
-		console.error("Restoring the native checkout, which matches no pinned patch prefix.");
+		console.error(
+			`Restoring the native checkout at ${checkoutPath}, which matches no pinned patch prefix. Local edits there are discarded.`,
+		);
 		run([...git, "checkout", "--", "."]);
 		run([...git, "clean", "-fdq"]);
 		applied = 0;
 	}
 	for (const patch of patches.slice(applied)) run([...git, "apply", patch]);
-	if (!isExpected()) throw new Error("The native checkout differs from the pinned patch stack.");
+	if (!isExpected()) throw new Error(`The native checkout at ${checkoutPath} differs from the pinned patch stack.`);
 } finally {
 	rmSync(temporary, { recursive: true, force: true });
 }
