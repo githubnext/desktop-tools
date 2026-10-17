@@ -9,7 +9,7 @@ npm run live-check -- --list          # list the checks without running them
 npm run live-check -- --json /tmp/live.json
 ```
 
-It drives the installed Desktop Tools, or the dev app whose state folder `DESKTOP_TOOLS_STATE` names. Each check prints `PASS`, `FAIL` or `SKIP` with its evidence, and a summary groups them by PR. The exit status is 1 when any check fails, and 2 when nothing could run.
+It drives the installed Desktop Tools, or the dev app whose state folder `DESKTOP_TOOLS_STATE` names. That app must already allow the harness's caller, the terminal or agent that runs `npm run live-check`, as it would any agent (see [approved agents](app.md#approved-agents)); otherwise the harness stops before opening anything and says so. Each check prints `PASS`, `FAIL` or `SKIP` with its evidence, and a summary groups them by PR. The exit status is 1 when any check fails, and 2 when nothing could run.
 
 What it touches:
 
@@ -20,6 +20,7 @@ What it touches:
 - The Chromium checks (#107, #110 and #111) each launch their own Chrome on the fixture page, isolated from the user's: a new temporary profile (`--user-data-dir`), with `--no-first-run` and `--no-default-browser-check`. They run alongside a Chrome the user already has open, never touch its windows, and quit only the process they started before deleting its profile, so each check starts with web accessibility off. They are skipped when Google Chrome isn't in `/Applications` or `~/Applications`.
 - The Finder paste checks (#114) paste the fixtures' own files into the fixture folder, and the folder goes when the fixtures do.
 - Clipboard checks run only when the clipboard holds plain text, and that text is written back at the end. The input-source check selects another enabled keyboard layout, then the original again.
+- The caller checks (#PR) list the windows of a running Desktop Tools and ask to activate it, which must be refused. They then run a second MCP server under `/usr/bin/perl`, which the app asks you about once, and while that prompt is open check that input to a fixture window is refused too. The harness waits up to two minutes for you to answer; choose **Don't Allow**, and later runs only check that perl is still refused. If you allowed perl, the check is skipped until you choose Forget for it under Approved Agents. They are skipped on a host that doesn't approve callers.
 - Modifier clicks (#77) and `desktop_system_key` (#89) use the real keyboard and pointer, as they always do; nothing else needs the foreground.
 
 ## Still manual
@@ -33,7 +34,8 @@ These stay manual, because they are destructive, change system settings, need a 
 - **#2 two displays:** negative-origin displays, rearranging a display between inspect and click, and SIGKILL of a client mid-drag.
 - **#3 clipboard lifecycle:** SIGKILL of the MCP client during an insert, and quitting Desktop Tools after an uncertain insert.
 - **#99 wedge and permission cases:** an image into a plain-text TextEdit document (holds the clipboard until TextEdit quits), `clipboard: "replace"` into Slack or a browser, Mail and Notes, a 10 MiB TIFF, and clipboard read access set to Ask.
-- **#100 Pause All Input and #98 Recent Activity:** both are read and toggled in the app's menu. Pause is the user's alone, so the harness never chooses it through agent input, not even in a test.
+- **#100 Pause All Input and #98 Recent Activity:** both are read and toggled in the app's menu. Pause is the user's alone, so the harness never chooses it through agent input, not even in a test; the app now refuses such input anyway.
+- **#PR Approved Agents:** the first prompt for an agent, Allow, the submenu's Revoke, Allow and Forget, the Recent Activity name (`claude-code` for Claude Code), and a refusal after Revoke. Only the user answers the app's prompts and menus, so these stay manual.
 - **#74 notifications:** they need banners from a real app, and closing or opening one acts on it.
 - **#41 Dock and status menus:** the Dock right-click moves the pointer, and a third-party status menu belongs to the user.
 - **#57, #4 and #9 Open and Save panels:** a Save sheet can write files outside the fixtures if answered wrongly.

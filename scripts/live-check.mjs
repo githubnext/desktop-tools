@@ -34,14 +34,18 @@ const FINDER = "com.apple.finder";
 const CHROME = "com.google.Chrome";
 const SAFARI = "com.apple.Safari";
 const run = randomBytes(3).toString("hex");
+const HOST = "dev.githubnext.desktop-tools";
+const STATE = process.env.DESKTOP_TOOLS_STATE || join(homedir(), ".local", "state", "desktop-tools");
 
 // ---------- MCP client ----------
 
 class Mcp {
-	constructor() {
+	/** `launcher` runs the server under another program, which the host then sees as its caller. */
+	constructor(launcher = []) {
 		this.next = 1;
 		this.waiting = new Map();
-		this.child = spawn(process.execPath, [new URL("../dist/mcp.js", import.meta.url).pathname], {
+		const command = [...launcher, process.execPath, new URL("../dist/mcp.js", import.meta.url).pathname];
+		this.child = spawn(command[0], command.slice(1), {
 			stdio: ["pipe", "pipe", "inherit"],
 			env: process.env,
 		});
@@ -503,6 +507,24 @@ const withChrome = (body) => async (s, m) => {
 	}
 };
 const ISOLATED = "Launches an isolated Chrome (temporary profile, no first-run UI) on the fixture page, then quits only that process and deletes the profile.";
+
+// Unreleased
+
+/** Whether the host asks before serving callers: it keeps their answers, and the harness's own caller needs one. */
+const approvesCallers = () =>
+	existsSync(join(STATE, "callers.json")) || skip("this host doesn't approve callers (#PR not in it)");
+
+check("PR", "input to Desktop Tools itself is refused with SELF_TARGET_REFUSED, and observing it still works", async (s, m) => {
+	approvesCallers();
+	const { data } = await m.call("desktop_apps", { query: HOST });
+	const host = (data.apps ?? []).find((a) => a.bundle_id === HOST) ?? skip("no Desktop Tools app is listed");
+	const windows = await m.call("desktop_windows", { pid: host.target.pid });
+	const result = await m.call("desktop_activate", { target: host.target });
+	return expect(
+		!windows.isError && result.outcome === "refused" && /SELF_TARGET_REFUSED/.test(result.text),
+		`windows listed ${!windows.isError}; activate ${evidence(result)}`,
+	);
+}, "Lists the windows of a running Desktop Tools and asks to activate it, which is refused before dispatch; any build in the family counts.");
 
 // 0.13.0
 const finderPaste = (m) =>
@@ -995,6 +1017,36 @@ check(70, "desktop_wait text_contains matches text typed into TextEdit", async (
 	return expect(result.outcome === "completed" || dig(result.data, "matched") === true || /matched/.test(result.text), brief(result.text, 200));
 });
 
+// Last, since it can leave a prompt open that only the user may answer, and every input waits for that answer.
+check("PR", "a caller the user hasn't allowed is refused, and input waits while its prompt is open", async (s, m) => {
+	approvesCallers();
+	const win = await s.textedit("plain");
+	// perl stays the server's parent, so the host sees /usr/bin/perl as the caller.
+	const perl = new Mcp(["/usr/bin/perl", "-e", "exit(system(@ARGV) >> 8)"]);
+	try {
+		await perl.start();
+		const apps = await perl.call("desktop_apps", {});
+		if (!apps.isError) skip("the user allowed /usr/bin/perl; choose Forget under Approved Agents to run this check");
+		const refused = /CALLER_NOT_APPROVED/.test(apps.text);
+		if (!/hasn't approved/.test(apps.text)) return expect(refused, `perl was refused before (denied): ${brief(apps.text, 160)}`);
+		const focus = await m.call("desktop_focus", { target: win.info.target });
+		const own = focus.outcome === "refused" && /SELF_TARGET_REFUSED/.test(focus.text);
+		console.log("       Desktop Tools is asking whether perl may control this Mac: choose Don't Allow. Waiting up to 2 minutes.");
+		let answered = false;
+		for (let i = 0; i < 60 && !answered; i++) {
+			await sleep(2000);
+			const again = await perl.call("desktop_apps", {});
+			answered = !again.isError || !/hasn't approved/.test(again.text);
+		}
+		return expect(
+			refused && own && answered,
+			`perl refused ${refused}; focus while the prompt was open ${evidence(focus)}; prompt answered ${answered}`,
+		);
+	} finally {
+		perl.stop();
+	}
+}, "Runs a second MCP server under /usr/bin/perl, which the host asks the user about once; it waits for the user to answer that prompt. Choose Don't Allow, so later runs only check the refusal.");
+
 // ---------- runner ----------
 
 async function main() {
@@ -1011,7 +1063,12 @@ async function main() {
 	}
 	const mcp = new Mcp();
 	await mcp.start();
-	const { data } = await mcp.call("desktop_apps", { query: FINDER });
+	const { data, text, isError } = await mcp.call("desktop_apps", { query: FINDER });
+	if (isError && /CALLER_NOT_APPROVED/.test(text)) {
+		console.error(`Desktop Tools hasn't allowed the program that ran this harness, such as your terminal or agent. Choose Allow in its prompt or under Approved Agents in its menu, then run again. ${brief(text, 300)}`);
+		mcp.stop();
+		return 2;
+	}
 	const session = data.system?.session;
 	if (!session) {
 		console.error(`desktop_apps did not report the session; is Desktop Tools running? ${brief(JSON.stringify(data), 300)}`);

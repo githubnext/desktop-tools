@@ -578,3 +578,9 @@ the update.
 - **Reader.** The detached observation reader adds `AXSubrole` to its batched descriptor read. An element whose role or subrole is `AXSecureTextField` gets the attribute `subrole: "AXSecureTextField"` and no value: its value is one mask character per secret character, which still reveals the length. The label resolver doesn't see the value either.
 - **Snapshots.** `UIElement` gains an optional `subrole`, which both snapshot managers keep and restore as that attribute, so actions on a stored snapshot can tell the field is secure. Older stored snapshots decode with none.
 - **Tests.** The snapshot managers' metadata round trip covers a secure field. No operation is added.
+
+`peekaboo-caller-admission.patch` gives the `operationAdmission` hook what the embedding app needs to approve callers and keep agent input off its own UI.
+- **Admission.** The hook now takes a `PeekabooBridgeOperationAdmission`: the operation, whether it mutates the desktop, the client's pid from the socket's audit token, and the pid the request targets when one can be found. It returns a refusal message as before.
+- **Target.** The target is the resolved window's owner, else the scope's process, else the first process identity, window identity or action receipt found in the request by reflection (at most six levels deep), else the owner of the window of the snapshot the request names. `snapshotWindow` becomes internal for that.
+- **Handshake.** The hook is also asked at the handshake, as `permissionsStatus`, so a refused client learns why before it asks for anything; the refusal is a `permissionDenied` envelope and the client gets no operations.
+- **Tests.** The admission test checks the client pid, a new test checks targets from a scope and from a request's process identity, and another checks a handshake refusal. No operation is added.

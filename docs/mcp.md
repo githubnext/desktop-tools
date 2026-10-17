@@ -32,4 +32,4 @@ The server names the agent in the host's window highlight from the MCP client's 
 
 Action results start with `Outcome: completed`, `refused`, or `unknown`. Actions run one at a time, and `notifications/cancelled` aborts a call; cancellation does not undo input already delivered.
 
-**Warning:** the server acts with the host app's macOS Accessibility, Screen Recording, and clipboard permissions. It asks for no approval per call beyond what the MCP client itself requires, so any session that can call it can read the screen and clipboard and send input to any app.
+**Warning:** the server acts with the host app's macOS Accessibility, Screen Recording, and clipboard permissions. The [Desktop Tools app](app.md#approved-agents) asks once per agent, such as Claude Code or a terminal, before serving it, and refuses it with `CALLER_NOT_APPROVED` until you choose Allow. It asks for no approval per call beyond that and what the MCP client itself requires, so any session of an allowed agent can read the screen and clipboard and send input to any app but Desktop Tools itself.
