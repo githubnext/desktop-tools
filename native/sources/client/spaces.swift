@@ -42,7 +42,14 @@ private struct SpaceDisplay: Encodable {
 	let display_index: Int?
 	let display_id: UInt32?
 	let display_uuid: String
+	let name: String?
+	let is_main: Bool?
 	let bounds: Bounds?
+	let visible_bounds: Bounds?
+	let scale: Double?
+	let pixel_width: Int?
+	let pixel_height: Int?
+	let rotation: Double?
 	let current_space_id: UInt64?
 	let spaces: [SpaceRow]
 }
@@ -211,7 +218,14 @@ func nativeSpaces() throws -> Data {
 			display_index: shown?.index,
 			display_id: shown?.display_id,
 			display_uuid: entry.uuid,
+			name: shown?.name,
+			is_main: shown?.is_main,
 			bounds: shown?.bounds,
+			visible_bounds: shown?.visible_bounds,
+			scale: shown?.scale,
+			pixel_width: shown?.pixel_width,
+			pixel_height: shown?.pixel_height,
+			rotation: shown?.rotation,
 			current_space_id: entry.current,
 			spaces: entry.spaces.enumerated().map { offset, space in
 				let windows = membership[space.id] ?? []
