@@ -98,7 +98,6 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	private let logFile: URL
 	private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 	private let menu = NSMenu()
-	private var serving = true
 	// Pausing lasts until the user resumes or the app quits; it is never saved.
 	private var paused = false
 	// The app shows the agent cursor and window outline unless the user turned them off; embedding apps start with them off.
@@ -196,10 +195,6 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 			menu.addItem(entry)
 		}
 		menu.addItem(.separator())
-		let toggle = NSMenuItem(title: "Serve agents", action: #selector(toggle), keyEquivalent: "")
-		toggle.target = self
-		toggle.state = serving ? .on : .off
-		menu.addItem(toggle)
 		let pointer = NSMenuItem(title: "Show agent cursor", action: #selector(toggleCursor), keyEquivalent: "")
 		pointer.target = self
 		pointer.state = cursor ? .on : .off
@@ -350,12 +345,6 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 			systemSymbolName: symbol,
 			accessibilityDescription: paused ? "Desktop Tools, input paused" : "Desktop Tools")
 		item.button?.toolTip = paused ? "Desktop Tools: input paused" : "Desktop Tools"
-	}
-
-	@objc private func toggle() {
-		serving.toggle()
-		log(serving ? "Serving agents" : "Stopped serving agents")
-		if serving { runtime.start(socket, client) } else { runtime.stop() }
 	}
 
 	@objc private func toggleCursor() {

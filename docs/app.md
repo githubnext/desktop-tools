@@ -1,6 +1,6 @@
 # Desktop Tools app
 
-`Desktop Tools.app` (`dev.githubnext.desktop-tools`) is a menu bar host for agents that don't embed the library, such as Claude Code or Codex through the [MCP server](mcp.md). It holds its own Accessibility, Screen Recording and Keyboard input grants, requested from its menu while any is missing, and serves `~/.local/state/desktop-tools/desktop.sock`. It links `desktop-client` there to its signed client. Turning off **Serve agents** stops the runtime. **Show agent cursor**, on by default, draws the agent's own pointer for each click, scroll, drag, hover and press. **Highlight agent's window**, also on by default, outlines the window the agent is observing or acting on and labels it with the agent and app, such as "Claude is using TextEdit". See [input](tools.md#input).
+`Desktop Tools.app` (`dev.githubnext.desktop-tools`) is a menu bar host for agents that don't embed the library, such as Claude Code or Codex through the [MCP server](mcp.md). It holds its own Accessibility, Screen Recording and Keyboard input grants, requested from its menu while any is missing, and serves `~/.local/state/desktop-tools/desktop.sock`. It links `desktop-client` there to its signed client. **Show agent cursor**, on by default, draws the agent's own pointer for each click, scroll, drag, hover and press. **Highlight agent's window**, also on by default, outlines the window the agent is observing or acting on and labels it with the agent and app, such as "Claude is using TextEdit". See [input](tools.md#input).
 
 ## Install
 
@@ -22,7 +22,7 @@ The app's own prompts, menus and windows answer only to you. Agent input aimed a
 - the agent, as named under [Approved agents](#approved-agents), and its pid;
 - the outcome: completed, unknown, refused, or paused for a request refused because input was paused.
 
-Every desktop change is logged, and so are screen captures and clipboard reads. Turning on an app's web accessibility for a read is logged once per launch of that app. Listings and snapshot bookkeeping are not. Only the operation and its target are kept, never typed text, clipboard contents or values. The log also notes when the app starts, with the socket it serves, and when you pause input, stop serving, or allow, refuse or forget an agent. The file is readable only by you; past 1 MiB it moves to `activity.log.1` and a new one starts.
+Every desktop change is logged, and so are screen captures and clipboard reads. Turning on an app's web accessibility for a read is logged once per launch of that app. Listings and snapshot bookkeeping are not. Only the operation and its target are kept, never typed text, clipboard contents or values. The log also notes when the app starts, with the socket it serves, and when you pause input, or allow, refuse or forget an agent. The file is readable only by you; past 1 MiB it moves to `activity.log.1` and a new one starts.
 
 The menu shows a **Grant** item only for a permission the app is missing. **Pause All Input** sits just above Quit.
 
