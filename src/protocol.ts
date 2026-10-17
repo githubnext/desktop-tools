@@ -167,7 +167,7 @@ export type DesktopRequest =
 		/** Presses key this many times, up to 32. */
 		repeat?: number;
 	}
-	| { op: "system-key"; key: DesktopKey; modifiers?: DesktopModifier[] };
+	| { op: "system-key"; key: DesktopKey | DesktopSystemKey; modifiers?: DesktopModifier[] };
 
 export type DesktopPoint = { x: number; y: number };
 export const DESKTOP_CLICKS = ["single", "double", "right", "middle", "triple"] as const;
@@ -178,6 +178,19 @@ export type DesktopDirection = (typeof DESKTOP_DIRECTIONS)[number];
 export type DesktopButton = (typeof DESKTOP_BUTTONS)[number];
 
 /** Keys that type no character, named; every other key is given as the character it types. */
+/** Media, volume and brightness keys, which the system rather than a window acts on. */
+export const DESKTOP_SYSTEM_KEYS = [
+	"play_pause",
+	"next_track",
+	"previous_track",
+	"volume_up",
+	"volume_down",
+	"mute",
+	"brightness_up",
+	"brightness_down",
+	"keyboard_brightness_up",
+	"keyboard_brightness_down",
+] as const;
 export const DESKTOP_KEYS = [
 	"enter",
 	"tab",
@@ -247,6 +260,7 @@ export const DESKTOP_ELEMENT_ACTIONS = [
 	"AXScrollToVisible",
 ] as const;
 export type DesktopNamedKey = (typeof DESKTOP_KEYS)[number];
+export type DesktopSystemKey = (typeof DESKTOP_SYSTEM_KEYS)[number];
 /** A named key, or the one printable character a key types without Shift or Option, such as `,` or `a`. */
 export type DesktopKey = DesktopNamedKey | (string & {});
 export type DesktopModifier = (typeof DESKTOP_MODIFIERS)[number];

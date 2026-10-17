@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { failureAvailability, windowAvailability } from "./availability.js";
 import { canonicalDate } from "./date-value.js";
 import { saveCapture, validateSave } from "./capture-file.js";
-import { DESKTOP_BUTTONS, DESKTOP_CLICKS, DESKTOP_DIRECTIONS, DESKTOP_ELEMENT_ACTIONS, DESKTOP_MODIFIERS, DESKTOP_SELECTIONS, isDesktopAction, isDesktopKey, isDesktopManagement, } from "./protocol.js";
+import { DESKTOP_BUTTONS, DESKTOP_CLICKS, DESKTOP_DIRECTIONS, DESKTOP_ELEMENT_ACTIONS, DESKTOP_MODIFIERS, DESKTOP_SYSTEM_KEYS, DESKTOP_SELECTIONS, isDesktopAction, isDesktopKey, isDesktopManagement, } from "./protocol.js";
 import { NOTIFICATIONS_MS, notificationAction, readNotifications, validateNotificationAction, } from "./notifications.js";
 import { waitFor } from "./wait.js";
 const exec = promisify(execFile);
@@ -601,6 +601,11 @@ function validateAction(request) {
     if (request.op === "system-key") {
         if (Object.keys(request).some((key) => !["op", "key", "modifiers"].includes(key))) {
             throw new Error("A system key accepts only key and modifiers.");
+        }
+        if (DESKTOP_SYSTEM_KEYS.includes(request.key)) {
+            if (request.modifiers !== undefined)
+                throw new Error("Media, volume and brightness keys take no modifiers.");
+            return;
         }
         return validateKey(request);
     }

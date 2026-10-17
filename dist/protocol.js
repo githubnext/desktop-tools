@@ -18,6 +18,19 @@ export const DESKTOP_CLICKS = ["single", "double", "right", "middle", "triple"];
 export const DESKTOP_DIRECTIONS = ["up", "down", "left", "right"];
 export const DESKTOP_BUTTONS = ["left", "right"];
 /** Keys that type no character, named; every other key is given as the character it types. */
+/** Media, volume and brightness keys, which the system rather than a window acts on. */
+export const DESKTOP_SYSTEM_KEYS = [
+    "play_pause",
+    "next_track",
+    "previous_track",
+    "volume_up",
+    "volume_down",
+    "mute",
+    "brightness_up",
+    "brightness_down",
+    "keyboard_brightness_up",
+    "keyboard_brightness_down",
+];
 export const DESKTOP_KEYS = [
     "enter",
     "tab",

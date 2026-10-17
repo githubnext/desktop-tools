@@ -14,6 +14,7 @@ import {
 	DESKTOP_DIRECTIONS,
 	DESKTOP_ELEMENT_ACTIONS,
 	DESKTOP_MODIFIERS,
+	DESKTOP_SYSTEM_KEYS,
 	DESKTOP_SELECTIONS,
 	type DesktopAction,
 	type DesktopApplication,
@@ -724,6 +725,10 @@ function validateAction(request: DesktopAction) {
 	if (request.op === "system-key") {
 		if (Object.keys(request).some((key) => !["op", "key", "modifiers"].includes(key))) {
 			throw new Error("A system key accepts only key and modifiers.");
+		}
+		if ((DESKTOP_SYSTEM_KEYS as readonly unknown[]).includes(request.key)) {
+			if (request.modifiers !== undefined) throw new Error("Media, volume and brightness keys take no modifiers.");
+			return;
 		}
 		return validateKey(request);
 	}
