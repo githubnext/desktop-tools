@@ -217,6 +217,21 @@ and the traversal selects its AX window by that ID, so its title is no longer co
 a window ID still must match the title. The resolved target keeps its title; the client reports the newer
 traversal title. Input actions bind by window ID, receipt and focused-element identity, never the title.
 
+`peekaboo-agent-cursor.patch` shows background pointer input on screen, since it never moves the
+physical pointer. Peekaboo already accepts an `AutomationFeedbackClient`, but before this patch none
+of the operations Desktop Tools serves called it: targeted and exact-window clicks, background
+scrolls and PID-routed hotkeys deliberately skip feedback, and exact-window drag, literal insertion
+and value writes have none. Exact-window and generation-pinned clicks now pass the click service a
+lane preparation that reports the coordinate, or the snapshot element's center, in global display
+points. It runs inside the lane before preparation revalidates the target, so a target that changes
+while the cursor moves is refused exactly as before. Background scrolls report their point or element
+in their existing lane preparation, which runs before the action route's own revalidation. Exact-window
+drags report both endpoints before the held-pointer lifecycle starts, so feedback never spends the
+hold's expiry budget. Feedback cannot throw and never decides the input: dispatch waits for it at most
+600 ms, then proceeds while a late feedback task finishes alone. The default no-op client adds no wait.
+Target checks, routes, outcomes and retries are unchanged, and the existing post-dispatch visualizer
+calls stay suppressed for background input. Keyboard operations still report no feedback.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.

@@ -120,9 +120,11 @@ final class AgentCursor: AutomationFeedbackClient {
 		return path
 	}
 
+	/// Where the cursor is drawn now, mid-flight included, or where it stopped before fading.
 	private func currentPosition() -> CGPoint? {
-		guard position != nil, let overlay = overlays.first, overlay.isVisible else { return nil }
-		let shown = overlay.cursor.presentation()?.position ?? overlay.cursor.position
+		guard let position else { return nil }
+		guard let overlay = overlays.first, overlay.isVisible, let shown = overlay.cursor.presentation()?.position
+		else { return position }
 		return shown.applying(overlay.transform.inverted())
 	}
 
