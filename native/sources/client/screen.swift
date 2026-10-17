@@ -10,7 +10,12 @@ struct Display: Encodable {
 	let name: String?
 	/// Global desktop points with a top-left origin at the main display, as window bounds use.
 	let bounds: Bounds
+	/// The part of bounds left after the menu bar and Dock, in the same coordinates.
+	let visible_bounds: Bounds?
 	let scale: Double?
+	let pixel_width: Int?
+	let pixel_height: Int?
+	let rotation: Double
 	let is_main: Bool
 }
 
@@ -60,21 +65,30 @@ func activeDisplays() throws -> [Display] {
 	guard CGGetActiveDisplayList(count, &ids, &count) == .success else {
 		throw ScreenError("The active display list is unavailable.")
 	}
-	let names = Dictionary(
-		NSScreen.screens.compactMap { screen -> (UInt32, String)? in
+	let screens = Dictionary(
+		NSScreen.screens.compactMap { screen -> (UInt32, NSScreen)? in
 			guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
 			else { return nil }
-			return (number.uint32Value, screen.localizedName)
+			return (number.uint32Value, screen)
 		},
 		uniquingKeysWith: { first, _ in first }
 	)
+	// AppKit frames are bottom-left at the primary display; flip them into window coordinates.
+	let primaryHeight = CGDisplayBounds(CGMainDisplayID()).height
 	// CoreGraphics lists the main display first, so index 0 is the main display.
 	return ids.prefix(Int(count)).enumerated().map { index, id in
 		let mode = CGDisplayCopyDisplayMode(id)
 		let scale = mode.flatMap { $0.width > 0 ? Double($0.pixelWidth) / Double($0.width) : nil }
+		let visible = screens[id].map { screen -> Bounds in
+			let frame = screen.visibleFrame
+			return Bounds(CGRect(
+				x: frame.minX, y: primaryHeight - frame.maxY, width: frame.width, height: frame.height
+			))
+		}
 		return Display(
-			index: index, display_id: id, name: names[id], bounds: Bounds(CGDisplayBounds(id)),
-			scale: scale, is_main: CGDisplayIsMain(id) != 0
+			index: index, display_id: id, name: screens[id]?.localizedName, bounds: Bounds(CGDisplayBounds(id)),
+			visible_bounds: visible, scale: scale, pixel_width: mode.map { $0.pixelWidth },
+			pixel_height: mode.map { $0.pixelHeight }, rotation: CGDisplayRotation(id), is_main: CGDisplayIsMain(id) != 0
 		)
 	}
 }
