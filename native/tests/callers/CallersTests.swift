@@ -83,6 +83,11 @@ struct CallersTests {
 		#expect(!OwnUIGuard.isOwn(bundleIdentifier: "dev.githubnext.desktop-toolsx", host: host))
 		#expect(!OwnUIGuard.isOwn(bundleIdentifier: nil, host: host))
 		#expect(!OwnUIGuard.isOwn(bundleIdentifier: host, host: ""))
+		// A dev build named under the app's ID, and the installed app seen from it.
+		#expect(OwnUIGuard.isOwn(bundleIdentifier: host + ".dev", host: host))
+		#expect(OwnUIGuard.isOwn(bundleIdentifier: host, host: host + ".dev"))
+		#expect(OwnUIGuard.isOwn(bundleIdentifier: host + ".dev.desktop-client", host: host + ".dev"))
+		#expect(!OwnUIGuard.isOwn(bundleIdentifier: "", host: host))
 	}
 
 	@Test

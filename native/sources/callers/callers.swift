@@ -139,10 +139,11 @@ public enum OwnUIGuard {
 		return nil
 	}
 
-	/// The host's bundle and every bundle under it, such as its client; a dev build shares the installed app's ID.
+	/// The host's bundle, every bundle under it, such as its client or a dev build named under the app's ID, and
+	/// the bundle it is itself named under, so a dev build and the installed app guard each other.
 	public static func isOwn(bundleIdentifier: String?, host: String) -> Bool {
-		guard let bundleIdentifier, !host.isEmpty else { return false }
-		return bundleIdentifier == host || bundleIdentifier.hasPrefix(host + ".")
+		guard let bundleIdentifier, !host.isEmpty, !bundleIdentifier.isEmpty else { return false }
+		return bundleIdentifier == host || bundleIdentifier.hasPrefix(host + ".") || host.hasPrefix(bundleIdentifier + ".")
 	}
 
 	/// One WindowServer row of a family process. The status item stays up, and the agent cursor and window outline
