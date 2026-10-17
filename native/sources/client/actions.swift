@@ -124,6 +124,13 @@ private struct ActionRequest: Decodable {
 			else {
 				throw ActionError("Use each of command, control, option, and shift at most once.")
 			}
+			// Peekaboo refuses these background chords after admission, which reads as possible dispatch.
+			if modifiers == ["command"], let tool = semanticShortcuts[key] {
+				throw ActionError(
+					"Command-\(key.uppercased()) can't be verified when sent to a background window, so it isn't sent.",
+					hint: "Use \(tool) instead; it reports whether it took effect."
+				)
+			}
 		}
 	}
 }
@@ -150,6 +157,9 @@ private struct PointerPoint: Decodable, Equatable {
 }
 
 private let pointerClicks: Set<String> = ["single", "double", "right", "middle", "triple"]
+private let semanticShortcuts = [
+	"w": "desktop_close", "q": "desktop_quit", "h": "desktop_hide", "m": "desktop_minimize",
+]
 private let keyboardModifiers: [String: String] = [
 	"command": "cmd", "control": "ctrl", "option": "alt", "shift": "shift",
 ]
@@ -183,7 +193,11 @@ private func serviceKey(_ key: String) -> String? {
 
 private struct ActionError: LocalizedError {
 	let message: String
-	init(_ message: String) { self.message = message }
+	var hint: String?
+	init(_ message: String, hint: String? = nil) {
+		self.message = message
+		self.hint = hint
+	}
 	var errorDescription: String? { message }
 }
 
@@ -455,7 +469,9 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 		result.error = ActionMessage(
 			code: envelope?.code.rawValue ?? "DESKTOP_ACTION_FAILED",
 			message: error.localizedDescription,
-			hint: invoked ? "Inspect the target before retrying; the action may already have happened." : nil
+			hint: invoked
+				? "Inspect the target before retrying; the action may already have happened."
+				: (error as? ActionError)?.hint
 		)
 		// Unknown completion leaves the host's pending lease in place, including client death or response loss.
 	}
