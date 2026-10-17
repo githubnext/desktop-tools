@@ -9,10 +9,6 @@ export type DesktopTool = {
     /** JSON Schema for the tool's arguments; its properties are the request's fields besides `op`. */
     parameters: JsonSchema;
 };
-/**
- * The desktop tools every host offers agents. `place` names where they act, as in "this Mac";
- * `app` names the signed app that holds the macOS permissions and runs the native service.
- */
 export declare function desktopTools({ place, app }: {
     place: string;
     app: string;

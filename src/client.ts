@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { failureAvailability, windowAvailability } from "./availability.js";
 import { canonicalDate } from "./date-value.js";
+import { type DesktopRegion, saveCapture, validateSave } from "./capture-file.js";
 
 import {
 	DESKTOP_BUTTONS,
@@ -262,6 +263,24 @@ async function screenshot(input: string, output: string, signal: AbortSignal) {
 	throw new Error("The screenshot could not be resized within the result limit.");
 }
 
+const saveTools = { run: (file: string, args: string[], signal: AbortSignal) => run(file, args, signal), dimensions };
+
+/** The window capture's extent in global desktop points, from its coordinate context. */
+function capturedArea(data: Record<string, unknown>): DesktopRegion | undefined {
+	const bounds = (data.coordinate_context as { logicalBounds?: unknown } | undefined)?.logicalBounds;
+	if (!Array.isArray(bounds) || bounds.length !== 2) return undefined;
+	const [[x, y], [width, height]] = bounds as number[][];
+	return [x, y, width, height].every(Number.isFinite) ? { x, y, width, height } : undefined;
+}
+
+/** The captured display's bounds in global desktop points. */
+function displayArea(data: Record<string, unknown>): DesktopRegion | undefined {
+	const bounds = (data.display as { bounds?: DesktopRegion } | undefined)?.bounds;
+	return bounds && [bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)
+		? { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
+		: undefined;
+}
+
 async function dimensions(path: string, signal: AbortSignal) {
 	const info = await run("/usr/bin/sips", ["-g", "pixelWidth", "-g", "pixelHeight", path], signal);
 	const width = Number(/pixelWidth:\s*(\d+)/.exec(info)?.[1]);
@@ -343,6 +362,7 @@ async function inspect(
 		validateScope(request.scope);
 		if (mode !== "accessibility") throw new Error("A scope needs accessibility mode.");
 	}
+	const savePath = await validateSave(request);
 	const directory = await mkdtemp(join(tmpdir(), "desktop-tools-"));
 	try {
 		const path = join(directory, "capture.png");
@@ -354,10 +374,14 @@ async function inspect(
 			throw new Error("Native inspection did not honor the requested scope.");
 		}
 		const limit = (request.scope ? MAX_SCOPED_TEXT : MAX_TEXT) + recognizedLimit(data, request.ocr);
+		const saved = savePath
+			? await saveCapture(path, directory, savePath, request, capturedArea(data), saveTools, signal)
+			: undefined;
 		const { image, width, height } = await screenshot(path, join(directory, "image.jpg"), signal);
 		const { screenshot_raw: _raw, screenshot_annotated: _annotated, ...observation } = data;
 		const text = bounded({
 			...observation,
+			...(saved ? { saved } : {}),
 			image: {
 				width,
 				height,
@@ -398,6 +422,7 @@ async function screen(
 		throw new Error("Choose a display index from 0 to 63 from the returned displays list.");
 	}
 	if (request.ocr !== undefined && typeof request.ocr !== "boolean") throw new Error("Choose ocr true or false.");
+	const savePath = await validateSave(request);
 	const directory = await mkdtemp(join(tmpdir(), "desktop-tools-"));
 	try {
 		const path = join(directory, "capture.png");
@@ -406,9 +431,13 @@ async function screen(
 		if (request.ocr) args.push("ocr");
 		const data = await native(args, signal);
 		const limit = MAX_TEXT + recognizedLimit(data, request.ocr);
+		const saved = savePath
+			? await saveCapture(path, directory, savePath, request, displayArea(data), saveTools, signal)
+			: undefined;
 		const { image, width, height } = await screenshot(path, join(directory, "image.jpg"), signal);
 		const text = bounded({
 			...data,
+			...(saved ? { saved } : {}),
 			image: {
 				width,
 				height,

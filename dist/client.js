@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { failureAvailability, windowAvailability } from "./availability.js";
 import { canonicalDate } from "./date-value.js";
+import { saveCapture, validateSave } from "./capture-file.js";
 import { DESKTOP_BUTTONS, DESKTOP_CLICKS, DESKTOP_DIRECTIONS, DESKTOP_ELEMENT_ACTIONS, DESKTOP_MODIFIERS, DESKTOP_SELECTIONS, isDesktopAction, isDesktopKey, isDesktopManagement, } from "./protocol.js";
 import { NOTIFICATIONS_MS, notificationAction, readNotifications, validateNotificationAction, } from "./notifications.js";
 import { waitFor } from "./wait.js";
@@ -185,6 +186,22 @@ async function screenshot(input, output, signal) {
     }
     throw new Error("The screenshot could not be resized within the result limit.");
 }
+const saveTools = { run: (file, args, signal) => run(file, args, signal), dimensions };
+/** The window capture's extent in global desktop points, from its coordinate context. */
+function capturedArea(data) {
+    const bounds = data.coordinate_context?.logicalBounds;
+    if (!Array.isArray(bounds) || bounds.length !== 2)
+        return undefined;
+    const [[x, y], [width, height]] = bounds;
+    return [x, y, width, height].every(Number.isFinite) ? { x, y, width, height } : undefined;
+}
+/** The captured display's bounds in global desktop points. */
+function displayArea(data) {
+    const bounds = data.display?.bounds;
+    return bounds && [bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)
+        ? { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
+        : undefined;
+}
 async function dimensions(path, signal) {
     const info = await run("/usr/bin/sips", ["-g", "pixelWidth", "-g", "pixelHeight", path], signal);
     const width = Number(/pixelWidth:\s*(\d+)/.exec(info)?.[1]);
@@ -255,6 +272,7 @@ async function inspect(native, request, signal) {
         if (mode !== "accessibility")
             throw new Error("A scope needs accessibility mode.");
     }
+    const savePath = await validateSave(request);
     const directory = await mkdtemp(join(tmpdir(), "desktop-tools-"));
     try {
         const path = join(directory, "capture.png");
@@ -268,10 +286,14 @@ async function inspect(native, request, signal) {
             throw new Error("Native inspection did not honor the requested scope.");
         }
         const limit = (request.scope ? MAX_SCOPED_TEXT : MAX_TEXT) + recognizedLimit(data, request.ocr);
+        const saved = savePath
+            ? await saveCapture(path, directory, savePath, request, capturedArea(data), saveTools, signal)
+            : undefined;
         const { image, width, height } = await screenshot(path, join(directory, "image.jpg"), signal);
         const { screenshot_raw: _raw, screenshot_annotated: _annotated, ...observation } = data;
         const text = bounded({
             ...observation,
+            ...(saved ? { saved } : {}),
             image: {
                 width,
                 height,
@@ -309,6 +331,7 @@ async function screen(native, request, signal) {
     }
     if (request.ocr !== undefined && typeof request.ocr !== "boolean")
         throw new Error("Choose ocr true or false.");
+    const savePath = await validateSave(request);
     const directory = await mkdtemp(join(tmpdir(), "desktop-tools-"));
     try {
         const path = join(directory, "capture.png");
@@ -319,9 +342,13 @@ async function screen(native, request, signal) {
             args.push("ocr");
         const data = await native(args, signal);
         const limit = MAX_TEXT + recognizedLimit(data, request.ocr);
+        const saved = savePath
+            ? await saveCapture(path, directory, savePath, request, displayArea(data), saveTools, signal)
+            : undefined;
         const { image, width, height } = await screenshot(path, join(directory, "image.jpg"), signal);
         const text = bounded({
             ...data,
+            ...(saved ? { saved } : {}),
             image: {
                 width,
                 height,
