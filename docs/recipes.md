@@ -106,6 +106,21 @@ To copy files picked in Finder instead, `desktop_click` the first one and the re
 - A name that already exists is refused with `PASTE_NAME_EXISTS` before anything is pasted. A manual Command-V would open a Replace / Keep Both / Stop dialog instead.
 - A drag between Finder windows also copies, but its result is always `unknown`.
 
+## Rename a file in Finder
+
+A shell `mv` is simpler and can be checked. Finder shows a name written into a file's name field through Accessibility without renaming the file, so `desktop_set_cell`, `desktop_type` and `desktop_set_value` refuse it with `CELL_NOT_EDITABLE`. In Finder itself the rename is foreground input *(unverified)*:
+
+1. `desktop_focus` the Finder window target, `desktop_click` the file's row, then inspect.
+2. `desktop_key` `enter` to edit the name, then inspect.
+3. `desktop_insert` the new name and `desktop_key` `enter`.
+
+**Verify:** `ls` the folder. The row's text alone doesn't prove the rename.
+
+**Goes wrong:**
+
+- A name already in the folder makes Finder ask to use another name.
+- With the window in the background, the name editor doesn't hold the window's keyboard focus and the insert is refused.
+
 ## Open something with Spotlight
 
 `desktop_open` or `desktop_launch` is better when the target is known. Use Spotlight only for what needs its search.

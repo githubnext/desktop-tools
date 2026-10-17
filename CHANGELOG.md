@@ -10,6 +10,7 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ### Changed
 
+- `desktop_inspect` keeps containers an agent can scope into, such as a Finder window's file list after its long sidebar, when its result is cut to size, dropping other elements first. ([#PR](https://github.com/githubnext/desktop-tools/pull/PR))
 - Agent input aimed at any Desktop Tools process, including another build of it, or sent while one of its prompts or menus is open, is refused with `SELF_TARGET_REFUSED`, so only the user can answer its prompts or choose Pause All Input. Agents can still observe them. ([#120](https://github.com/githubnext/desktop-tools/pull/120))
 
 ### Fixed
@@ -17,6 +18,11 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 - `desktop_clipboard_read` with `save_path` saves images again; the host never enabled image export, so every such read was refused. The build now fails if the host would drop an operation the app allows. ([#125](https://github.com/githubnext/desktop-tools/pull/125))
 - A clipboard paste whose receiver never took it, such as an image pasted into a TextEdit `.rtf` document, no longer blocks every clipboard write and paste until that app quits: closing the receiving window releases it too, and the refusal says so. ([#125](https://github.com/githubnext/desktop-tools/pull/125))
 - `window_appears` no longer counts a window macOS keeps listed but ordered out on the current Space as open, so `expect` with `window_appears` for Spotlight works on macOS 27, where Siri AI (`com.apple.campo`) hosts the panel. ([#125](https://github.com/githubnext/desktop-tools/pull/125))
+- Command-A in a text field is `completed` again instead of `unknown` with a receipt mismatch: the client checked the host's receipt for a layout-resolved key without the keyboard layout, which only the main thread can read. ([#PR](https://github.com/githubnext/desktop-tools/pull/PR))
+- Finder windows with a long sidebar keep their focused file list in observations, so `desktop_insert` with `format: "files"` pastes into them instead of being refused for having no focused control. ([#PR](https://github.com/githubnext/desktop-tools/pull/PR))
+- Renaming a file through Finder's Name column with `desktop_set_cell`, or its name field with `desktop_type` or `desktop_set_value`, used to report `completed` while Finder only showed the new name and never renamed the file. It is now refused before input with `CELL_NOT_EDITABLE`. ([#PR](https://github.com/githubnext/desktop-tools/pull/PR))
+- A `desktop_key` sequence that stops partway reports `KEY_SEQUENCE_STOPPED` whatever stopped it, as when Command-N moves focus to a new window, instead of a bare `DESKTOP_ACTION_FAILED`, and says when the key that stopped it may have been sent. ([#PR](https://github.com/githubnext/desktop-tools/pull/PR))
+- `desktop_read` with `table: true` no longer reports a role description such as "cell", "column" or "image" as cell text or a column title, or a folder's disclosure triangle as `0` in its Name cell, and names a sorted column by its title rather than its sort direction. ([#PR](https://github.com/githubnext/desktop-tools/pull/PR))
 
 ## [0.13.1] - 2026-10-17
 

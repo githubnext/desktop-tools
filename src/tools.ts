@@ -773,7 +773,7 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 			name: "desktop_set_cell",
 			op: "set-cell",
 			description:
-				`Write one cell of a table read with desktop_read table true, then read the table again to confirm it. Pass that read's pid, window, scope snapshot as snapshot and scope element as table, the row's element ID, and column as an exact title or 0-based index. The cell's first control is written through desktop_type or desktop_set_value, with their rules. Completed only when the control reads back the value and the row's other cells are unchanged; otherwise unknown, with cell.readback differs, row_changed or unreadable. Cells with only text, as in Numbers and Excel, are refused: click the cell, desktop_insert, then desktop_key enter.`,
+				`Write one cell of a table read with desktop_read table true, then read the table again to confirm it. Pass that read's pid, window, scope snapshot as snapshot and scope element as table, the row's element ID, and column as an exact title or 0-based index. The cell's first control is written through desktop_type or desktop_set_value, with their rules. Completed only when the control reads back the value and the row's other cells are unchanged; otherwise unknown, with cell.readback differs, row_changed or unreadable. Cells with only text, as in Numbers and Excel, are refused: click the cell, desktop_insert, then desktop_key enter. Finder file names are refused with CELL_NOT_EDITABLE, since Finder would show the name without renaming the file; rename with a shell mv.`,
 			parameters: {
 				type: "object",
 				required: ["pid", "window", "snapshot", "table", "row", "column", "value"],

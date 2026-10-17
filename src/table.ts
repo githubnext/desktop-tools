@@ -46,8 +46,13 @@ type Table = {
 
 export class TableError extends Error {}
 
+/** The element's label, unless it is only its role description, as an unnamed cell, column or icon reports. */
+function ownLabel(element: TableElement): string | null | undefined {
+	return element.label?.trim() && element.label.trim() === element.role_description?.trim() ? null : element.label;
+}
+
 function text(element: TableElement): string {
-	for (const piece of [element.value, element.title, element.label]) {
+	for (const piece of [element.value, element.title, ownLabel(element)]) {
 		if (typeof piece === "string" && piece.trim()) return piece.trim();
 	}
 	return "";
@@ -100,6 +105,8 @@ function tableLayout(elements: TableElement[]) {
 				next = end(next) - 1;
 				continue;
 			}
+			// A folder's disclosure triangle reads 0 or 1; the row's expanded says the same.
+			if (element.role === "AXDisclosureTriangle") continue;
 			const piece = text(element);
 			if (piece && !pieces.includes(piece)) pieces.push(piece);
 		}
@@ -123,7 +130,7 @@ function tableLayout(elements: TableElement[]) {
 	const columnTitles = inside
 		.filter((index) => parents[index] === table && elements[index]!.role === "AXColumn")
 		.sort((a, b) => elements[a]!.bounds.x - elements[b]!.bounds.x)
-		.map((index) => (elements[index]!.title || elements[index]!.label || elements[index]!.description || "").trim());
+		.map((index) => (elements[index]!.title || ownLabel(elements[index]!) || elements[index]!.description || "").trim());
 	if (columnTitles.some(Boolean)) columns = columnTitles;
 	const bounds = elements[table]!.bounds;
 	const top = rows.length ? Math.min(...rows.map((row) => elements[row]!.bounds.y)) : bounds.y + HEADER_REACH;
@@ -139,7 +146,12 @@ function tableLayout(elements: TableElement[]) {
 				&& element.bounds.x < bounds.x + bounds.width && element.bounds.x + element.bounds.width > bounds.x
 			)
 			.sort((a, b) => a.element.bounds.x - b.element.bounds.x);
-		if (buttons.length) columns = buttons.map(({ element }) => text(element) || (element.description ?? "").trim());
+		// A sorted column's button holds its sort direction as its value, so its name comes first.
+		if (buttons.length) {
+			columns = buttons.map(({ element }) =>
+				(element.title || ownLabel(element) || element.description || text(element)).trim()
+			);
+		}
 	}
 	if (!columns && rows.length) {
 		// A web table's header cells say so in their role description.
