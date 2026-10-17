@@ -406,6 +406,18 @@ function validateAction(request) {
         }
         return;
     }
+    if (request.op === "menubar-click") {
+        if (Object.keys(request).some((key) => !["op", "target"].includes(key))) {
+            throw new Error("Menu bar click accepts only the status item's target.");
+        }
+        return validateStatusItem(request.target);
+    }
+    if (request.op === "dock") {
+        validateDock(request);
+        if (request.title === undefined)
+            throw new Error("Choose a Dock item title to act on.");
+        return;
+    }
     if (isDesktopManagement(request))
         return validateManagement(request);
     if (request.op === "clipboard-write") {
@@ -527,6 +539,34 @@ function validateAppOnly(target) {
         throw new Error("Pass only the application's target object from desktop_apps.");
     }
 }
+function validateStatusItem(target) {
+    validateAppTarget(target);
+    if (Object.keys(target).some((key) => !["pid", "process_start_identity_decimal", "window_id", "index"].includes(key))
+        || (target.window_id !== undefined
+            && (!Number.isInteger(target.window_id) || target.window_id < 1 || target.window_id > 4_294_967_295))
+        || !Number.isInteger(target.index) || target.index < 0
+        || target.index > 1000)
+        throw new Error("Pass the status item's target object from desktop_menubar_items unchanged.");
+}
+function validateDockTitle(value, name) {
+    if (typeof value !== "string" || !value.trim() || value.trim() !== value || value.length > 512
+        || /\p{Cc}/u.test(value)) {
+        throw new Error(`${name} must be a nonblank literal title of at most 512 UTF-16 units, without surrounding whitespace.`);
+    }
+}
+function validateDock(request) {
+    if (Object.keys(request).some((key) => !["op", "title", "menu_item"].includes(key))) {
+        throw new Error("Dock accepts only title and menu_item.");
+    }
+    if (request.title !== undefined)
+        validateDockTitle(request.title, "title");
+    if (request.menu_item !== undefined) {
+        if (request.title === undefined) {
+            throw new Error("menu_item requires the title of the Dock item to right-click.");
+        }
+        validateDockTitle(request.menu_item, "menu_item");
+    }
+}
 function validateDialogTarget(target) {
     if (target && typeof target === "object" && "window_id" in target)
         validateWindowTarget(target);
@@ -616,6 +656,8 @@ async function clipboardImageInput(path, signal) {
     }
 }
 async function act(native, request, signal) {
+    if (request.op === "menubar-click")
+        return await menubarClick(native, request, signal);
     let dispatched = false;
     let data;
     try {
@@ -641,15 +683,17 @@ async function act(native, request, signal) {
             ? "menu"
             : request.op === "dialog-answer"
                 ? "dialog"
-                : request.op === "clipboard-write"
-                    ? "clipboard"
-                    : request.op === "launch"
-                        ? "launch"
-                        : request.op === "open"
-                            ? "open"
-                            : isDesktopManagement(request)
-                                ? "management"
-                                : "action";
+                : request.op === "dock"
+                    ? "dock"
+                    : request.op === "clipboard-write"
+                        ? "clipboard"
+                        : request.op === "launch"
+                            ? "launch"
+                            : request.op === "open"
+                                ? "open"
+                                : isDesktopManagement(request)
+                                    ? "management"
+                                    : "action";
         data = await native([operation], signal, {
             input: JSON.stringify(input),
             onDispatch() {
@@ -691,6 +735,9 @@ async function act(native, request, signal) {
         }
         return actionResult(data, outcome);
     }
+    // The Dock receipt names the Dock process; desktop_apps shows what the press launched or activated.
+    if (request.op === "dock")
+        return actionResult(data, outcome);
     if (outcome === "unknown"
         && ((request.op === "quit" && data.terminated === false)
             || ((request.op === "close" || request.op === "dialog-answer") && data.target_receipt))) {
@@ -739,6 +786,78 @@ async function act(native, request, signal) {
             observation_error: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
             message: "The action completed, but a fresh observation was unavailable. Inspect again to verify the result; do not repeat the action blindly.",
         }, outcome);
+    }
+}
+async function menubarClick(native, request, signal) {
+    let dispatched = false;
+    let directory;
+    try {
+        let data;
+        try {
+            validateAction(request);
+            directory = await mkdtemp(join(tmpdir(), "desktop-tools-"));
+            data = await native(["menubar-click", join(directory, "capture.png")], signal, {
+                input: JSON.stringify(request),
+                onDispatch() {
+                    dispatched = true;
+                },
+            });
+            if (!["completed", "refused", "unknown"].includes(String(data.outcome))) {
+                throw new Error("The native desktop client returned no action outcome.");
+            }
+        }
+        catch (error) {
+            const sent = dispatched
+                && !(error instanceof NativeError && error.code === "DESKTOP_PROTOCOL_MISMATCH");
+            const outcome = sent ? "unknown" : "refused";
+            return actionResult({
+                outcome,
+                reason: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
+                message: sent
+                    ? "The click may have opened the item's menu. Observe with desktop_screen before any further action; do not blindly repeat it, because a second click usually closes the menu."
+                    : "The desktop action was not sent to the native desktop.",
+            }, outcome);
+        }
+        const outcome = data.outcome;
+        const receipt = data.target_receipt;
+        const target = request.target;
+        if ((outcome === "completed" || receipt) && (!receipt || receipt.pid !== target.pid
+            || (receipt.window_id ?? undefined) !== target.window_id
+            || receipt.process_start_identity_decimal !== target.process_start_identity_decimal)) {
+            return actionResult({
+                ...data,
+                outcome: "unknown",
+                receipt_error: "The status item click returned a different receipt. Observe the menu bar before any further action.",
+            }, "unknown");
+        }
+        const opened = data.opened;
+        if (!opened?.capture)
+            return actionResult(data, outcome);
+        // The capture is observation only; its failure must not turn a delivered click into a retry.
+        try {
+            const { image, width, height } = await screenshot(join(directory, "capture.png"), join(directory, "image.jpg"), signal);
+            const text = JSON.stringify({
+                action: data,
+                ace_image: {
+                    width,
+                    height,
+                    note: "Screenshot of the region that opened after the click, resized. Observation only: there is no snapshot_id and no input can target this image.",
+                },
+            });
+            if (Buffer.byteLength(text) > MAX_TEXT)
+                return actionResult(data, outcome);
+            return { text, image, outcome, isError: outcome !== "completed" };
+        }
+        catch (error) {
+            return actionResult({
+                ...data,
+                observation_error: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
+            }, outcome);
+        }
+    }
+    finally {
+        if (directory)
+            await rm(directory, { recursive: true, force: true });
     }
 }
 async function observeManagement(native, request, action, signal) {
@@ -867,6 +986,9 @@ async function execute(native, request, abort) {
             "menu",
             "dialog",
             "dialog-answer",
+            "menubar-items",
+            "menubar-click",
+            "dock",
             "inspect",
             "screen",
             "click",
@@ -902,6 +1024,15 @@ async function execute(native, request, abort) {
     const timer = setTimeout(() => deadline.abort(new Error("Native desktop operation timed out after 30 seconds.")), 30_000);
     const signal = abort ? AbortSignal.any([abort, deadline.signal]) : deadline.signal;
     try {
+        if (request.op === "menubar-items") {
+            const data = await native(["menubar"], signal);
+            return { text: bounded(data, "items") };
+        }
+        if (request.op === "dock" && request.title === undefined) {
+            validateDock(request);
+            const data = await native(["dock"], signal, { input: JSON.stringify({ op: "dock" }) });
+            return { text: bounded(data, "items") };
+        }
         if (isDesktopAction(request))
             return await act(native, request, signal);
         if (request.op === "inspect")

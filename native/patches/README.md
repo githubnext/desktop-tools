@@ -232,6 +232,30 @@ hold's expiry budget. Feedback cannot throw and never decides the input: dispatc
 Target checks, routes, outcomes and retries are unchanged, and the existing post-dispatch visualizer
 calls stay suppressed for background input. Keyboard operations still report no feedback.
 
+`peekaboo-dock-exact.patch` makes Dock presses and Dock context-menu choices select by exact title only,
+for `desktop_dock`. `DeterministicDesktopLeafSelector.select(named:)` falls back from an exact title to
+normalized, punctuation-folded and partial matches, so a title that no longer exists could press a
+different Dock item or menu item. An `exactOnly` flag, off by default, limits the permitted match kinds
+to `.exact`; the Dock item and context-menu lookups pass it. A missing or repeated title refuses before
+input. Other selectors keep their upstream fallback, and the test covers folded, case and partial
+refusals.
+
+`peekaboo-menubar-ax.patch` lists and presses status items on macOS versions where `MenuBarAgent` draws
+the whole menu bar, for `desktop_menubar_items` and `desktop_menubar_click`. There, WindowServer has no
+window per status item, so the window inventory returned only `MenuBarAgent`'s bar windows and the click
+route had nothing exact to target. When a `MenuBarAgent` window is among the window extras, the listing
+instead reads each running process's `AXExtrasMenuBar`, concurrently with a 250 ms messaging timeout,
+and keeps its `AXMenuBarItem`s (descending only through groups) with their owner process, identifier,
+title or description and full Accessibility frame, ordered left to right. `MenuExtraInfo` gains an
+optional size so the selected-leaf evidence carries the real frame instead of a 1-point box. An indexed
+click on such an item keeps the existing double listing and evidence checks, then resolves exactly one
+element in the owner's extras bar with the same identifier and frame, checks the owner's process
+generation, and performs one AXPress, or AXShowMenu where press is absent. NSMenu-backed items reply
+only after their menu closes, so the press uses a 500 ms timeout; a `cannotComplete` reply counts as
+delivered only when a new overlay window appears near the bar within 500 ms, and otherwise stays an
+unsafe unknown. The receipt targets the owner process. Hosts without `MenuBarAgent`, and items that
+have their own window, keep the upstream window-routed path.
+
 `desktop-tools-build` resolves only `Package.resolved` versions, checks the pin and checkout revision,
 and assembles the ordered patch stack in a private Git index. A build compares the checkout
 with each complete ordered prefix, since later patches can change earlier patch contexts.
