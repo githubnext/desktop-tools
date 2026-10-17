@@ -633,7 +633,7 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 			name: "desktop_click",
 			op: "click",
 			description:
-				`Click one element or screenshot point from a fresh desktop_inspect result on ${place}. Pass snapshot_id as snapshot and exactly one of the literal element ID or point. A point uses normalized image coordinates: x is the fraction from the screenshot's left edge, y from its top edge, each >= 0 and < 1. kind defaults to single; double, right, middle, and triple are also supported. A single left click on a supported editable text field, by element or point, requests keyboard focus and reports whether it was verified; use desktop_select to choose a range or caret position. Coordinates stay bound to the captured window, even when the screenshot was resized. Stale or unsupported targets are refused without activation or global input. The snapshot is single-use; inspect again after the action and never blindly repeat interrupted input.`,
+				`Click one element or screenshot point from a fresh desktop_inspect result on ${place}. Pass snapshot_id as snapshot and exactly one of the literal element ID or point. A point uses normalized image coordinates: x is the fraction from the screenshot's left edge, y from its top edge, each >= 0 and < 1. kind defaults to single; double, right, middle, and triple are also supported. A single left click on a supported editable text field, by element or point, requests keyboard focus and reports whether it was verified; use desktop_select to choose a range or caret position. modifiers holds command, option and/or shift during a single, double or triple click, as for Command-click or Shift-click to add items to a selection; a Control-click is kind right without modifiers. A click with modifiers is foreground input, even on an element, because Accessibility presses ignore modifier keys: the host activates the app, moves the real pointer to the point (an element's observed center), holds the keys with real key events around a real click, then restores the pointer and the previously focused app and window. Its result is unknown, because nothing reads back what it selected; inspect to check. Coordinates stay bound to the captured window, even when the screenshot was resized. Stale or unsupported targets are refused without activation or global input. The snapshot is single-use; inspect again after the action and never blindly repeat interrupted input.`,
 			parameters: {
 				type: "object",
 				required: ["snapshot"],
@@ -649,6 +649,19 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 							{ type: "string", const: "middle" },
 							{ type: "string", const: "triple" },
 						],
+					},
+					modifiers: {
+						type: "array",
+						items: {
+							anyOf: [
+								{ type: "string", const: "command" },
+								{ type: "string", const: "option" },
+								{ type: "string", const: "shift" },
+							],
+						},
+						minItems: 1,
+						maxItems: 3,
+						uniqueItems: true,
 					},
 				},
 			},
@@ -842,14 +855,26 @@ Optional modifiers (command, control, option and shift, each at most once) are h
 			name: "desktop_key",
 			op: "key",
 			description:
-				`Press and release one key or shortcut in the exact window bound by a fresh desktop_inspect result. When the snapshot reports a focused control, the key is bound to that control (receiver observed_control). Otherwise, as in lists, outlines, tables, canvases and web areas, it goes to whatever has keyboard focus in that window (receiver window_focus); before each event the app's focused element must still be inside the window and the window must be the app's key window, or the key is refused. key is a named key or the one character a key types, such as , / [ or a; the key is found on the current keyboard layout. Optional modifiers are command, control, option, and shift; each may appear once. A character that needs Shift or Option, such as ? or an uppercase letter, is refused with the unmodified key and modifier to send instead, so the chord always holds exactly the modifiers given. enter means Return, backspace deletes backward, and delete deletes forward; help is the Insert key on PC keyboards. Command-W, Command-Q, Command-H and Command-M are refused because their effect can't be verified; use desktop_close, desktop_quit, desktop_hide or desktop_minimize. Pass snapshot_id as snapshot. Unsupported shortcuts and stale targets are refused, without global input or activation. The snapshot is single-use; inspect again after the action and never blindly repeat interrupted input. No keys remain held across calls.`,
+				`Press and release one key or shortcut in the exact window bound by a fresh desktop_inspect result. When the snapshot reports a focused control, the key is bound to that control (receiver observed_control). Otherwise, as in lists, outlines, tables, canvases and web areas, it goes to whatever has keyboard focus in that window (receiver window_focus); before each event the app's focused element must still be inside the window and the window must be the app's key window, or the key is refused. key is a named key or the one character a key types, such as , / [ or a; the key is found on the current keyboard layout. Optional modifiers are command, control, option, and shift; each may appear once. A character that needs Shift or Option, such as ? or an uppercase letter, is refused with the unmodified key and modifier to send instead, so the chord always holds exactly the modifiers given. enter means Return, backspace deletes backward, and delete deletes forward; help is the Insert key on PC keyboards. Command-W, Command-Q, Command-H and Command-M are refused because their effect can't be verified; use desktop_close, desktop_quit, desktop_hide or desktop_minimize. To press several keys against one snapshot, pass keys instead of key: up to 16 chords in order, each with its own modifiers, such as Tab, Tab, Space; or pass repeat with key to press it up to 32 times, such as down 5 times. Each key of a sequence goes to the window's keyboard focus, which may move as it runs, and before each one the host checks that focus is still in this window and that it is still the app's key window. The sequence stops at the first refused key; keys_sent says how many were sent, and a sequence that stopped early is unknown. Pass snapshot_id as snapshot. Unsupported shortcuts and stale targets are refused, without global input or activation. The snapshot is single-use; inspect again after the action and never blindly repeat interrupted input. No keys remain held across calls.`,
 			parameters: {
 				type: "object",
-				required: ["snapshot", "key"],
+				required: ["snapshot"],
 				properties: {
 					snapshot: id,
 					key,
 					modifiers,
+					keys: {
+						type: "array",
+						minItems: 1,
+						maxItems: 16,
+						items: {
+							type: "object",
+							required: ["key"],
+							properties: { key, modifiers },
+							additionalProperties: false,
+						},
+					},
+					repeat: { type: "integer", minimum: 1, maximum: 32 },
 				},
 			},
 		},

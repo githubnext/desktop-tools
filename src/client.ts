@@ -585,7 +585,7 @@ function validateApplication(application: DesktopApplication) {
 	) throw new Error("Use an exact application bundle ID for launch.");
 }
 
-function validateKey(request: { key: unknown; modifiers?: unknown }) {
+function validateKey(request: { key?: unknown; modifiers?: unknown }) {
 	if (!isDesktopKey(request.key)) throw new Error("Choose a named key or one printable character.");
 	validateModifiers(request.modifiers);
 }
@@ -810,6 +810,15 @@ function validateAction(request: DesktopAction) {
 			if (request.kind !== undefined && !DESKTOP_CLICKS.includes(request.kind)) {
 				throw new Error("Choose single, double, right, middle, or triple click.");
 			}
+			if (request.modifiers !== undefined) {
+				validateModifiers(request.modifiers);
+				if (!request.modifiers.length || request.modifiers.includes("control")) {
+					throw new Error("Hold command, option or shift; a Control-click is kind right without modifiers.");
+				}
+				if (!["single", "double", "triple"].includes(request.kind ?? "single")) {
+					throw new Error("Modifier keys can be held only for single, double, or triple clicks.");
+				}
+			}
 		} else if (
 			!DESKTOP_DIRECTIONS.includes(request.direction) || !Number.isInteger(request.amount)
 			|| request.amount < 1 || request.amount > 20
@@ -818,7 +827,33 @@ function validateAction(request: DesktopAction) {
 		}
 		return;
 	}
-	if (request.op === "key") return validateKey(request);
+	if (request.op === "key") {
+		if ((request.key === undefined) === (request.keys === undefined)) {
+			throw new Error("Choose one key, or a sequence of keys.");
+		}
+		if (request.keys !== undefined) {
+			if (
+				!Array.isArray(request.keys) || request.keys.length < 1 || request.keys.length > 16
+				|| request.modifiers !== undefined || request.repeat !== undefined
+			) {
+				throw new Error("Give 1 to 16 keys, each with its own modifiers, and no repeat.");
+			}
+			for (const chord of request.keys) {
+				if (!chord || typeof chord !== "object" || Object.keys(chord).some((key) => key !== "key" && key !== "modifiers")) {
+					throw new Error("Give each key as an object with key and optional modifiers.");
+				}
+				validateKey(chord);
+			}
+			return;
+		}
+		if (
+			request.repeat !== undefined
+			&& (!Number.isInteger(request.repeat) || request.repeat < 1 || request.repeat > 32)
+		) {
+			throw new Error("Repeat a key 1 to 32 times.");
+		}
+		return validateKey(request);
+	}
 	if (request.op === "insert") {
 		if (typeof request.text !== "string" || !request.text || request.text.length > 8192) {
 			throw new Error("Inserted text must contain 1 to 8192 UTF-16 code units.");
