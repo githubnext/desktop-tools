@@ -1,4 +1,19 @@
 // Runtime-neutral request and result contract: no imports, so channels and Workers can share it.
+/** The conditions desktop_wait can wait for, one per call. */
+export const DESKTOP_WAIT_CONDITIONS = [
+    "window_appears",
+    "window_gone",
+    "dialog_appears",
+    "dialog_gone",
+    "element_appears",
+    "element_gone",
+    "text_changes",
+    "text_equals",
+    "text_contains",
+    "app_running",
+    "app_frontmost",
+    "app_quit",
+];
 export const DESKTOP_CLICKS = ["single", "double", "right", "middle", "triple"];
 export const DESKTOP_DIRECTIONS = ["up", "down", "left", "right"];
 export const DESKTOP_BUTTONS = ["left", "right"];

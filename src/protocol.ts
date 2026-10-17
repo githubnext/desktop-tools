@@ -35,6 +35,39 @@ export type DesktopOpen = {
 /** One element ID from an earlier accessibility snapshot of the same window. */
 export type DesktopScope = { snapshot: string; element: string };
 
+/** The conditions desktop_wait can wait for, one per call. */
+export const DESKTOP_WAIT_CONDITIONS = [
+	"window_appears",
+	"window_gone",
+	"dialog_appears",
+	"dialog_gone",
+	"element_appears",
+	"element_gone",
+	"text_changes",
+	"text_equals",
+	"text_contains",
+	"app_running",
+	"app_frontmost",
+	"app_quit",
+] as const;
+export type DesktopWaitCondition = (typeof DESKTOP_WAIT_CONDITIONS)[number];
+/** An element matched by its role and exact title (label), value or identifier. */
+export type DesktopElementMatch = { role: string; title?: string; value?: string; identifier?: string };
+/** A bounded, read-only wait: each poll is one ordinary read, and no input is sent. */
+export type DesktopWait = {
+	op: "wait";
+	until: DesktopWaitCondition;
+	bundle_id?: string;
+	pid?: number;
+	window?: number;
+	title?: string;
+	title_contains?: string;
+	element?: DesktopElementMatch;
+	scope?: DesktopScope;
+	text?: string;
+	timeout_ms?: number;
+};
+
 export type DesktopRequest =
 	| DesktopManagement
 	| DesktopLaunch
@@ -63,6 +96,7 @@ export type DesktopRequest =
 		scope?: DesktopScope;
 	}
 	| { op: "read"; pid: number; window: number; scope?: DesktopScope }
+	| DesktopWait
 	| { op: "screen"; display?: number; ocr?: boolean }
 	| {
 		op: "click";
