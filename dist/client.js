@@ -1145,6 +1145,12 @@ async function clipboardImageInput(path, signal) {
         await file.close();
     }
 }
+/** Why delivered keys are unknown in a Chromium or Electron app that wasn't active when they were sent. */
+const BACKGROUND_CHROMIUM_KEYS = {
+    code: "KEYS_TO_BACKGROUND_CHROMIUM",
+    message: "The keys were delivered to a window of a Chromium-based app that wasn't the active app. Chromium ignores keys sent to a background window, so they may have done nothing.",
+    hint: "Inspect the window to see whether anything changed. If not, bring the app forward with desktop_activate, inspect again, and send the keys once more.",
+};
 async function act(native, request, signal) {
     if (request.op === "menubar-click")
         return await menubarClick(native, request, signal);
@@ -1229,6 +1235,11 @@ async function act(native, request, signal) {
                         ? "The desktop action may have partially run. Inspect the current state before retrying. Stopping does not undo input already delivered."
                         : "The desktop action was not sent to the native desktop.",
         }, outcome);
+    }
+    // Chromium drops keys posted to a window of an app that isn't active, so their delivery proves nothing.
+    if (request.op === "key" && data.outcome === "completed" && data.app_ships_chromium === true
+        && data.app_active === false) {
+        data = { ...data, outcome: "unknown", error: BACKGROUND_CHROMIUM_KEYS };
     }
     const outcome = data.outcome;
     if (request.op === "set-value" && typeof request.value === "string" && outcome !== "completed") {

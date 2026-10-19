@@ -204,7 +204,7 @@ There is no pinch or rotate gesture. Use the app's own command: it acts on an ex
 4. For each text field:
    1. `desktop_click` the field. The fresh observation reports it as focused.
    2. `desktop_type` the field with that observation's `snapshot_id` and element ID. A web field is typed into with key events, so the page sees `input` and `change`. Expect `completed`; the field is read back.
-5. For a `<select>`: `desktop_click` it, then `desktop_element_action` `AXPick` on the option, or `desktop_click` it.
+5. For a `<select>`: `desktop_click` it, then `desktop_element_action` `AXPick` on the option, or `desktop_click` it. In Chrome and other Chromium browsers, use the keyboard instead: [pick from a native select in a browser](#pick-from-a-native-select-in-a-browser).
 6. For a checkbox: `desktop_click` it, or `desktop_set_value` `true` *(unverified per site: some custom checkboxes ignore Accessibility values)*.
 7. For a multi-line `<textarea>`: click it, `desktop_key` `a` with `command` to select its text, then `desktop_insert` with `route: "paste"`. Typed text can't contain newlines.
 8. `desktop_click` the submit button.
@@ -218,6 +218,24 @@ There is no pinch or rotate gesture. Use the app's own command: it acts on an ex
 - An `unknown` result means the readback didn't match. Autocomplete or input masks can reformat the text, such as phone numbers. Inspect before retrying.
 - Password fields are refused, because password entry is not supported.
 - An autocomplete popup can take focus after typing. Press `escape` with `desktop_key` before the next click if it covers the next field.
+
+## Pick from a native select in a browser
+
+A `<select>` shows in Accessibility as an `AXPopUpButton`. In Chrome and other Chromium browsers, its menu changes or closes between an inspection and the next action, so clicking an item or `AXPick` is refused, often with `SNAPSHOT_STALE`. `desktop_set_value` doesn't apply either: a pop-up button has no settable value. Chromium also ignores keys sent while it isn't the active app. Use the keyboard with the browser in front.
+
+1. `desktop_activate` the browser with its app target. This is foreground.
+2. inspect the browser window. Check that the select has keyboard focus. If not, `desktop_key` `tab` to it, or `desktop_click` it, which also opens its menu.
+3. If the menu isn't open, `desktop_key` `down` opens it. inspect: its items appear as `AXMenu` and `AXMenuItem`, the highlighted one marked selected.
+4. Count the rows from the highlighted item to the one you want. `desktop_key` `down` with `repeat` set to that count (or `up` to go back), then `enter`.
+5. To reach the next select, `desktop_key` `tab`, then `down` opens it the same way.
+
+**Verify:** inspect the window. The `AXPopUpButton`'s value reads back as the chosen option.
+
+**Goes wrong:**
+
+- A key result of `unknown` with `KEYS_TO_BACKGROUND_CHROMIUM` means the browser wasn't the active app. Nothing may have happened: inspect, `desktop_activate` it, and send the keys again.
+- Separators and disabled items in the menu are skipped by Down, so count only the items that can be chosen *(unverified)*.
+- Outside Chromium browsers, as in native apps, `desktop_click` the pop-up button, then `desktop_click` or `AXPick` the item from the next observation.
 
 ## Copy text from a web page
 

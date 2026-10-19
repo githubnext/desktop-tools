@@ -96,7 +96,7 @@ struct WebAccessibilityPolicy {
 
 /// Whether the app's bundle ships Chromium: an Electron or Chromium Embedded framework, or a framework with
 /// Chromium's crash handler among its helpers, as Chrome, Edge and other Chromium-based apps have.
-private func shipsChromium(_ pid: Int32) -> Bool {
+func shipsChromium(_ pid: Int32) -> Bool {
 	guard let bundle = NSRunningApplication(processIdentifier: pid)?.bundleURL else { return false }
 	let frameworks = bundle.appendingPathComponent("Contents/Frameworks")
 	let files = FileManager.default

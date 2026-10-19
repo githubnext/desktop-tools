@@ -778,7 +778,7 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 			name: "desktop_set_value",
 			op: "set-value",
 			description:
-				`Set one non-text control from a fresh desktop_inspect snapshot and read it back: a number for a slider, stepper or level indicator; true/false for a checkbox, switch or disclosure triangle; or an ISO 8601 date for a date or time picker (2026-10-17 is local midnight; add Z or an offset to name a zone). Background. Completed only when it reads back exactly; a control that rounds, clamps or drops the time is unknown. Mixed toggles are refused. Text fields take desktop_type; pop-up buttons have no value: click, then pick from the next observation. desktop_element_action steps controls without a settable value.`,
+				`Set one non-text control from a fresh desktop_inspect snapshot and read it back: a number for a slider, stepper or level indicator; true/false for a checkbox, switch or disclosure triangle; or an ISO 8601 date for a date or time picker (2026-10-17 is local midnight; add Z or an offset to name a zone). Background. Completed only when it reads back exactly; a control that rounds, clamps or drops the time is unknown. Mixed toggles are refused. Text fields take desktop_type; pop-up buttons have no value: click, then pick from the next observation; for a <select> in a Chromium browser, desktop_activate it and use desktop_key down and enter instead. desktop_element_action steps controls without a settable value.`,
 			parameters: {
 				type: "object",
 				required: ["snapshot", "element", "value"],
@@ -813,7 +813,7 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 			name: "desktop_element_action",
 			op: "element-action",
 			description:
-				`Perform one Accessibility action that an element from a fresh desktop_inspect snapshot lists in attributes.actions, with no pointer or keys: AXShowMenu (context menu), AXIncrement/AXDecrement (step), AXConfirm/AXCancel, AXPick (choose an open menu's item), AXRaise, AXScrollToVisible. Background. Unlisted actions are refused before input. Completed means delivered, not the effect; each repeat can step, toggle or open again. Press buttons with desktop_click.`,
+				`Perform one Accessibility action that an element from a fresh desktop_inspect snapshot lists in attributes.actions, with no pointer or keys: AXShowMenu (context menu), AXIncrement/AXDecrement (step), AXConfirm/AXCancel, AXPick (choose an open menu's item; a Chromium browser's <select> menu goes stale, so use desktop_key there), AXRaise, AXScrollToVisible. Background. Unlisted actions are refused before input. Completed means delivered, not the effect; each repeat can step, toggle or open again. Press buttons with desktop_click.`,
 			parameters: {
 				type: "object",
 				required: ["snapshot", "element", "action"],
@@ -871,7 +871,7 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 			name: "desktop_key",
 			op: "key",
 			description:
-				`Press one key or shortcut in the window of a fresh desktop_inspect snapshot: key is a named key or the character its key types (, / [ a), with modifiers command, control, option or shift. Background: it goes to the snapshot's focused control, or else to the window's keyboard focus, which must still be in that window before each key. A character that needs Shift or Option, such as ? or A, is refused with the key and modifier to send. keys sends up to 16 chords in order; repeat presses key up to 32 times; a sequence stops at the first refused key and is then unknown (keys_sent). Command-W, Q, H and M are refused: use desktop_close, desktop_quit, desktop_hide or desktop_minimize. While a password field has keyboard focus, keys that type characters and Command-V are refused with SECURE_FIELD_REQUIRES_FILL; Return, Tab, Escape, arrows, Delete and other shortcuts still work. ${expectNote}`,
+				`Press one key or shortcut in the window of a fresh desktop_inspect snapshot: key is a named key or the character its key types (, / [ a), with modifiers command, control, option or shift. Background: it goes to the snapshot's focused control, or else to the window's keyboard focus, which must still be in that window before each key. A character that needs Shift or Option, such as ? or A, is refused with the key and modifier to send. keys sends up to 16 chords in order; repeat presses key up to 32 times; a sequence stops at the first refused key and is then unknown (keys_sent). Command-W, Q, H and M are refused: use desktop_close, desktop_quit, desktop_hide or desktop_minimize. While a password field has keyboard focus, keys that type characters and Command-V are refused with SECURE_FIELD_REQUIRES_FILL; Return, Tab, Escape, arrows, Delete and other shortcuts still work. Chromium-based apps such as Chrome, Edge and Electron apps ignore keys while they aren't the active app, so keys to one in the background are unknown (KEYS_TO_BACKGROUND_CHROMIUM): desktop_activate it first. ${expectNote}`,
 			parameters: {
 				type: "object",
 				required: ["snapshot"],
