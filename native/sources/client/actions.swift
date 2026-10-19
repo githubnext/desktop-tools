@@ -1,4 +1,3 @@
-import AppKit
 import Carbon
 import CoreGraphics
 import Foundation
@@ -438,10 +437,6 @@ private struct ActionResult: Encodable {
 	var focus_restoration: String?
 	var keys_requested: Int?
 	var keys_sent: Int?
-	/// Before a key is sent: whether its app is active, and whether it ships Chromium, which drops keys sent to a
-	/// background window. The TypeScript client reports such delivered keys as unknown.
-	var app_active: Bool?
-	var app_ships_chromium: Bool?
 	var requires_fresh_observation = false
 	var error: ActionMessage?
 }
@@ -608,11 +603,6 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 		// The host's modifier click leases the snapshot itself, at its execution leaf.
 		if !request.clicksWithModifiers {
 			lease = try await client.beginSnapshotMutation(snapshotId: request.snapshot)
-		}
-		if request.op == .key {
-			let pid = identity.ownerProcessIdentifier
-			result.app_active = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
-			result.app_ships_chromium = shipsChromium(pid)
 		}
 		invoked = true
 		let evidence: ActionEvidence

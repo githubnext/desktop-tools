@@ -7,11 +7,7 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 ### Added
 
 - The Desktop Tools app has an icon, a placeholder for now, in Finder, its disk image and its prompts.
-- A recipe for picking from a `<select>` in Chrome and other Chromium browsers: bring the browser forward with `desktop_activate`, then open the menu with Down and choose with Down and Enter. Clicking or `AXPick` on its menu items is refused there, because the menu goes stale between the inspection and the action. ([#139](https://github.com/githubnext/desktop-tools/pull/139))
-
-### Fixed
-
-- `desktop_key` to a Chromium-based app, such as Chrome, Edge, Brave, Arc or an Electron app, that isn't the active app is `unknown` instead of `completed`, with `KEYS_TO_BACKGROUND_CHROMIUM` and a hint to call `desktop_activate` first. Chromium ignores keys sent to a background window, so the keys may have done nothing. Results of `desktop_key` report `app_active` and `app_ships_chromium`. ([#139](https://github.com/githubnext/desktop-tools/pull/139))
+- A recipe for picking from a `<select>` in Chrome and other Chromium browsers: one `desktop_key` call with Down to open the menu, Down to the option and Enter, in the background. Clicking or `AXPick` on its menu items is refused there, because the menu closes between tool calls. ([#139](https://github.com/githubnext/desktop-tools/pull/139))
 
 ## [0.14.1] - 2026-10-17
 
