@@ -7,6 +7,7 @@ private struct Runtime {
 	let start: @convention(c) (UnsafePointer<CChar>, UnsafePointer<CChar>) -> Void
 	let status: @convention(c) () -> UnsafeMutablePointer<CChar>?
 	let stop: @convention(c) () -> Void
+	let check: @convention(c) () -> Void
 	let free: @convention(c) (UnsafeMutableRawPointer?) -> Void
 	let permission: @convention(c) (UnsafePointer<CChar>) -> Void
 	let setCursor: @convention(c) (Bool) -> Void
@@ -31,6 +32,7 @@ private struct Runtime {
 		start = symbol("desktop_tools_start")
 		status = symbol("desktop_tools_status")
 		stop = symbol("desktop_tools_stop")
+		check = symbol("desktop_tools_check")
 		free = symbol("desktop_tools_free")
 		permission = symbol("desktop_tools_permission")
 		setCursor = symbol("desktop_tools_set_cursor")
@@ -180,6 +182,13 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		log("Desktop Tools \(version) started, serving \(socket)")
 		runtime.start(socket, client)
 		render()
+	}
+
+	/// Opening the app again, as a person does when it seems stuck and `desktop-client repair` does, checks that
+	/// it still serves its socket and publishes it again if not.
+	func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+		runtime.check()
+		return false
 	}
 
 	func applicationWillTerminate(_: Notification) {

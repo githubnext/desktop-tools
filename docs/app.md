@@ -1,6 +1,24 @@
 # Desktop Tools app
 
-`Desktop Tools.app` (`dev.githubnext.desktop-tools`) is a menu bar host for agents that don't embed the library, such as Claude Code or Codex through the [MCP server](mcp.md). It holds its own Accessibility, Screen Recording and Keyboard input grants, requested from its menu while any is missing, and serves `~/.local/state/desktop-tools/desktop.sock`. It links `desktop-client` there to its signed client. Only one copy runs for each state folder. When it can't serve the socket, its menu's status line shows why and it keeps retrying, and calls fail with `HOST_NOT_SERVING`. **Show agent cursor**, on by default, draws the agent's own pointer for each click, scroll, drag, hover and press. **Highlight agent's window**, also on by default, outlines the window the agent is observing or acting on and labels it with the agent and app, such as "Claude is using TextEdit". See [input](tools.md#input).
+`Desktop Tools.app` (`dev.githubnext.desktop-tools`) is a menu bar host for agents that don't embed the library, such as Claude Code or Codex through the [MCP server](mcp.md). It holds its own Accessibility, Screen Recording and Keyboard input grants, requested from its menu while any is missing, and serves `~/.local/state/desktop-tools/desktop.sock`. It links `desktop-client` there to its signed client. Only one copy runs for each state folder. See [Keeping the socket served](#keeping-the-socket-served). **Show agent cursor**, on by default, draws the agent's own pointer for each click, scroll, drag, hover and press. **Highlight agent's window**, also on by default, outlines the window the agent is observing or acting on and labels it with the agent and app, such as "Claude is using TextEdit". See [input](tools.md#input).
+
+## Keeping the socket served
+
+Agents find the app only through `desktop.sock`, so the app and its client both work to keep it served:
+
+- When the app can't start serving, such as while a copy that is quitting still holds the socket, its menu's status line shows why and it retries after 1, 2, 4… seconds, up to 30.
+- While serving, the app watches the socket. If it is removed or replaced, the app publishes it again at once and notes it in its status line and its [log](#approved-agents).
+- Opening the app while it runs makes it check its socket at once, and retry a failed start without waiting.
+- When a call finds no app serving the socket, the client opens the app in the background, which starts it or makes it check its socket, and waits up to 10 seconds for it to serve. Nothing reached the app the first time, so the call then runs once. Only when that fails does the call fail, with `HOST_NOT_RUNNING` or `HOST_NOT_SERVING` and what the client found. Reconnecting the MCP server never helps: each call starts its own client.
+
+The client does the same from a shell. Both commands default to the socket beside the `desktop-client` link they are run through:
+
+```sh
+~/.local/state/desktop-tools/desktop-client status   # whether the socket serves, and the app's path, pid and bundle ID
+~/.local/state/desktop-tools/desktop-client repair   # open the app if the socket doesn't serve, and wait until it does
+```
+
+Each prints JSON. `reach` is `serving`, `refused` (the socket is there but nothing listens) or `missing`. `repair` exits 1 with `HOST_NOT_RUNNING` or `HOST_NOT_SERVING` when the socket still doesn't serve.
 
 ## Install
 

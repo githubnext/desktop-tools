@@ -8,6 +8,7 @@
 | --- | --- |
 | `void desktop_tools_start(const char *socket, const char *client)` | Serve the Bridge on `socket` for the exact signed `client` identifier from this app's team |
 | `char *desktop_tools_status(void)` | JSON `{ state, error?, accessibility, screenRecording, eventSynthesizing, clipboardRead, cursor, highlight, paused }`; free with `desktop_tools_free` |
+| `void desktop_tools_check(void)` | Check now that the socket is still published: publish it again if it was removed or replaced, and retry a failed start at once. The runtime also watches the socket on its own. Call this when the app is opened again (`applicationShouldHandleReopen`), since the client opens its containing app when it finds no host serving |
 | `void desktop_tools_stop(void)` | Drain native operations and stop; poll status until `stopped` |
 | `void desktop_tools_permission(const char *kind)` | Request `accessibility`, `screenRecording`, or `eventSynthesizing` |
 | `void desktop_tools_set_cursor(bool)` | Show the agent cursor for pointer input; it is off until turned on |

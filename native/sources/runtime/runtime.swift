@@ -71,12 +71,27 @@ private final class Desktop {
 	static let shared = Desktop()
 	private var runtime: PeekabooEmbeddedBridgeRuntime?
 	private var tail: Task<Void, Never>?
+	/// What the embedding app asked to serve, until it stops; a lost socket is published again from it.
+	private var wanted: (socket: String, client: String)?
+	private var watch: SocketWatch?
+	/// A failed start is waiting to retry.
+	private var retrying = false
+	/// When the socket was last lost, so a socket that keeps disappearing is published again more slowly.
+	private var lastLost = Date.distantPast
 
-	func start(socket: String, client: String) {
+	func start(socket: String, client: String, after pause: UInt64 = 0) {
+		wanted = (socket, client)
+		watch?.cancel()
+		watch = nil
+		retrying = false
 		let previous = tail
 		previous?.cancel()
 		tail = Task {
 			await previous?.value
+			if pause > 0 {
+				try? await Task.sleep(nanoseconds: pause * NSEC_PER_SEC)
+				guard !Task.isCancelled else { return }
+			}
 			if let runtime { await runtime.stopChecked() }
 			runtime = nil
 			state.set("starting")
@@ -136,7 +151,10 @@ private final class Desktop {
 					let next = PeekabooEmbeddedBridgeRuntime.make(configuration: configuration, feedbackClient: AgentCursor.shared)
 					runtime = next
 					try await next.startChecked()
+					retrying = false
 					state.set("ready")
+					watch = SocketWatch(path: socket) { [weak self] in self?.lost() }
+					if watch == nil { lost() }
 					return
 				} catch {
 					if let runtime { await runtime.stopChecked() }
@@ -145,13 +163,40 @@ private final class Desktop {
 					log.error("Cannot serve the socket: \(error.localizedDescription, privacy: .public)")
 					state.set("error", error: "\(error.localizedDescription) Retrying in \(delay)s.")
 				}
+				retrying = true
 				try? await Task.sleep(nanoseconds: delay * NSEC_PER_SEC)
 				delay = min(delay * 2, 30)
 			}
 		}
 	}
 
+	/// Checks now that the socket is still published, and retries a failed start at once instead of waiting.
+	func check() {
+		if let watch {
+			watch.check()
+		} else if retrying, let wanted {
+			start(socket: wanted.socket, client: wanted.client)
+		}
+	}
+
+	/// The socket path no longer names this host's socket, so no client can reach it: serve and publish it again.
+	private func lost() {
+		guard let wanted else { return }
+		let message = "\(wanted.socket) was removed or replaced while serving. Publishing it again."
+		log.error("\(message, privacy: .public)")
+		ActivityLog.shared.write(message)
+		state.set("error", error: message)
+		// Losing it again within a minute waits first, so a path something keeps removing doesn't spin.
+		let pause: UInt64 = Date().timeIntervalSince(lastLost) < 60 ? 5 : 0
+		lastLost = Date()
+		start(socket: wanted.socket, client: wanted.client, after: pause)
+	}
+
 	func stop() {
+		wanted = nil
+		watch?.cancel()
+		watch = nil
+		retrying = false
 		let previous = tail
 		previous?.cancel()
 		tail = Task {
@@ -169,11 +214,23 @@ private final class Desktop {
 public func start(_ socket: UnsafePointer<CChar>, _ client: UnsafePointer<CChar>) {
 	let socket = String(cString: socket)
 	let client = String(cString: client)
+	// A client that closes its connection before the reply, such as one that only checks the socket accepts
+	// connections, made a write raise SIGPIPE and killed the whole host, leaving its socket behind. A write to a
+	// closed connection fails with EPIPE instead.
+	signal(SIGPIPE, SIG_IGN)
 	state.set("starting")
 	// Bun's thread must not wait for work that needs the application's main run loop.
 	DispatchQueue.main.async {
 		Desktop.shared.start(socket: socket, client: client)
 	}
+}
+
+/// Checks now that the socket started with `desktop_tools_start` is still published, publishes it again if it was
+/// removed or replaced, and retries a failed start at once. The runtime also checks on its own; call this when a
+/// client or the user reports that the host can't be reached, such as when the app is opened again.
+@_cdecl("desktop_tools_check")
+public func check() {
+	DispatchQueue.main.async { Desktop.shared.check() }
 }
 
 /// Returns status JSON; release it with `desktop_tools_free`.
