@@ -35,8 +35,8 @@ These stay manual, because they are destructive, change system settings, need a 
 - **#2 two displays:** negative-origin displays, rearranging a display between inspect and click, and SIGKILL of a client mid-drag.
 - **#3 clipboard lifecycle:** SIGKILL of the MCP client during an insert, and quitting Desktop Tools after an uncertain insert.
 - **#99 wedge and permission cases:** an image into a plain-text TextEdit document (holds the clipboard until TextEdit quits), `clipboard: "replace"` into Slack or a browser, Mail and Notes, a 10 MiB TIFF, and clipboard read access set to Ask.
-- **#100 Pause All Input and #98 Recent Activity:** both are read and toggled in the app's menu. Pause is the user's alone, so the harness never chooses it through agent input, not even in a test; the app now refuses such input anyway.
-- **#120 Approved Agents:** the first prompt for an agent, Allow, the submenu's Revoke, Allow and Forget, the Recent Activity name (`claude-code` for Claude Code), and a refusal after Revoke. Only the user answers the app's prompts and menus, so these stay manual.
+- **#100 Pause All Input and #98 the activity log:** pause is toggled in the app's menu, and the log is read with Open Log. Pause is the user's alone, so the harness never chooses it through agent input, not even in a test; the app now refuses such input anyway.
+- **#120 Approved Agents:** the first prompt for an agent, Allow, the submenu's Revoke, Allow and Forget, the name in the log (`claude-code` for Claude Code), and a refusal after Revoke. Only the user answers the app's prompts and menus, so these stay manual.
 - **#74 notifications:** they need banners from a real app, and closing or opening one acts on it.
 - **#41 Dock and status menus:** the Dock right-click moves the pointer, and a third-party status menu belongs to the user.
 - **#57, #4 and #9 Open and Save panels:** a Save sheet can write files outside the fixtures if answered wrongly.
@@ -44,7 +44,7 @@ These stay manual, because they are destructive, change system settings, need a 
 - **#90 input methods:** typing in an input method's mode, such as Japanese Hiragana, needs that method enabled.
 - **#86 and #92 in other apps:** Numbers, Excel, Mail and Chrome, and a long Finder folder of 300 or more files.
 - **#88 in other apps:** Chrome, read-only native text views and Preview PDFs.
-- **#107 web accessibility in Electron apps:** inspect a Slack, VS Code or Discord window and check that `web_accessibility` is `enabled`, with `web_accessibility_via` `manual`, once per launch and the web content's fields are listed, that the app's window still moves and resizes normally, that All Activity lists **Turn on web accessibility** once, and that it still runs while input is paused.
+- **#107 web accessibility in Electron apps:** inspect a Slack, VS Code or Discord window and check that `web_accessibility` is `enabled`, with `web_accessibility_via` `manual`, once per launch and the web content's fields are listed, that the app's window still moves and resizes normally, that the log lists **Turn on web accessibility** once, and that it still runs while input is paused.
 - **#5 background paste into web content (spike, before any patch):** with a WebKit app such as Safari in the background and a textarea focused, answer: (1) is Edit > Paste `AXEnabled`, with and without the host's background key-window preparation; (2) does an Accessibility press of Edit > Paste paste into the focused textarea; (3) must the textarea get `AXFocused` first?
 - **#27 Codex:** adding the server to Codex's configuration.
 - Anything that asks for a password or an administrator's approval.

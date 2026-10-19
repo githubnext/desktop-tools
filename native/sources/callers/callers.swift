@@ -5,7 +5,7 @@ import Foundation
 public struct Caller: Codable, Equatable, Sendable {
 	/// What approvals are keyed on: the team ID and signing identifier of validly signed code, else its path.
 	public let key: String
-	/// The name shown in prompts, menus and Recent Activity.
+	/// The name shown in prompts, menus and the activity log.
 	public let name: String
 	public let path: String
 	/// Set only when the signature validated.

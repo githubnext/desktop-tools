@@ -11,7 +11,8 @@ private struct Runtime {
 	let permission: @convention(c) (UnsafePointer<CChar>) -> Void
 	let setCursor: @convention(c) (Bool) -> Void
 	let setHighlight: @convention(c) (Bool) -> Void
-	let activity: @convention(c) () -> UnsafeMutablePointer<CChar>?
+	let setLog: @convention(c) (UnsafePointer<CChar>?) -> Void
+	let log: @convention(c) (UnsafePointer<CChar>) -> Void
 	let setPaused: @convention(c) (Bool) -> Void
 	let setCallerHandler: @convention(c) ((@convention(c) (UnsafePointer<CChar>) -> Void)?) -> Void
 	let setCallers: @convention(c) (UnsafePointer<CChar>) -> Void
@@ -34,7 +35,8 @@ private struct Runtime {
 		permission = symbol("desktop_tools_permission")
 		setCursor = symbol("desktop_tools_set_cursor")
 		setHighlight = symbol("desktop_tools_set_highlight")
-		activity = symbol("desktop_tools_activity")
+		setLog = symbol("desktop_tools_set_log")
+		log = symbol("desktop_tools_log")
 		setPaused = symbol("desktop_tools_set_paused")
 		setCallerHandler = symbol("desktop_tools_set_caller_handler")
 		setCallers = symbol("desktop_tools_set_callers")
@@ -53,18 +55,6 @@ private struct Status: Decodable {
 	var paused: Bool?
 }
 
-/// One recent operation from the runtime, newest first; it never includes typed text or values.
-private struct Activity: Decodable {
-	var time: Double
-	var agent: String
-	var pid: Int32
-	var operation: String
-	var app: String?
-	var window: String?
-	var outcome: String
-	var count: Int
-}
-
 /// A question the runtime asks the user, such as whether an agent may fill a password it supplied.
 private struct Confirmation: Decodable {
 	var key: String
@@ -73,9 +63,6 @@ private struct Confirmation: Decodable {
 	var allow: String
 	var deny: String
 }
-
-/// The menu lists this many recent operations; the rest are under All Activity.
-private let recentShown = 5
 
 /// The runtime asks about an unknown caller on its own thread; the app answers on the main thread.
 private let callerAsked: @convention(c) (UnsafePointer<CChar>) -> Void = { json in
@@ -107,9 +94,10 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	private let runtime: Runtime
 	private let socket: String
 	private let client: String
+	/// What agents did, and what the user changed, one line each; Open Log shows it.
+	private let logFile: URL
 	private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 	private let menu = NSMenu()
-	private var serving = true
 	// Pausing lasts until the user resumes or the app quits; it is never saved.
 	private var paused = false
 	// The app shows the agent cursor and window outline unless the user turned them off; embedding apps start with them off.
@@ -146,6 +134,7 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		socket = home.appendingPathComponent("desktop.sock").path
 		client = Bundle.main.bundleIdentifier! + ".desktop-client"
 		decisionsFile = home.appendingPathComponent(CallerDecisions.fileName)
+		logFile = home.appendingPathComponent("activity.log")
 		decisions = CallerDecisions.load(decisionsFile)
 		super.init()
 		Host.current = self
@@ -161,12 +150,20 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		runtime.setCallerHandler(callerAsked)
 		runtime.setPasswordAutofill(passwords)
 		runtime.setConfirmationHandlers(confirmationAsked, confirmationWithdrawn)
+		logFile.path.withCString(runtime.setLog)
+		let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+		log("Desktop Tools \(version) started, serving \(socket)")
 		runtime.start(socket, client)
 		render()
 	}
 
 	func applicationWillTerminate(_: Notification) {
+		log("Desktop Tools quit")
 		runtime.stop()
+	}
+
+	private func log(_ message: String) {
+		message.withCString(runtime.log)
 	}
 
 	func menuNeedsUpdate(_: NSMenu) {
@@ -185,34 +182,19 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		let state = status.map { $0.error.map { "Error: \($0)" } ?? $0.state.capitalized } ?? "Unavailable"
 			+ (paused ? " (input paused)" : "")
 		menu.addItem(withTitle: "Desktop Tools: \(state)", action: nil, keyEquivalent: "")
-		menu.addItem(withTitle: socket, action: nil, keyEquivalent: "")
-		menu.addItem(.separator())
+		// Only a missing permission is worth a line, with the button that grants it.
 		let grants: [(String, String, Bool)] = [
 			("Accessibility", "accessibility", status?.accessibility ?? false),
 			("Screen Recording", "screenRecording", status?.screenRecording ?? false),
 			("Keyboard input", "eventSynthesizing", status?.eventSynthesizing ?? false),
 		]
-		for (title, kind, granted) in grants {
-			let entry = NSMenuItem(
-				title: granted ? "\(title): granted" : "Grant \(title)…",
-				action: granted ? nil : #selector(grant(_:)),
-				keyEquivalent: "")
+		for (title, kind, granted) in grants where !granted {
+			let entry = NSMenuItem(title: "Grant \(title)…", action: #selector(grant(_:)), keyEquivalent: "")
 			entry.target = self
 			entry.representedObject = kind
-			entry.state = granted ? .on : .off
 			menu.addItem(entry)
 		}
 		menu.addItem(.separator())
-		renderCallers()
-		let pause = NSMenuItem(title: "Pause All Input", action: #selector(togglePause), keyEquivalent: "")
-		pause.target = self
-		pause.state = paused ? .on : .off
-		pause.toolTip = "Refuse every click, key, typing, window change and clipboard write from agents until resumed. Reading the screen still works."
-		menu.addItem(pause)
-		let toggle = NSMenuItem(title: "Serve agents", action: #selector(toggle), keyEquivalent: "")
-		toggle.target = self
-		toggle.state = serving ? .on : .off
-		menu.addItem(toggle)
 		let pointer = NSMenuItem(title: "Show agent cursor", action: #selector(toggleCursor), keyEquivalent: "")
 		pointer.target = self
 		pointer.state = cursor ? .on : .off
@@ -227,9 +209,18 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		autofill.state = passwords ? .on : .off
 		autofill.toolTip = "Fill passwords that agents supply without asking each time. Keychain items still need macOS's approval."
 		menu.addItem(autofill)
+		renderCallers()
 		menu.addItem(.separator())
-		renderActivity()
+		let open = NSMenuItem(title: "Open Log", action: #selector(openLog), keyEquivalent: "")
+		open.target = self
+		open.toolTip = "Every operation agents ran, with its app, window, agent and outcome, but never typed text or clipboard contents."
+		menu.addItem(open)
 		menu.addItem(.separator())
+		let pause = NSMenuItem(title: "Pause All Input", action: #selector(togglePause), keyEquivalent: "")
+		pause.target = self
+		pause.state = paused ? .on : .off
+		pause.toolTip = "Refuse every click, key, typing, window change and clipboard write from agents until resumed. Reading the screen still works."
+		menu.addItem(pause)
 		menu.addItem(withTitle: "Quit Desktop Tools", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 	}
 
@@ -296,6 +287,7 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		decisions.append(CallerDecision(caller: caller, allowed: allowed, decided: Date().timeIntervalSince1970))
 		waiting.removeAll { $0.key == caller.key }
 		Confirmations.shared.cancel(key: "caller \(caller.key)")
+		log("\(allowed ? "Allowed" : "Refused") \(caller.name) (\(caller.origin))")
 		saveDecisions()
 	}
 
@@ -314,6 +306,7 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
 	/// Forgets a refused caller, so it is asked about again next time.
 	@objc private func forgetCaller(_ sender: NSMenuItem) {
+		if let caller = caller(sender) { log("Forgot \(caller.name)") }
 		decisions.removeAll { $0.caller.key == sender.representedObject as? String }
 		saveDecisions()
 	}
@@ -329,42 +322,9 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		String(decoding: data, as: UTF8.self).withCString(runtime.setCallers)
 	}
 
-	private func readActivity() -> [Activity] {
-		guard let pointer = runtime.activity() else { return [] }
-		defer { runtime.free(pointer) }
-		return (try? JSONDecoder().decode([Activity].self, from: Data(String(cString: pointer).utf8))) ?? []
-	}
-
-	/// The last few operations agents ran, so use from outside this app stays visible.
-	private func renderActivity() {
-		let entries = readActivity()
-		menu.addItem(.sectionHeader(title: "Recent Activity"))
-		if entries.isEmpty {
-			menu.addItem(withTitle: "No agent activity since Desktop Tools started", action: nil, keyEquivalent: "")
-			return
-		}
-		for entry in entries.prefix(recentShown) { menu.addItem(activityItem(entry)) }
-		guard entries.count > recentShown else { return }
-		let all = NSMenu()
-		for entry in entries { all.addItem(activityItem(entry)) }
-		let more = NSMenuItem(title: "All Activity (\(entries.count))", action: nil, keyEquivalent: "")
-		more.submenu = all
-		menu.addItem(more)
-	}
-
-	private func activityItem(_ entry: Activity) -> NSMenuItem {
-		let target = [entry.app, entry.window].compactMap { $0 }.joined(separator: " — ")
-		let repeats = entry.count > 1 ? " ×\(entry.count)" : ""
-		let item = NSMenuItem(
-			title: entry.operation + repeats + (target.isEmpty ? "" : " · \(target)"),
-			action: nil,
-			keyEquivalent: "")
-		let time = Date(timeIntervalSince1970: entry.time).formatted(date: .omitted, time: .standard)
-		item.subtitle = "\(entry.agent) (\(entry.pid)) · \(time) · \(entry.outcome)"
-		let symbol = ["completed": "checkmark.circle", "refused": "xmark.circle", "paused": "pause.circle"][entry.outcome]
-			?? "questionmark.circle"
-		item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: entry.outcome)
-		return item
+	/// Opens the log in the user's viewer for .log files, Console by default.
+	@objc private func openLog() {
+		NSWorkspace.shared.open(logFile)
 	}
 
 	@objc private func grant(_ sender: NSMenuItem) {
@@ -374,6 +334,7 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	@objc private func togglePause() {
 		paused.toggle()
 		runtime.setPaused(paused)
+		log(paused ? "Input paused" : "Input resumed")
 		updateIcon()
 	}
 
@@ -386,11 +347,6 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		item.button?.toolTip = paused ? "Desktop Tools: input paused" : "Desktop Tools"
 	}
 
-	@objc private func toggle() {
-		serving.toggle()
-		if serving { runtime.start(socket, client) } else { runtime.stop() }
-	}
-
 	@objc private func toggleCursor() {
 		cursor.toggle()
 		UserDefaults.standard.set(cursor, forKey: "agentCursor")
@@ -400,6 +356,7 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	@objc private func togglePasswords() {
 		passwords.toggle()
 		UserDefaults.standard.set(passwords, forKey: "agentPasswords")
+		log(passwords ? "Agent-supplied passwords always allowed" : "Agent-supplied passwords need approval")
 		runtime.setPasswordAutofill(passwords)
 	}
 

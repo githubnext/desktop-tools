@@ -21,7 +21,7 @@ struct ActivityEntry: Encodable, Equatable {
 	var count: Int
 }
 
-/// The last few operations, in memory only; nothing is written to disk.
+/// The last few operations, in memory; `ActivityLog` writes them to disk when the embedding app names a file.
 final class Activity: @unchecked Sendable {
 	static let shared = Activity()
 	static let limit = 20
@@ -49,6 +49,63 @@ final class Activity: @unchecked Sendable {
 		lock.lock()
 		defer { lock.unlock() }
 		return entries.reversed()
+	}
+}
+
+/// Appends each listed operation, and the embedding app's own notes, to a file the app names, one line each, so
+/// its user can read all of it, not just what the menu holds. Lines carry only what the menu would show.
+final class ActivityLog: @unchecked Sendable {
+	static let shared = ActivityLog()
+	/// Past this size the file moves to `<path>.1`, replacing the previous one, and a new file starts.
+	static let limit: off_t = 1 << 20
+	private let lock = NSLock()
+	private var path: String?
+	private var descriptor: Int32 = -1
+	private let format: DateFormatter = {
+		let format = DateFormatter()
+		format.locale = Locale(identifier: "en_US_POSIX")
+		format.dateFormat = "yyyy-MM-dd HH:mm:ss"
+		return format
+	}()
+
+	/// Starts writing to `path`, readable only by the user, or stops when it is nil.
+	func open(_ path: String?) {
+		lock.lock()
+		defer { lock.unlock() }
+		if descriptor >= 0 { close(descriptor) }
+		descriptor = -1
+		self.path = path
+		reopen()
+	}
+
+	func record(_ entry: ActivityEntry) {
+		let target = [entry.app, entry.window].compactMap { $0 }.joined(separator: " — ")
+		write(
+			[entry.operation, target.isEmpty ? nil : target, "\(entry.agent) (\(entry.pid))", entry.outcome]
+				.compactMap { $0 }.joined(separator: " · "),
+			at: Date(timeIntervalSince1970: entry.time))
+	}
+
+	func write(_ message: String, at time: Date = Date()) {
+		lock.lock()
+		defer { lock.unlock() }
+		guard descriptor >= 0 else { return }
+		let line = format.string(from: time) + "  " + message.replacingOccurrences(of: "\n", with: " ") + "\n"
+		_ = line.withCString { Darwin.write(descriptor, $0, strlen($0)) }
+		var info = stat()
+		if fstat(descriptor, &info) == 0, info.st_size > Self.limit {
+			close(descriptor)
+			descriptor = -1
+			reopen()
+		}
+	}
+
+	/// Opens the file, moving it aside first when it is over the limit. Called with the lock held.
+	private func reopen() {
+		guard let path else { return }
+		var info = stat()
+		if stat(path, &info) == 0, info.st_size > Self.limit { rename(path, path + ".1") }
+		descriptor = Darwin.open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o600)
 	}
 }
 
@@ -168,7 +225,7 @@ func recordActivity(_ record: PeekabooBridgeOperationRecord) {
 	if operation == .enableWebAccessibility, !WebAccessibilityLaunches.shared.isFirst(record) { return }
 	let caller = Callers.shared.resolve(client: record.clientProcessIdentifier)
 	let parent = parentProcess(of: record.clientProcessIdentifier)
-	Activity.shared.append(ActivityEntry(
+	let entry = ActivityEntry(
 		time: Date().timeIntervalSince1970,
 		agent: caller?.caller.name ?? parent.flatMap(processName) ?? "Unknown agent",
 		pid: caller?.pid ?? parent ?? record.clientProcessIdentifier,
@@ -178,7 +235,9 @@ func recordActivity(_ record: PeekabooBridgeOperationRecord) {
 		outcome: record.outcome == .refused && Pause.shared.isPaused
 			&& Pause.blocks(operation, mutatesDesktop: record.mutatesDesktop) ? "paused" : record.outcome.rawValue,
 		count: 1
-	))
+	)
+	Activity.shared.append(entry)
+	ActivityLog.shared.record(entry)
 }
 
 /// Inspections ask for web accessibility on every read of a Chromium or Electron app, and the host sets it at most
