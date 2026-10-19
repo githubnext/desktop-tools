@@ -4,20 +4,26 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-19
+
 ### Added
 
-- `desktop-client status` and `desktop-client repair`, run from a shell through the link in the state folder, show whether the app serves its socket and fix it when it doesn't, by opening the app and waiting for it to serve. See [Keeping the socket served](docs/app.md#keeping-the-socket-served).
-- `desktop_tools_check()` in the runtime's C ABI checks the socket now, for an embedding app to call when it is opened again.
-- The Desktop Tools app has an icon, a placeholder for now, in Finder, its disk image and its prompts.
+- `desktop-client status` and `desktop-client repair`, run from a shell through the link in the state folder, show whether the app serves its socket and fix it when it doesn't, by opening the app and waiting for it to serve. See [Keeping the socket served](docs/app.md#keeping-the-socket-served). ([#140](https://github.com/githubnext/desktop-tools/pull/140))
+- `desktop_tools_check()` in the runtime's C ABI checks the socket now, for an embedding app to call when it is opened again. ([#140](https://github.com/githubnext/desktop-tools/pull/140))
+- The Desktop Tools app has an icon, a placeholder for now, in Finder, its disk image and its prompts. ([#135](https://github.com/githubnext/desktop-tools/pull/135))
 - A recipe for picking from a `<select>` in Chrome and other Chromium browsers: one `desktop_key` call with Down to open the menu, Down to the option and Enter, in the background. Clicking or `AXPick` on its menu items is refused there, because the menu closes between tool calls. ([#139](https://github.com/githubnext/desktop-tools/pull/139))
+
+### Changed
+
+- The Desktop Tools menu is shorter. Agent activity moved from Recent Activity and All Activity to a log, `activity.log` in the state folder, which **Open Log** opens. The log keeps every operation, not just the last 20, and also notes when the app starts, with its socket, and when you pause input or allow or refuse an agent. The socket path is no longer in the menu, **Serve agents** is gone (Pause All Input, Quit or Approved Agents do what it did), granted permissions are no longer listed (a **Grant** item shows only while one is missing), and **Pause All Input** sits just above Quit. Embedding apps can write the same log with `desktop_tools_set_log`. ([#132](https://github.com/githubnext/desktop-tools/pull/132))
 
 ### Fixed
 
-- Desktop Tools keeps retrying when it can't start serving, such as when it reopens while the copy that is quitting still holds the socket. It used to stop at the first failure and refuse every call until it was quit and reopened. The menu's status line shows the error and when it retries next.
-- Desktop Tools no longer quits when an agent closes its connection before the reply. A write to the closed connection raised SIGPIPE, which killed the app and left its socket behind, so every later call failed until it was opened again.
-- Desktop Tools publishes its socket again when something removes or replaces it while it serves. Before, the app kept running with no socket, and every call failed with "Open Desktop Tools" until it was quit and reopened. Opening the app while it runs now checks the socket too.
-- When a call finds no app serving the socket, the client opens Desktop Tools in the background, waits up to 10 seconds for it to serve, and then runs the call. Before, an app that wasn't running or wasn't serving needed the user to notice and restart it. When that doesn't help, calls fail with `HOST_NOT_RUNNING` or `HOST_NOT_SERVING`, saying what the client found, instead of `Connection refused` or "Open Desktop Tools".
-- Only one Desktop Tools app runs for each state directory. A second one, such as the app binary run from a shell, exits with a message instead of taking over the first one's socket. `desktop-tools-app --version` prints the version, and other arguments are refused.
+- Desktop Tools keeps retrying when it can't start serving, such as when it reopens while the copy that is quitting still holds the socket. It used to stop at the first failure and refuse every call until it was quit and reopened. The menu's status line shows the error and when it retries next. ([#140](https://github.com/githubnext/desktop-tools/pull/140))
+- Desktop Tools no longer quits when an agent closes its connection before the reply. A write to the closed connection raised SIGPIPE, which killed the app and left its socket behind, so every later call failed until it was opened again. ([#140](https://github.com/githubnext/desktop-tools/pull/140))
+- Desktop Tools publishes its socket again when something removes or replaces it while it serves. Before, the app kept running with no socket, and every call failed with "Open Desktop Tools" until it was quit and reopened. Opening the app while it runs now checks the socket too. ([#140](https://github.com/githubnext/desktop-tools/pull/140))
+- When a call finds no app serving the socket, the client opens Desktop Tools in the background, waits up to 10 seconds for it to serve, and then runs the call. Before, an app that wasn't running or wasn't serving needed the user to notice and restart it. When that doesn't help, calls fail with `HOST_NOT_RUNNING` or `HOST_NOT_SERVING`, saying what the client found, instead of `Connection refused` or "Open Desktop Tools". ([#140](https://github.com/githubnext/desktop-tools/pull/140))
+- Only one Desktop Tools app runs for each state directory. A second one, such as the app binary run from a shell, exits with a message instead of taking over the first one's socket. `desktop-tools-app --version` prints the version, and other arguments are refused. ([#140](https://github.com/githubnext/desktop-tools/pull/140))
 
 ## [0.14.1] - 2026-10-17
 
@@ -42,7 +48,6 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ### Changed
 
-- The Desktop Tools menu is shorter. Agent activity moved from Recent Activity and All Activity to a log, `activity.log` in the state folder, which **Open Log** opens. The log keeps every operation, not just the last 20, and also notes when the app starts, with its socket, and when you pause input or allow or refuse an agent. The socket path is no longer in the menu, **Serve agents** is gone (Pause All Input, Quit or Approved Agents do what it did), granted permissions are no longer listed (a **Grant** item shows only while one is missing), and **Pause All Input** sits just above Quit. Embedding apps can write the same log with `desktop_tools_set_log`. ([#132](https://github.com/githubnext/desktop-tools/pull/132))
 - `desktop_inspect` keeps containers an agent can scope into, such as a Finder window's file list after its long sidebar, when its result is cut to size, dropping other elements first. ([#126](https://github.com/githubnext/desktop-tools/pull/126))
 - Agent input aimed at any Desktop Tools process, including another build of it, or sent while one of its prompts or menus is open, is refused with `SELF_TARGET_REFUSED`, so only the user can answer its prompts or choose Pause All Input. Agents can still observe them. ([#120](https://github.com/githubnext/desktop-tools/pull/120))
 - **Behavior change:** while a password field has keyboard focus, `desktop_key` refuses keys that type characters and Command-V, and `desktop_insert` refuses all its routes, and `desktop_menu` refuses Paste commands (found by their Command-V shortcut, whatever the title), with `SECURE_FIELD_REQUIRES_FILL`. Nothing is sent. Return, Tab, Escape, arrows, Delete and other shortcuts still work. Passwords go in only through `desktop_fill_password` and its approval. ([#124](https://github.com/githubnext/desktop-tools/pull/124))
@@ -221,7 +226,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The first release: a signed, notarized Desktop Tools menu bar app, and the desktop tools served over MCP. ([#28](https://github.com/githubnext/desktop-tools/pull/28), [#29](https://github.com/githubnext/desktop-tools/pull/29), [#12](https://github.com/githubnext/desktop-tools/pull/12))
 
-[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/githubnext/desktop-tools/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/githubnext/desktop-tools/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/githubnext/desktop-tools/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/githubnext/desktop-tools/compare/v0.13.0...v0.13.1
