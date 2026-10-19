@@ -9,6 +9,12 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 - The Desktop Tools app has an icon, a placeholder for now, in Finder, its disk image and its prompts.
 - A recipe for picking from a `<select>` in Chrome and other Chromium browsers: one `desktop_key` call with Down to open the menu, Down to the option and Enter, in the background. Clicking or `AXPick` on its menu items is refused there, because the menu closes between tool calls. ([#139](https://github.com/githubnext/desktop-tools/pull/139))
 
+### Fixed
+
+- Desktop Tools keeps retrying when it can't start serving, such as when it reopens while the copy that is quitting still holds the socket. It used to stop at the first failure and refuse every call until it was quit and reopened. The menu's status line shows the error and when it retries next.
+- Calls to a host that isn't serving fail with `HOST_NOT_SERVING` and a hint to check the app's status line, instead of `Connection refused`.
+- Only one Desktop Tools app runs for each state directory. A second one, such as the app binary run from a shell, exits with a message instead of taking over the first one's socket. `desktop-tools-app --version` prints the version, and other arguments are refused.
+
 ## [0.14.1] - 2026-10-17
 
 ### Fixed

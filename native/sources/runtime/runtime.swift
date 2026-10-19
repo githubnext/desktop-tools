@@ -5,6 +5,7 @@ import ApplicationServices
 import CoreGraphics
 import Darwin
 import Foundation
+import OSLog
 import PeekabooAutomationKit
 import PeekabooBridge
 
@@ -63,6 +64,7 @@ private final class State: @unchecked Sendable {
 }
 
 private let state = State()
+private let log = Logger(subsystem: "dev.githubnext.desktop-tools", category: "runtime")
 
 @MainActor
 private final class Desktop {
@@ -72,75 +74,86 @@ private final class Desktop {
 
 	func start(socket: String, client: String) {
 		let previous = tail
+		previous?.cancel()
 		tail = Task {
 			await previous?.value
 			if let runtime { await runtime.stopChecked() }
 			runtime = nil
 			state.set("starting")
-			do {
-				let identity = try SigningIdentity.current()
-				var configuration = PeekabooEmbeddedBridgeRuntime.Configuration(
-					socketPath: socket,
-					allowlistedTeams: [identity.team],
-					allowlistedBundles: [client],
-					allowedOperations: [
-						.listApplications, .getFocusedElement, .listWindows, .listMenus, .menuCommand, .desktopObservation, .inspectAccessibilityTree,
-						.createSnapshot, .cleanSnapshot, .ownsSnapshot, .getDetectionResult, .beginSnapshotMutation,
-						.finishSnapshotMutation,
-						.targetedClick, .exactWindowTargetedClick, .foregroundModifierClick, .setValue, .performAction, .exactWindowTargetedHotkey, .hotkey, .exactWindowTargetedTypeActions,
-						.selectText, .literalInsert, .attachmentInsert, .clipboardTextRead, .clipboardImageRead, .clipboardImageExport, .clipboardFilesRead, .clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite, .targetedScroll, .exactWindowDrag, .drag, .moveMouse, .systemDefinedKey, .selectInputSource, .enableWebAccessibility, .secureTextFill,
-						.createExactWindowHeldPointerOwner, .beginExactWindowHeldPointer, .releaseExactWindowHeldPointer,
-						.revokeExactWindowHeldPointer, .disconnectExactWindowHeldPointerOwner,
-						.launchApplicationWithOptions, .activateApplication, .quitApplication, .hideApplication, .backgroundCloseWindow,
-						.focusWindow, .minimizeWindow, .restoreWindow, .maximizeWindow, .setWindowFullScreen,
-						.moveWindow, .resizeWindow,
-						.targetedDialogListElements, .prepareDialogAction, .exactDialogClickButton, .exactDialogEnterText, .exactFileDialogPath,
-						.listMenuBarItems, .clickMenuBarItemIndex, .listDockItems, .launchDockItem, .rightClickDockItem,
-					],
-					hostKind: .gui,
-					hostCapabilities: [PeekabooBridgeHostCapability.backgroundBridgeHost, desktopToolsProtocol],
-					requestTimeoutSeconds: 25
-				)
-				configuration.targetWindowObserver = { target in
-					// The requesting client is still waiting for its reply, so its environment is readable now.
-					let agent = agentName(of: target.clientProcessIdentifier)
-					DispatchQueue.main.async {
-						AgentCursor.shared.window = target.windowID
-						AgentWindow.shared.target(window: target.windowID, process: target.processIdentifier, agent: agent)
+			// A host that is still quitting holds the socket's lease until it exits, so a failed start is retried.
+			var delay: UInt64 = 1
+			while !Task.isCancelled {
+				do {
+					let identity = try SigningIdentity.current()
+					var configuration = PeekabooEmbeddedBridgeRuntime.Configuration(
+						socketPath: socket,
+						allowlistedTeams: [identity.team],
+						allowlistedBundles: [client],
+						allowedOperations: [
+							.listApplications, .getFocusedElement, .listWindows, .listMenus, .menuCommand, .desktopObservation, .inspectAccessibilityTree,
+							.createSnapshot, .cleanSnapshot, .ownsSnapshot, .getDetectionResult, .beginSnapshotMutation,
+							.finishSnapshotMutation,
+							.targetedClick, .exactWindowTargetedClick, .foregroundModifierClick, .setValue, .performAction, .exactWindowTargetedHotkey, .hotkey, .exactWindowTargetedTypeActions,
+							.selectText, .literalInsert, .attachmentInsert, .clipboardTextRead, .clipboardImageRead, .clipboardImageExport, .clipboardFilesRead, .clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite, .targetedScroll, .exactWindowDrag, .drag, .moveMouse, .systemDefinedKey, .selectInputSource, .enableWebAccessibility, .secureTextFill,
+							.createExactWindowHeldPointerOwner, .beginExactWindowHeldPointer, .releaseExactWindowHeldPointer,
+							.revokeExactWindowHeldPointer, .disconnectExactWindowHeldPointerOwner,
+							.launchApplicationWithOptions, .activateApplication, .quitApplication, .hideApplication, .backgroundCloseWindow,
+							.focusWindow, .minimizeWindow, .restoreWindow, .maximizeWindow, .setWindowFullScreen,
+							.moveWindow, .resizeWindow,
+							.targetedDialogListElements, .prepareDialogAction, .exactDialogClickButton, .exactDialogEnterText, .exactFileDialogPath,
+							.listMenuBarItems, .clickMenuBarItemIndex, .listDockItems, .launchDockItem, .rightClickDockItem,
+						],
+						hostKind: .gui,
+						hostCapabilities: [PeekabooBridgeHostCapability.backgroundBridgeHost, desktopToolsProtocol],
+						requestTimeoutSeconds: 25
+					)
+					configuration.targetWindowObserver = { target in
+						// The requesting client is still waiting for its reply, so its environment is readable now.
+						let agent = agentName(of: target.clientProcessIdentifier)
+						DispatchQueue.main.async {
+							AgentCursor.shared.window = target.windowID
+							AgentWindow.shared.target(window: target.windowID, process: target.processIdentifier, agent: agent)
+						}
 					}
-				}
-				configuration.operationObserver = recordActivity
-				configuration.secureTextFill = { await PasswordFill.shared.authorize($0) }
-				configuration.operationAdmission = { admission in
-					if let refusal = Callers.shared.refusal(client: admission.clientProcessIdentifier) { return refusal }
-					// A host that asks the user about callers keeps its own prompts and menus for the user alone.
-					// Every snapshot-bound click, key, type, set-value, scroll or insert takes its snapshot's lease first.
-					if Callers.shared.enforcing,
-						admission.operation == .beginSnapshotMutation
-							|| Pause.isInput(admission.operation, mutatesDesktop: admission.mutatesDesktop),
-						let refusal = OwnUIGuard.refusal(
-							input: true,
-							targetIsOwn: admission.targetProcessIdentifier.map(OwnUI.isOwn) ?? false,
-							ownUIOpen: OwnUI.promptOrMenuOpen())
-					{
-						return refusal
+					configuration.operationObserver = recordActivity
+					configuration.secureTextFill = { await PasswordFill.shared.authorize($0) }
+					configuration.operationAdmission = { admission in
+						if let refusal = Callers.shared.refusal(client: admission.clientProcessIdentifier) { return refusal }
+						// A host that asks the user about callers keeps its own prompts and menus for the user alone.
+						// Every snapshot-bound click, key, type, set-value, scroll or insert takes its snapshot's lease first.
+						if Callers.shared.enforcing,
+							admission.operation == .beginSnapshotMutation
+								|| Pause.isInput(admission.operation, mutatesDesktop: admission.mutatesDesktop),
+							let refusal = OwnUIGuard.refusal(
+								input: true,
+								targetIsOwn: admission.targetProcessIdentifier.map(OwnUI.isOwn) ?? false,
+								ownUIOpen: OwnUI.promptOrMenuOpen())
+						{
+							return refusal
+						}
+						return Pause.shared.refusal(admission.operation, mutatesDesktop: admission.mutatesDesktop)
 					}
-					return Pause.shared.refusal(admission.operation, mutatesDesktop: admission.mutatesDesktop)
+					let next = PeekabooEmbeddedBridgeRuntime.make(configuration: configuration, feedbackClient: AgentCursor.shared)
+					runtime = next
+					try await next.startChecked()
+					state.set("ready")
+					return
+				} catch {
+					if let runtime { await runtime.stopChecked() }
+					runtime = nil
+					guard !Task.isCancelled else { return }
+					log.error("Cannot serve the socket: \(error.localizedDescription, privacy: .public)")
+					state.set("error", error: "\(error.localizedDescription) Retrying in \(delay)s.")
 				}
-				let next = PeekabooEmbeddedBridgeRuntime.make(configuration: configuration, feedbackClient: AgentCursor.shared)
-				runtime = next
-				try await next.startChecked()
-				state.set("ready")
-			} catch {
-				if let runtime { await runtime.stopChecked() }
-				runtime = nil
-				state.set("error", error: error.localizedDescription)
+				try? await Task.sleep(nanoseconds: delay * NSEC_PER_SEC)
+				delay = min(delay * 2, 30)
 			}
 		}
 	}
 
 	func stop() {
 		let previous = tail
+		previous?.cancel()
 		tail = Task {
 			await previous?.value
 			state.set("stopping")

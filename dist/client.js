@@ -136,6 +136,11 @@ const caller = (config) => async (args, signal, options = {}) => {
         throw new Error("The native desktop client returned an unsupported response.");
     }
     if (!value.success) {
+        // The socket file is there but nothing listens on it: the host is running without serving, or it died.
+        if (value.error?.code === "DESKTOP_ERROR" && /Connection refused/i.test(value.error.message)) {
+            const name = config.name ?? "the desktop host app";
+            throw new NativeError("HOST_NOT_SERVING", `HOST_NOT_SERVING: ${name} isn't serving ${socket}, so nothing ran. Ask the user to check the status line in its menu, or to quit and reopen it.`);
+        }
         const error = value.error && hostRefusal(value.error);
         if (error && error.code !== value.error.code)
             throw new NativeError(error.code, `${error.code}: ${error.message}`);

@@ -124,6 +124,7 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 			: URL(fileURLWithPath: state)
 		try! FileManager.default.createDirectory(
 			at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+		Host.claim(home)
 		// Consumers find the signed client through a stable link that follows the app wherever it is installed.
 		let link = home.appendingPathComponent("desktop-client").path
 		let pending = link + ".\(getpid())"
@@ -138,6 +139,30 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		decisions = CallerDecisions.load(decisionsFile)
 		super.init()
 		Host.current = self
+	}
+
+	/// Exits unless this is the only host for `home`: a second one would relink the client and contend for its socket.
+	/// The lock lasts as long as the process, so a host that dies never leaves it held. A host that is quitting
+	/// still holds it for a moment, so a relaunch waits a few seconds before giving up.
+	private static func claim(_ home: URL) {
+		let path = home.appendingPathComponent("host.lock").path
+		let lock = open(path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, S_IRUSR | S_IWUSR)
+		guard lock >= 0 else { fatalError("Cannot open \(path): \(String(cString: strerror(errno)))") }
+		var claimed = flock(lock, LOCK_EX | LOCK_NB) == 0
+		for _ in 0..<50 where !claimed {
+			usleep(100_000)
+			claimed = flock(lock, LOCK_EX | LOCK_NB) == 0
+		}
+		guard claimed else {
+			let owner = (try? String(contentsOfFile: path, encoding: .utf8))?
+				.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+			let pid = owner.isEmpty ? "" : " (pid \(owner))"
+			FileHandle.standardError.write(Data("Desktop Tools is already running\(pid) for \(home.path).\n".utf8))
+			exit(1)
+		}
+		let pid = Array("\(getpid())\n".utf8)
+		ftruncate(lock, 0)
+		_ = pwrite(lock, pid, pid.count, 0)
 	}
 
 	func applicationDidFinishLaunching(_: Notification) {
@@ -385,6 +410,15 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 private enum Main {
 	@MainActor
 	static func main() {
+		// macOS passes its own single-dash arguments, such as -NSDocumentRevisionsDebugMode; only ours start with two.
+		for argument in CommandLine.arguments.dropFirst() where argument.hasPrefix("--") {
+			guard argument == "--version" else {
+				FileHandle.standardError.write(Data("Unknown argument \(argument). Desktop Tools takes only --version.\n".utf8))
+				exit(64)
+			}
+			print(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown")
+			exit(0)
+		}
 		let app = NSApplication.shared
 		// The application holds its delegate weakly; this frame lives as long as the app runs.
 		let host = Host()
