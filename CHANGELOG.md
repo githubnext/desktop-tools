@@ -6,8 +6,18 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ### Added
 
+- `desktop-client status` and `desktop-client repair`, run from a shell through the link in the state folder, show whether the app serves its socket and fix it when it doesn't, by opening the app and waiting for it to serve. See [Keeping the socket served](docs/app.md#keeping-the-socket-served).
+- `desktop_tools_check()` in the runtime's C ABI checks the socket now, for an embedding app to call when it is opened again.
 - The Desktop Tools app has an icon, a placeholder for now, in Finder, its disk image and its prompts.
 - A recipe for picking from a `<select>` in Chrome and other Chromium browsers: one `desktop_key` call with Down to open the menu, Down to the option and Enter, in the background. Clicking or `AXPick` on its menu items is refused there, because the menu closes between tool calls. ([#139](https://github.com/githubnext/desktop-tools/pull/139))
+
+### Fixed
+
+- Desktop Tools keeps retrying when it can't start serving, such as when it reopens while the copy that is quitting still holds the socket. It used to stop at the first failure and refuse every call until it was quit and reopened. The menu's status line shows the error and when it retries next.
+- Desktop Tools no longer quits when an agent closes its connection before the reply. A write to the closed connection raised SIGPIPE, which killed the app and left its socket behind, so every later call failed until it was opened again.
+- Desktop Tools publishes its socket again when something removes or replaces it while it serves. Before, the app kept running with no socket, and every call failed with "Open Desktop Tools" until it was quit and reopened. Opening the app while it runs now checks the socket too.
+- When a call finds no app serving the socket, the client opens Desktop Tools in the background, waits up to 10 seconds for it to serve, and then runs the call. Before, an app that wasn't running or wasn't serving needed the user to notice and restart it. When that doesn't help, calls fail with `HOST_NOT_RUNNING` or `HOST_NOT_SERVING`, saying what the client found, instead of `Connection refused` or "Open Desktop Tools".
+- Only one Desktop Tools app runs for each state directory. A second one, such as the app binary run from a shell, exits with a message instead of taking over the first one's socket. `desktop-tools-app --version` prints the version, and other arguments are refused.
 
 ## [0.14.1] - 2026-10-17
 

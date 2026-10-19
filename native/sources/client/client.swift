@@ -16,6 +16,11 @@ private enum Client {
 				code: "DESKTOP_PROTOCOL_MISMATCH", message: ClientError.dialect.localizedDescription
 			))))
 			exit(1)
+		} catch let error as HostError {
+			write(try! JSONEncoder().encode(Failure(error: Message(
+				code: error.code, message: "\(error.code): \(error.localizedDescription)"
+			))))
+			exit(1)
 		} catch let error as PeekabooBridgeErrorEnvelope {
 			write(try! JSONEncoder().encode(Failure(error: error)))
 			exit(1)
@@ -28,8 +33,24 @@ private enum Client {
 	}
 
 	private static func execute(_ args: [String]) async throws -> Data {
+		// Status and repair default to the socket beside the link the app keeps in its state folder.
+		var args = args
+		if args.count == 1, args[0] == "status" || args[0] == "repair" {
+			let link = CommandLine.arguments[0]
+			guard link.contains("/") else { throw ClientError.usage }
+			args.insert(((link as NSString).deletingLastPathComponent as NSString)
+				.appendingPathComponent("desktop.sock"), at: 0)
+		}
 		guard args.count >= 2 else { throw ClientError.usage }
 		let operation = args[1]
+		if operation == "status", args.count == 2 { return try encode(HostRepair.status(args[0])) }
+		if operation == "repair", args.count == 2 {
+			let report = await HostRepair.repair(args[0])
+			guard report.reach == .serving else {
+				throw report.running ? HostError.notServing(report) : HostError.notRunning(report)
+			}
+			return try encode(report)
+		}
 		guard (operation == "apps" && args.count == 2)
 			|| (operation == "windows" && args.count == 3)
 			|| (operation == "inspect" && args.count >= 5 && args.count <= 11)
@@ -61,15 +82,7 @@ private enum Client {
 			requestTimeoutSec: 25,
 			trustedHostTeamIDs: [identity.team]
 		)
-		let handshake = try await client.handshake(
-			client: .init(
-				bundleIdentifier: identity.identifier,
-				teamIdentifier: identity.team,
-				processIdentifier: getpid()
-			),
-			requestedHost: .gui,
-			overallTimeoutSec: 5
-		)
+		let handshake = try await handshake(client, identity: identity, socket: args[0])
 		// Patched operations reuse Peekaboo's protocol version; refuse other hosts before any request.
 		guard handshake.hostCapabilities?.contains(desktopToolsProtocol) == true else { throw ClientError.dialect }
 		switch operation {
@@ -333,6 +346,31 @@ private enum Client {
 		))
 	}
 
+	/// Shakes hands with the host. When no host serves the socket, it opens the host app, waits for it to serve, and
+	/// shakes hands again: nothing reached a host the first time, so trying again can't repeat an operation.
+	private static func handshake(
+		_ client: PeekabooBridgeClient, identity: SigningIdentity, socket: String
+	) async throws -> PeekabooBridgeHandshakeResponse {
+		func shake() async throws -> PeekabooBridgeHandshakeResponse {
+			try await client.handshake(
+				client: .init(
+					bundleIdentifier: identity.identifier,
+					teamIdentifier: identity.team,
+					processIdentifier: getpid()
+				),
+				requestedHost: .gui,
+				overallTimeoutSec: 5
+			)
+		}
+		do {
+			return try await shake()
+		} catch {
+			guard Reach.probe(socket) != .serving else { throw error }
+			try await HostRepair.ensure(socket)
+			return try await shake()
+		}
+	}
+
 	private static func processID(_ value: String) throws -> Int32 {
 		guard let pid = Int32(value), pid > 0 else { throw ClientError.usage }
 		return pid
@@ -542,7 +580,7 @@ private enum ClientError: LocalizedError {
 	var errorDescription: String? {
 		switch self {
 		case .usage:
-			"Usage: desktop-tools-client <socket> apps | windows <pid> | inspect <pid> <window> <absolute-output-path> [accessibility|pixels] [ocr] [scope <snapshot> <element>] | read <pid> <window> [<snapshot> <element>] | elements < JSON | screen <absolute-output-path> [display] [ocr] | menubar | menubar-click <absolute-output-path> < JSON | menus|menu|dialog|dock|action|management|launch|open|clipboard < JSON"
+			"Usage: desktop-tools-client [<socket>] status | [<socket>] repair | <socket> apps | windows <pid> | inspect <pid> <window> <absolute-output-path> [accessibility|pixels] [ocr] [scope <snapshot> <element>] | read <pid> <window> [<snapshot> <element>] | elements < JSON | screen <absolute-output-path> [display] [ocr] | menubar | menubar-click <absolute-output-path> < JSON | menus|menu|dialog|dock|action|management|launch|open|clipboard < JSON"
 		case .target:
 			"The native observation did not confirm the requested process and window. Refresh the window list and try again."
 		case .image:

@@ -92,6 +92,8 @@ async function run(path, args, signal, errorJson = false, input, agent) {
         throw new Error((failed.stderr?.trim() || failed.message).slice(0, 2000), { cause: error });
     }
 }
+/** The native client couldn't reach a host even after opening its app; nothing was sent. */
+const HOST_UNREACHABLE = new Set(["HOST_NOT_RUNNING", "HOST_NOT_SERVING"]);
 /** Refusals the host owns rather than Peekaboo: their message starts with the code agents should see. */
 const HOST_REFUSAL = /^(CALLER_NOT_APPROVED|SELF_TARGET_REFUSED): /;
 /** What the agent can do about each host refusal: only the user can answer it. */
@@ -119,9 +121,8 @@ const caller = (config) => async (args, signal, options = {}) => {
     const { client, socket } = config;
     if (!existsSync(client))
         throw new Error(`The native desktop client is missing at ${client}.`);
-    if (!existsSync(socket)) {
-        throw new Error(`Open ${config.name ?? "the desktop host app"} on this host to enable native desktop tools.`);
-    }
+    // A missing socket isn't refused here: the native client opens the host app and waits for it to serve.
+    const missing = !existsSync(socket);
     signal.throwIfAborted();
     options.onDispatch?.();
     const output = await run(client, [socket, ...args], signal, true, options.input, config.agent);
@@ -136,6 +137,19 @@ const caller = (config) => async (args, signal, options = {}) => {
         throw new Error("The native desktop client returned an unsupported response.");
     }
     if (!value.success) {
+        // The native client already opened the host app and waited; its message says what it found.
+        if (value.error && HOST_UNREACHABLE.has(value.error.code))
+            throw new NativeError(value.error.code, value.error.message);
+        // A client from before 0.15 doesn't repair the host, and reports an unreachable one as a plain failure.
+        if (value.error?.code === "DESKTOP_ERROR") {
+            const name = config.name ?? "the desktop host app";
+            if (missing) {
+                throw new NativeError("HOST_NOT_RUNNING", `HOST_NOT_RUNNING: ${name} isn't serving ${socket}, so nothing ran. Ask the user to open ${name}.`);
+            }
+            if (/Connection refused/i.test(value.error.message)) {
+                throw new NativeError("HOST_NOT_SERVING", `HOST_NOT_SERVING: ${name} isn't serving ${socket}, so nothing ran. Ask the user to check the status line in its menu, or to quit and reopen it.`);
+            }
+        }
         const error = value.error && hostRefusal(value.error);
         if (error && error.code !== value.error.code)
             throw new NativeError(error.code, `${error.code}: ${error.message}`);
