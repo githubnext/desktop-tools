@@ -204,7 +204,7 @@ There is no pinch or rotate gesture. Use the app's own command: it acts on an ex
 4. For each text field:
    1. `desktop_click` the field. The fresh observation reports it as focused.
    2. `desktop_type` the field with that observation's `snapshot_id` and element ID. A web field is typed into with key events, so the page sees `input` and `change`. Expect `completed`; the field is read back.
-5. For a `<select>`: `desktop_click` it, then `desktop_element_action` `AXPick` on the option, or `desktop_click` it.
+5. For a `<select>`: `desktop_click` it, then `desktop_element_action` `AXPick` on the option, or `desktop_click` it. In Chrome and other Chromium browsers, pick with one `desktop_key` call instead: [pick from a native select in a browser](#pick-from-a-native-select-in-a-browser).
 6. For a checkbox: `desktop_click` it, or `desktop_set_value` `true` *(unverified per site: some custom checkboxes ignore Accessibility values)*.
 7. For a multi-line `<textarea>`: click it, `desktop_key` `a` with `command` to select its text, then `desktop_insert` with `route: "paste"`. Typed text can't contain newlines.
 8. `desktop_click` the submit button.
@@ -218,6 +218,25 @@ There is no pinch or rotate gesture. Use the app's own command: it acts on an ex
 - An `unknown` result means the readback didn't match. Autocomplete or input masks can reformat the text, such as phone numbers. Inspect before retrying.
 - Password fields are refused, because password entry is not supported.
 - An autocomplete popup can take focus after typing. Press `escape` with `desktop_key` before the next click if it covers the next field.
+
+## Pick from a native select in a browser
+
+A `<select>` shows in Accessibility as an `AXPopUpButton`. In Chrome and other Chromium browsers, its menu closes between tool calls, so clicking an item or `AXPick` from a later snapshot is refused, often with `SNAPSHOT_STALE`. `desktop_set_value` doesn't apply either: a pop-up button has no settable value. Pick in one `desktop_key` call instead. Background keys reach Chrome, so the browser can stay behind other apps.
+
+1. inspect the browser window. Note the select's current value and check that it has keyboard focus. If not, `desktop_key` `tab` to it, or `desktop_click` it, which also opens its menu.
+2. Find the options. If the menu is open, the inspection lists them as `AXMenu` and `AXMenuItem`, the highlighted one marked selected; if not, `desktop_key` `down` opens it, and the fresh observation lists them. n is the target option's index minus the current option's index.
+3. If the menu is still open, as right after a click, send step 4's keys at once without the first Down. Otherwise it may already have closed by itself, or close it without changing the value with `desktop_key` `escape`; the select keeps focus.
+4. `desktop_key` with `keys: [{key: "down"}, …n × {key: "down"}, {key: "enter"}]`, all in one call. The first Down opens the menu, the next n move the highlight, and Enter picks it.
+
+**Verify:** inspect the window. The `AXPopUpButton`'s value reads back as the chosen option.
+
+**Goes wrong:**
+
+- The value didn't change: inspect to check that the select still has focus. As a fallback, `desktop_activate` the browser, inspect, and send the keys again.
+- Separators and disabled items in the menu are skipped by Down, so count only the items that can be chosen *(unverified)*.
+- When n is negative, send that many `up` in place of the Downs.
+- A sequence takes at most 16 keys, so it reaches at most 14 options away.
+- Outside Chromium browsers, as in native apps, `desktop_click` the pop-up button, then `desktop_click` or `AXPick` the item from the next observation.
 
 ## Copy text from a web page
 

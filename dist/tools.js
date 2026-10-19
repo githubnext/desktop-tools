@@ -719,7 +719,7 @@ export function desktopTools({ place, app }) {
         {
             name: "desktop_set_value",
             op: "set-value",
-            description: `Set one non-text control from a fresh desktop_inspect snapshot and read it back: a number for a slider, stepper or level indicator; true/false for a checkbox, switch or disclosure triangle; or an ISO 8601 date for a date or time picker (2026-10-17 is local midnight; add Z or an offset to name a zone). Background. Completed only when it reads back exactly; a control that rounds, clamps or drops the time is unknown. Mixed toggles are refused. Text fields take desktop_type; pop-up buttons have no value: click, then pick from the next observation. desktop_element_action steps controls without a settable value.`,
+            description: `Set one non-text control from a fresh desktop_inspect snapshot and read it back: a number for a slider, stepper or level indicator; true/false for a checkbox, switch or disclosure triangle; or an ISO 8601 date for a date or time picker (2026-10-17 is local midnight; add Z or an offset to name a zone). Background. Completed only when it reads back exactly; a control that rounds, clamps or drops the time is unknown. Mixed toggles are refused. Text fields take desktop_type; pop-up buttons have no value: click, then pick from the next observation; a Chromium browser's <select> menu closes between calls, so pick there with one desktop_key call: keys down, down × n, enter. desktop_element_action steps controls without a settable value.`,
             parameters: {
                 type: "object",
                 required: ["snapshot", "element", "value"],
@@ -752,7 +752,7 @@ export function desktopTools({ place, app }) {
         {
             name: "desktop_element_action",
             op: "element-action",
-            description: `Perform one Accessibility action that an element from a fresh desktop_inspect snapshot lists in attributes.actions, with no pointer or keys: AXShowMenu (context menu), AXIncrement/AXDecrement (step), AXConfirm/AXCancel, AXPick (choose an open menu's item), AXRaise, AXScrollToVisible. Background. Unlisted actions are refused before input. Completed means delivered, not the effect; each repeat can step, toggle or open again. Press buttons with desktop_click.`,
+            description: `Perform one Accessibility action that an element from a fresh desktop_inspect snapshot lists in attributes.actions, with no pointer or keys: AXShowMenu (context menu), AXIncrement/AXDecrement (step), AXConfirm/AXCancel, AXPick (choose an open menu's item; a Chromium browser's <select> menu closes between calls, so use one desktop_key call there), AXRaise, AXScrollToVisible. Background. Unlisted actions are refused before input. Completed means delivered, not the effect; each repeat can step, toggle or open again. Press buttons with desktop_click.`,
             parameters: {
                 type: "object",
                 required: ["snapshot", "element", "action"],

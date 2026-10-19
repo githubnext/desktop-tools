@@ -7,6 +7,7 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 ### Added
 
 - The Desktop Tools app has an icon, a placeholder for now, in Finder, its disk image and its prompts.
+- A recipe for picking from a `<select>` in Chrome and other Chromium browsers: one `desktop_key` call with Down to open the menu, Down to the option and Enter, in the background. Clicking or `AXPick` on its menu items is refused there, because the menu closes between tool calls. ([#139](https://github.com/githubnext/desktop-tools/pull/139))
 
 ## [0.14.1] - 2026-10-17
 
