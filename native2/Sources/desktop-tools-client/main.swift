@@ -1,4 +1,5 @@
 import AppKit
+import DesktopAppLink
 import DesktopProtocol
 import Foundation
 
@@ -9,10 +10,6 @@ import Foundation
 //
 // It prints one JSON line: {"result": <MCP tool result>}, or {"error": {"code", "message"}} and exits 1 when nothing
 // ran. DESKTOP_TOOLS_AGENT in its environment names the agent in the host's window outline, as native/'s client does.
-
-/// How long to wait for the host after opening its app: a fresh launch serves in about a second, and a host that
-/// waits for a quitting one to release the socket retries after 1, 2 and 4 seconds.
-let repairWait: TimeInterval = 10
 
 func finish(_ value: JSON, status: Int32) -> Never {
 	FileHandle.standardOutput.write(Data((value.text + "\n").utf8))

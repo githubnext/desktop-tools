@@ -50,7 +50,7 @@ npm run dev-app            # build, sign, install and open
 npm run dev-app -- --stop  # quit it
 ```
 
-`npm run dev-app -- --native2` bundles the pure Swift host's `libDesktopTools.dylib` and `desktop-tools-client` from `native2/` in place of `native/`'s, keeping the same app, identity and state folder (see [native2/CUTOVER.md](../native2/CUTOVER.md)). Run the MCP server against it with `--wire 2`. Building without the switch puts `native/`'s back.
+`npm run dev-app -- --native2` bundles the pure Swift host's `libDesktopTools.dylib` and `desktop-tools-client` from `native2/` in place of `native/`'s, keeping the same app, identity and state folder (see [native2/CUTOVER.md](../native2/CUTOVER.md)). Run the MCP server against it with `--wire 2`, or run the Swift MCP server it also bundles, `Desktop Tools Dev.app/Contents/MacOS/desktop-tools-mcp`, which finds the app's socket and opens the app in the background when nothing serves it. Building without the switch puts `native/`'s back.
 
 Every checkout and worktree installs the same `~/Library/Application Support/desktop-tools/dev/Desktop Tools Dev.app`. It has its own bundle identity, `dev.githubnext.desktop-tools.dev`, nested under the release app's, and the name **Desktop Tools Dev**. Building quits the running copy, replaces the bundle in place and opens it again through LaunchServices with `open`. Launching its executable directly can attribute permission checks to the launching terminal or agent instead of the app.
 

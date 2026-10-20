@@ -2,10 +2,15 @@ import AppKit
 import Darwin
 import Foundation
 
-// Ported from native/'s client host.swift: what `desktop-client status` and `repair` find and do.
+// Ported from native/'s client host.swift: what `desktop-client status` and `repair` find and do, and how the
+// client and MCP server bundled in the app find its socket and open it.
+
+/// How long to wait for the host after opening its app: a fresh launch serves in about a second, and a host that
+/// waits for a quitting one to release the socket retries after 1, 2 and 4 seconds.
+public let repairWait: TimeInterval = 10
 
 /// Whether anything accepts connections on a socket path, found by connecting without sending a request.
-enum Reach: String, Encodable {
+public enum Reach: String, Encodable, Sendable {
 	/// A host accepted the connection.
 	case serving
 	/// The path is there, but nothing listens on it: a host that stopped or died left it behind.
@@ -13,7 +18,7 @@ enum Reach: String, Encodable {
 	/// Nothing is at the path: no host published it, or something removed it.
 	case missing
 
-	static func probe(_ path: String) -> Reach {
+	public static func probe(_ path: String) -> Reach {
 		var address = sockaddr_un()
 		address.sun_family = sa_family_t(AF_UNIX)
 		let bytes = Array(path.utf8CString)
@@ -34,13 +39,13 @@ enum Reach: String, Encodable {
 
 /// The app this client ships in, which hosts its socket: opening it starts the host, or makes a running one check
 /// its socket again.
-struct HostApp {
-	let url: URL
-	let identifier: String
-	let name: String
+public struct HostApp: Sendable {
+	public let url: URL
+	public let identifier: String
+	public let name: String
 
 	/// The app bundle around this client's executable, following the link the app keeps in its state folder.
-	static func containing() -> HostApp? {
+	public static func containing() -> HostApp? {
 		guard let executable = Bundle.main.executableURL?.resolvingSymlinksInPath() else { return nil }
 		// <App>.app/Contents/MacOS/desktop-tools-client
 		let url = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -51,12 +56,20 @@ struct HostApp {
 		return HostApp(url: url, identifier: identifier, name: name)
 	}
 
-	var running: NSRunningApplication? {
+	/// The app's state folder, which holds its socket: DESKTOP_TOOLS_STATE, or a folder of its own for a development
+	/// build, as the app chooses it.
+	public var stateFolder: String {
+		if let state = ProcessInfo.processInfo.environment["DESKTOP_TOOLS_STATE"], !state.isEmpty { return state }
+		let name = identifier.hasSuffix(".dev") ? "desktop-tools-dev" : "desktop-tools"
+		return (NSHomeDirectory() as NSString).appendingPathComponent(".local/state/\(name)")
+	}
+
+	public var running: NSRunningApplication? {
 		NSRunningApplication.runningApplications(withBundleIdentifier: identifier).first { !$0.isTerminated }
 	}
 
 	/// Starts the app in the background, or opens a running one again, which makes it check its socket.
-	func open() {
+	public func open() {
 		let configuration = NSWorkspace.OpenConfiguration()
 		configuration.activates = false
 		configuration.addsToRecentItems = false
@@ -68,19 +81,19 @@ struct HostApp {
 }
 
 /// What `desktop-client status` and `repair` print.
-struct HostReport: Encodable {
-	let socket: String
-	let reach: Reach
-	let app: String?
-	let bundle_id: String?
-	let app_path: String?
-	let running: Bool
-	let pid: Int32?
+public struct HostReport: Encodable, Sendable {
+	public let socket: String
+	public let reach: Reach
+	public let app: String?
+	public let bundle_id: String?
+	public let app_path: String?
+	public let running: Bool
+	public let pid: Int32?
 	/// Set by repair: whether it opened the app, and how long it waited.
-	var opened: Bool?
-	var waited_ms: Int?
+	public var opened: Bool?
+	public var waited_ms: Int?
 
-	init(socket: String, host: HostApp?) {
+	public init(socket: String, host: HostApp?) {
 		self.socket = socket
 		reach = Reach.probe(socket)
 		app = host?.name
@@ -92,7 +105,7 @@ struct HostReport: Encodable {
 	}
 
 	/// Why nothing serves the socket, as `HOST_NOT_RUNNING` or `HOST_NOT_SERVING`.
-	var failure: (code: String, message: String) {
+	public var failure: (code: String, message: String) {
 		let name = app ?? "The desktop host app"
 		if !running {
 			let tried = opened == true ? ", and opening it didn't start it serving within \(Int(repairWait)) s" : ""
@@ -105,15 +118,15 @@ struct HostReport: Encodable {
 	}
 }
 
-enum HostRepair {
-	static func status(_ socket: String) -> HostReport {
+public enum HostRepair {
+	public static func status(_ socket: String) -> HostReport {
 		HostReport(socket: socket, host: HostApp.containing())
 	}
 
 	/// Makes the host serve `socket` if it doesn't: opens its app, which starts it or makes a running one publish
 	/// its socket again, then waits for the socket to accept a connection. Nothing is sent but a bare connect, so
 	/// a repair never repeats an operation.
-	static func repair(_ socket: String) -> HostReport {
+	public static func repair(_ socket: String) -> HostReport {
 		let host = HostApp.containing()
 		var report = HostReport(socket: socket, host: host)
 		guard report.reach != .serving, let host else { return report }
@@ -127,19 +140,4 @@ enum HostRepair {
 		report.waited_ms = Int(Date().timeIntervalSince(started) * 1000)
 		return report
 	}
-}
-
-struct HostSuccess: Encodable {
-	let success = true
-	let data: HostReport
-}
-
-struct HostFailure: Encodable {
-	struct Message: Encodable {
-		let code: String
-		let message: String
-	}
-
-	let success = false
-	let error: Message
 }

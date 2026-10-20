@@ -1,3 +1,4 @@
+import DesktopAppLink
 import DesktopProtocol
 import Foundation
 
@@ -5,9 +6,10 @@ import Foundation
 // because the host is what holds the macOS permissions.
 
 let arguments = CommandLine.arguments.dropFirst()
-let state = defaultStateFolder()
+/// The app this server ships in, whose host it serves through, and opens in the background when nothing serves.
+let app = HostApp.containing()
 let socketPath = arguments.firstIndex(of: "--socket").flatMap { arguments.dropFirst($0 - arguments.startIndex + 1).first }
-	?? (state as NSString).appendingPathComponent("desktop.sock")
+	?? ((app?.stateFolder ?? defaultStateFolder()) as NSString).appendingPathComponent("desktop.sock")
 let serverVersion = "0.0.0-spike"
 
 // Newest first; an unsupported client version gets the newest, as the MCP lifecycle requires.
@@ -53,10 +55,29 @@ actor Host {
 
 	private func connected() throws -> Connection {
 		if let connection { return connection }
-		let connection = try Connection.connect(to: socketPath)
-		try connection.send(.object([("hello", JSON(wireVersion))]))
-		guard try connection.receive()["hello"]?.int == wireVersion else {
-			throw WireError.system("hello", EPROTO)
+		var reached: Connection?
+		do { reached = try Connection.connect(to: socketPath) } catch WireError.system("connect", _) where app != nil {
+			// Opening the app starts its host, or makes a running one publish its socket again.
+			app!.open()
+			let deadline = Date() + repairWait
+			while reached == nil, Date() < deadline {
+				Thread.sleep(forTimeInterval: 0.2)
+				reached = try? Connection.connect(to: socketPath)
+			}
+			guard reached != nil else {
+				var report = HostReport(socket: socketPath, host: app)
+				report.opened = true
+				throw HostFailure(message: "\(report.failure.code): \(report.failure.message)")
+			}
+		}
+		let connection = reached!
+		// No call is sent before the hellos, so a host that drops the connection here ran nothing. A signed host
+		// drops a process that isn't signed as its own app's client.
+		do {
+			try connection.send(.object([("hello", JSON(wireVersion))]))
+			guard try connection.receive()["hello"]?.int == wireVersion else { throw WireError.system("hello", EPROTO) }
+		} catch {
+			throw HostFailure(message: "HOST_NOT_SERVING: The host at \(socketPath) closed the connection before serving it (\(error)), so nothing ran. A signed host serves only the programs bundled with its app.")
 		}
 		self.connection = connection
 		Thread.detachNewThread { [connection] in
