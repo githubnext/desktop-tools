@@ -410,7 +410,13 @@ extension Mac {
 				do throws(ServiceError) {
 					// WindowServer listing the window again at its bounds proves the restore. AXMinimized can stay
 					// true until the animation ends, so Peekaboo's repinned receipt doesn't read it.
-					let bounds = try repin(window, to: window.bounds, until: Date().addingTimeInterval(2))
+					// Within a point is still mid-animation here, so wait for the receipt's exact bounds.
+					let deadline = Date().addingTimeInterval(2)
+					var bounds = try repin(window, to: window.bounds, until: deadline)
+					while bounds != window.bounds, Date() < deadline {
+						pause(0.05)
+						bounds = try repin(window, to: window.bounds, until: deadline)
+					}
 					guard bounds == window.bounds else {
 						throw ServiceError.commandFailed("Window \(window.id) became ambiguous after restore dispatch")
 					}

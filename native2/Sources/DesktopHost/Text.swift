@@ -1,3 +1,4 @@
+import AppKit
 import Carbon.HIToolbox
 import CoreGraphics
 import DesktopCore
@@ -31,6 +32,27 @@ private let secureFieldRefusal = Refusal(
 	hint: "Fill password fields with desktop_fill_password, from a Keychain item or with the user's approval.",
 	fromHost: false
 )
+
+/// Finder shows a name written through Accessibility in a file's name field but never renames the file.
+let finderNameRefusal = Refusal(
+	"CELL_NOT_EDITABLE",
+	"Finder shows a name written this way in a file's name field but doesn't rename the file, so nothing was sent.",
+	hint: "Rename the file with a shell command such as mv, which can be checked. In Finder itself the rename is foreground input: desktop_focus the Finder window, select the row, press Return with desktop_key, type the name with desktop_insert, press Return, then check the file on disk.",
+	fromHost: false
+)
+
+/// A text field inside a Finder window's file list, in any view: its name field for one file. Ported from the native
+/// client's isFinderFileName; snapshots keep no parents, so the field must lie within an element that lists files.
+func isFinderFileName(_ observed: Element, in snapshot: Snapshot) -> Bool {
+	guard observed.attributes["role"] == "AXTextField",
+	      NSRunningApplication(processIdentifier: snapshot.pid)?.bundleIdentifier == "com.apple.finder"
+	else { return false }
+	let lists: Set<String> = ["AXRow", "AXOutline", "AXTable", "AXList", "AXBrowser"]
+	return snapshot.elements.values.contains { element in
+		lists.contains(element.attributes["role"] ?? "") && element.attributes["description"] != "sidebar"
+			&& element.frame.contains(observed.frame)
+	}
+}
 
 /// The native client's own refusal, which carries no host outcome.
 private func clientRefusal(_ message: String, hint: String? = nil) -> Refusal {
@@ -81,7 +103,8 @@ extension Tools {
 			requested = .string(date)
 		default: throw ToolError("Set a finite number, true/false or an ISO 8601 date; use desktop_type for text.")
 		}
-		var result = await act("set-value", snapshotID: snapshotID, element: id, precheck: { _, target in
+		var result = await act("set-value", snapshotID: snapshotID, element: id, precheck: { snapshot, target in
+			if isFinderFileName(target!, in: snapshot) { throw finderNameRefusal }
 			try checkSetValue(target!, requested)
 		}) { snapshot, target in
 			try reporting {
