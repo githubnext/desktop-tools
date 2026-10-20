@@ -42,6 +42,8 @@ public enum JSON: Sendable, Equatable {
 	public var bool: Bool? { if case let .bool(b) = self { b } else { nil } }
 	public var number: Double? { if case let .number(n) = self { n } else { nil } }
 	public var array: [JSON]? { if case let .array(a) = self { a } else { nil } }
+	public var pairs: [(String, JSON)]? { if case let .object(o) = self { o } else { nil } }
+	public var keys: [String]? { pairs?.map(\.0) }
 	public var isNull: Bool { if case .null = self { true } else { false } }
 	/// An exact integer, as JavaScript's `Number.isSafeInteger` accepts.
 	public var int: Int? {

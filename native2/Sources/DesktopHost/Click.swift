@@ -30,9 +30,14 @@ extension Tools {
 		guard let kind = ClickKind(rawValue: arguments["kind"]?.string ?? "single") else {
 			throw ToolError("Choose single, double, right, middle, or triple click.")
 		}
-		for unsupported in ["modifiers", "expect"] where arguments[unsupported] != nil {
-			throw ToolError("desktop_click's \(unsupported) isn't in the Swift spike yet.")
+		if arguments["modifiers"] != nil { throw ToolError("desktop_click's modifiers isn't in the Swift spike yet.") }
+		if let expect = try expectation(arguments) {
+			return try await expectAfter(expect) { try await clickOnce(snapshotID, element: element?.string, fraction: fraction, kind: kind) }
 		}
+		return try await clickOnce(snapshotID, element: element?.string, fraction: fraction, kind: kind)
+	}
+
+	private static func clickOnce(_ snapshotID: String, element: String?, fraction: CGPoint?, kind: ClickKind) async throws -> ToolResult {
 
 		var action: [(String, JSON)] = [("outcome", "refused"), ("action", "click"), ("snapshot_id", JSON(snapshotID))]
 		var receipt: JSON?
@@ -60,7 +65,7 @@ extension Tools {
 			("process_start_identity_decimal", JSON(String(observed.generation))),
 		])
 		var target: Element?
-		if let id = element?.string {
+		if let id = element {
 			guard let found = observed.elements[id] else {
 				return await refused("invalidRequest", "The element ID is not in this snapshot. Inspect the window again.", fresh: false)
 			}
