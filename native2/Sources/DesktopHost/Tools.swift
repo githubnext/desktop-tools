@@ -5,7 +5,11 @@ import Foundation
 
 /// Runs one MCP tool call in the host, which is the process macOS's grants attach to.
 public enum Tools {
-	static let actionTools: Set = ["desktop_click", "desktop_key", "desktop_type", "desktop_scroll", "desktop_drag", "desktop_hover", "desktop_set_value", "desktop_element_action", "desktop_select", "desktop_insert", "desktop_fill_password", "desktop_clipboard_write"]
+	static let actionTools: Set = [
+		"desktop_click", "desktop_key", "desktop_type", "desktop_scroll", "desktop_drag", "desktop_hover", "desktop_set_value",
+		"desktop_element_action", "desktop_select", "desktop_insert", "desktop_fill_password", "desktop_clipboard_write",
+		"desktop_menu", "desktop_dialog_answer", "desktop_menubar_click",
+	]
 	static let expectTools: Set = ["desktop_click", "desktop_key", "desktop_system_key", "desktop_drag", "desktop_insert"]
 
 	/// `client` is the connected MCP binary's pid, which names the caller the user approves.
@@ -47,6 +51,13 @@ public enum Tools {
 			case "desktop_fill_password": return try await fillPassword(arguments)
 			case "desktop_clipboard_read": return try await clipboardRead(arguments)
 			case "desktop_clipboard_write": return try await clipboardWrite(arguments)
+			case "desktop_menus": return try await menus(arguments)
+			case "desktop_menu": return try await menu(arguments)
+			case "desktop_dialog": return try await dialog(arguments)
+			case "desktop_dialog_answer": return try await dialogAnswer(arguments)
+			case "desktop_menubar_items": return try await menubarItems(arguments)
+			case "desktop_menubar_click": return try await menubarClick(arguments)
+			case "desktop_dock": return try await dock(arguments)
 			default:
 				return ToolResult(text: "\(name) isn't in the Swift spike yet.", isError: true)
 			}
