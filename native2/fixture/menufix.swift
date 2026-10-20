@@ -92,4 +92,16 @@ secure.placeholderString = "password"
 label.frame = NSRect(x: 20, y: 20, width: 480, height: 24)
 for v in [field, secure, label] { window.contentView!.addSubview(v) }
 window.makeKeyAndOrderFront(nil)
+// Dialogs can also be opened by writing a command to /tmp/menufix.cmd, which needs no input while the
+// session is locked: alert, sheet, open, save, or secure (focus the password field).
+let commands: [String: () -> Void] = [
+	"alert": { target.alert(nil) }, "sheet": { target.sheet(nil) }, "open": { target.open(nil) },
+	"save": { target.save(nil) }, "secure": { window.makeFirstResponder(secure) },
+]
+Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { _ in
+	let path = "/tmp/menufix.cmd"
+	guard let command = try? String(contentsOfFile: path, encoding: .utf8) else { return }
+	try? FileManager.default.removeItem(atPath: path)
+	commands[command.trimmingCharacters(in: .whitespacesAndNewlines)]?()
+}
 app.run()

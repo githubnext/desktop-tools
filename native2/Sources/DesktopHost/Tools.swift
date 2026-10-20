@@ -36,6 +36,8 @@ public enum Tools {
 			case "desktop_hover": return try await hover(arguments)
 			case "desktop_menus": return try await menus(arguments)
 			case "desktop_menu": return try await menu(arguments)
+			case "desktop_dialog": return try await dialog(arguments)
+			case "desktop_dialog_answer": return try await dialogAnswer(arguments)
 			default:
 				return ToolResult(text: "\(name) isn't in the Swift spike yet.", isError: true)
 			}
