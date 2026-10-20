@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Writes the MCP contract the Swift server (native2, #143) must serve, from today's Node server: its
 // instructions and tools/list, compiled into the Swift code so no resource bundle has to travel with an embedded host.
-// With --check, fails when they differ, so the TS definitions stay the source.
+// With --check, fails when they differ, so the TS definitions stay the source, except where native2 owns a
+// tool's text below: changes made in native2 only, while the shipped stack takes no fixes (native2/CUTOVER.md).
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 
@@ -12,6 +13,30 @@ const input = [
 ].map((m) => JSON.stringify(m)).join("\n") + "\n";
 const out = execFileSync(process.execPath, [new URL("../dist/mcp.js", import.meta.url).pathname], { input, encoding: "utf8" });
 const [init, list] = out.trim().split("\n").map((line) => JSON.parse(line).result);
+
+// native2 launches and opens in the background unless asked to activate (#162).
+const background = "Background unless activate is true: macOS starts the app or hands it the item without bringing it forward, so the user keeps typing where they are. Pass activate only when a later step is foreground or the user asks to see the app; activate brings the app forward and may switch Spaces.";
+const own = {
+	desktop_launch: (tool) => {
+		tool.description = tool.description
+			.replace("Launch or activate one app", "Launch one app")
+			.replace("Foreground: it brings the app forward and may switch Spaces.", background);
+	},
+	desktop_open: (tool) => {
+		tool.description = tool.description.replace("Foreground: the receiving app comes forward and may switch Spaces.", background);
+	},
+};
+for (const tool of list.tools) {
+	if (!own[tool.name]) continue;
+	const before = tool.description;
+	own[tool.name](tool);
+	if (tool.description === before) throw new Error(`native2's text for ${tool.name} no longer matches the Node description.`);
+	tool.inputSchema.properties.activate = { type: "boolean" };
+}
+const input2 = "Input is background unless its tool says foreground: background input reaches the exact window without moving the pointer or changing the frontmost app, while foreground input uses the real pointer or keys, or brings an app forward.";
+if (!init.instructions.includes(input2)) throw new Error("native2's instructions sentence no longer matches the Node instructions.");
+init.instructions = init.instructions.replace(input2, `${input2}
+Work in the background so the user's typing isn't taken: launch and open apps without activate, and bring an app forward only for a step whose tool says foreground or when the user asks to see it.`);
 const raw = (text) => {
 	if (text.includes('"""##')) throw new Error("The contract contains the raw string delimiter.");
 	return `##"""\n${text}\n"""##`;

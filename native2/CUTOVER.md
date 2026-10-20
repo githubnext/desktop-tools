@@ -35,6 +35,7 @@ They share no socket, state folder, lock or hotkey. native2 takes none of Peekab
 - steps-pointer, steps-manage and steps-dialogs' Dock step haven't run live: they move the real pointer or bring apps forward.
 - Of live-check, only #96 and #83 have run through `--server`. The rest opens TextEdit, Finder, Safari and Chrome, switches input sources (#90), presses Command-Space (#89), or needs the app's approval prompt (#120).
 - The bench has run only on the fixture.
+- Background launch and open ([#162](https://github.com/githubnext/desktop-tools/issues/162)) haven't run live. The check: type continuously in TextEdit while launching an app that isn't running and opening a PDF in Preview, both without `activate`. No keystroke should land elsewhere and TextEdit should stay frontmost; then inspect and click the new windows in the background. It needs the user's go-ahead, since a regression takes their focus.
 
 ### Intended differences
 
@@ -44,11 +45,12 @@ A model shouldn't care about any of these, but they make Node's tests and the pa
 - A key refused because focus isn't in the window says refused, since nothing was sent; Node says unknown.
 - desktop_wait reads the app's full inventory. Node's size-bounded apps list can report a running app as `app_not_listed`.
 - An unknown but well-formed `ps1_` snapshot says the observation no longer belongs to the running desktop.
+- desktop_launch and desktop_open run in the background unless `activate` is true, so an agent opening an app doesn't take the user's typing ([#162](https://github.com/githubnext/desktop-tools/issues/162)). Node always brings the app forward, and has no `activate`.
 
 ### Keeping the two in step
 
 - Nothing in CI builds native2, runs its tests, or runs `node scripts/contract.mjs --check`. A change to a tool in `src/` or `native/` that isn't ported will go unnoticed until the next parity run.
-- `ContractText.swift` is compiled from the Node server's instructions and tools/list, so Node stays the source of truth until the switch.
+- `ContractText.swift` is compiled from the Node server's instructions and tools/list, so Node stays the source of truth until the switch. The exception is text native2 owns, written in `scripts/contract.mjs` over Node's: desktop_launch and desktop_open's descriptions and `activate`, and the instructions' sentence on working in the background (#162). The shipped stack takes no fixes before the cutover, so these change in native2 only. The script stops if the Node text they replace changes.
 
 ### What must survive (ace)
 

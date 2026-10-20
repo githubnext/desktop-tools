@@ -44,7 +44,7 @@ swiftc -O native2/fixture/main.swift -o native2/.build/fixture
 (nohup native2/.build/fixture >/tmp/fixture.log 2>&1 &)
 ```
 
-Differences that are intended: the route is `local`, not `bridge`, since there is no bridge; Peekaboo's `diagnostics` aren't sent; and a key refused because focus isn't in the window says refused, since nothing was sent, where Node says unknown.
+Differences that are intended: the route is `local`, not `bridge`, since there is no bridge; Peekaboo's `diagnostics` aren't sent; a key refused because focus isn't in the window says refused, since nothing was sent, where Node says unknown; and desktop_launch and desktop_open run in the background unless `activate` is true, where Node always brings the app forward (#162).
 
 ## Status
 

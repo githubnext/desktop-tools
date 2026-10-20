@@ -354,6 +354,8 @@ extension Tools {
 		} else {
 			selector = try application(arguments["application"])
 		}
+		let activate = arguments["activate"]?.bool ?? false
+		if let value = arguments["activate"], value.bool == nil { throw invalid("Choose activate true or false.") }
 
 		var outcome = "refused"
 		var native: JSON?
@@ -389,7 +391,7 @@ extension Tools {
 			if Mac.sessionLocked { throw ManageFailure.lockedOpening }
 			let before = Mac.windowNumbers()
 			invoked = true
-			let result = try await Mac.launch(path: selector.path, bundleID: selector.bundleID, urls: urls)
+			let result = try await Mac.launch(path: selector.path, bundleID: selector.bundleID, urls: urls, activate: activate)
 			launched = result
 			native = result.outcome
 			let state = result.outcome["state"]?.string
