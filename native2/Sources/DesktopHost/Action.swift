@@ -43,17 +43,18 @@ extension Tools {
 		var target: Element?
 		if let id {
 			guard let found = observed.elements[id] else {
-				return await refused("invalidRequest", "The element ID is not in this snapshot. Inspect the window again.", fresh: false)
+				return await refused("DESKTOP_ACTION_FAILED", "The element ID is not in this snapshot. Inspect the window again.", fresh: true)
 			}
 			guard allowsDisabled || found.isEnabled || found.attributes["axEnabledKnown"] != "true" else {
-				return await refused("invalidRequest", "The observed element is disabled.", fresh: false)
+				return await refused("DESKTOP_ACTION_FAILED", "The observed element is disabled.", fresh: true)
 			}
 			target = found
 		}
 		do { try precheck(observed, target) } catch let refusal as Refusal {
-			return await refused(refusal.code, refusal.message, hint: refusal.hint, cause: refusal.cause, fresh: false)
+			action += refusal.fields
+			return await refused(refusal.code, refusal.message, hint: refusal.hint, cause: refusal.cause, fresh: true)
 		} catch {
-			return await refused("invalidRequest", (error as? ToolError)?.message ?? String(describing: error), fresh: false)
+			return await refused("DESKTOP_ACTION_FAILED", (error as? ToolError)?.message ?? String(describing: error), fresh: true)
 		}
 		let snapshot: Snapshot
 		do { snapshot = try await Snapshots.shared.spend(snapshotID) } catch let error as ToolError {
@@ -68,7 +69,10 @@ extension Tools {
 		} catch let refusal as Refusal {
 			await Snapshots.shared.release(snapshotID)
 			action += refusal.fields
-			return await refused(refusal.code, refusal.message, hint: refusal.hint, cause: refusal.cause, fresh: false, native: refusal.fromHost ? refusal.outcome : nil)
+			// The native client asks for a fresh observation after its own checks, and after a host refusal only when
+			// the target itself became unavailable.
+			let fresh = !refusal.fromHost || refusal.reason == "target_unavailable"
+			return await refused(refusal.code, refusal.message, hint: refusal.hint, cause: refusal.cause, fresh: fresh, native: refusal.fromHost ? refusal.outcome : nil)
 		} catch {
 			// Anything else may have happened mid-delivery.
 			action[0] = ("outcome", "unknown")

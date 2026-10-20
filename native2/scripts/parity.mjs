@@ -60,9 +60,11 @@ const parsed = (text) => { try { return JSON.parse(text); } catch { return text;
 const json = (result) => parsed(result.content?.find((item) => item.text?.startsWith("{"))?.text ?? "{}");
 const normal = (value) => JSON.stringify(sorted(value))
 	.replace(/(snap|ps1)_[\w-]+/g, "S")
+	.replace(/"change_count":\d+/g, '"change_count":"C"')
 	.replace(/"process_start_identity_decimal":"\d+"/g, '"process_start_identity_decimal":"P"')
 	.replace(/"route":"(local|bridge)"/g, '"route":"R"')
-	.replace(/"(elapsed_ms|polls)":\d+/g, '"$1":"T"');
+	.replace(/"(elapsed_ms|polls)":\d+/g, '"$1":"T"')
+	.replace(/"observed_at":"[^"]+"/g, '"observed_at":"T"');
 
 function summary(result) {
 	if (mode === "calls") {
