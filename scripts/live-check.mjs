@@ -859,10 +859,13 @@ check(88, "desktop_select selects a phrase in a Safari paragraph, and Command-C 
 	const result = await m.call("desktop_select", { snapshot: snap, element: prose.id, text: "brown fox jumps" });
 	if (result.outcome !== "completed") return expect(false, evidence(result, "selection"));
 	const fresh = await s.inspect(win);
-	await m.call("desktop_key", { snapshot: fresh.snap, key: "c", modifiers: ["command"] });
+	const copy = await m.call("desktop_key", { snapshot: fresh.snap, key: "c", modifiers: ["command"] });
 	await sleep(300);
 	const clip = await m.call("desktop_clipboard_read", { format: "text" });
-	return expect(clip.data.text === "brown fox jumps", `${evidence(result, "selection")}; clipboard ${brief(clip.data.text, 60)}`);
+	return expect(
+		clip.data.text === "brown fox jumps",
+		`${evidence(result, "selection")}; Command-C ${evidence(copy)}; clipboard ${brief(clip.data.text, 60)}`,
+	);
 });
 
 check(88, "desktop_select selects a link's text", async (s, m) => {
