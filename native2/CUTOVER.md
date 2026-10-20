@@ -38,8 +38,23 @@ Found while porting desktop_dialog_answer's path entry, which now follows Peekab
 ### Not yet checked live
 
 - live-check's Safari checks (#79, #82, #86, #88, #92's web grid, #99's web field, #107's read) skip while the user's Safari is open. #90 switches input sources and #120 needs the app's approval prompt.
-- The bench has run only on the fixture.
 - Background launch and open ([#162](https://github.com/githubnext/desktop-tools/issues/162)) haven't run live. The check: type continuously in TextEdit while launching an app that isn't running and opening a PDF in Preview, both without `activate`. No keystroke should land elsewhere and TextEdit should stay frontmost; then inspect and click the new windows in the background. It needs the user's go-ahead, since a regression takes their focus.
+
+### Bench on real apps
+
+`node scripts/bench.mjs --runs 20` on 2026-10-20, read-only, comparing the shipped stack (`node dist/mcp.js` with the installed app) against native2's MCP server bundled in the dev app. Times are p50 / p95 in milliseconds. Safari was left out because the user's own windows were open.
+
+| | Shipped | native2 |
+|---|---|---|
+| startup | 110 | 20 |
+| desktop_apps | 171 / 179 | 29 / 40 |
+| desktop_apps query | 169 / 178 | 22 / 24 |
+| desktop_windows | 115 / 136 | 6 / 9 |
+| desktop_inspect Finder | 889 / 1036 | 377 / 398 |
+| desktop_inspect Ghostty | 551 / 737 | 42 / 53 |
+| desktop_windows, missing pid | 69 / 115 | 5 / 6 |
+
+The outputs are the same size, except that an inspect is about 4.7 KB larger on native2.
 
 ### Intended differences
 
@@ -76,7 +91,7 @@ Each step ships on its own and can be reverted.
 
 1. **Keep it from rotting.** Done: CI builds and tests native2 and checks the contract. Port each tool change to native2 in the same PR, with its calls entries.
 2. **Close the tool gaps** above. Run each fix through its calls and steps files.
-3. **Finish the live checks** with the user's go-ahead, since they take over the pointer and the front app. Done: steps-pointer, steps-manage, the Dock step, and live-check #70, #77, #79, #81, #82, #86, #88, #89, #92, #99, #107, #110, #111 and #114 through `--server`, where Swift and Node now pass the same checks. Still to run: the Safari checks with Safari closed, the bench on real apps, and #162.
+3. **Finish the live checks** with the user's go-ahead, since they take over the pointer and the front app. Done: steps-pointer, steps-manage, the Dock step, and live-check #70, #77, #79, #81, #82, #86, #88, #89, #92, #99, #107, #110, #111 and #114 through `--server`, where Swift and Node now pass the same checks. Still to run: the Safari checks with Safari closed, and #162.
 4. **Harden the runtime.** The socket lease (`<socket>.lock`, as Peekaboo's) and draining calls on stop are in. The dev app signs the dylib and client, and the peer check refuses an unsigned client. Still to do: sign the MCP binary once it's bundled (step 7), and run the approval prompt, pause and SELF_TARGET checks through the app.
 5. **Bridge the wire.** Done: native2's one-shot `desktop-tools-client` (`<client> <socket> <tool> [--verbose]`, arguments on stdin, one JSON line out, opening its containing app in the background when no host serves) and `createDesktop({ wire: 2 })`. `createDesktop`, `/protocol`, `/tools`, `dist/mcp.js` and ace keep working against a native2 host by changing one option.
 6. **Dogfood in the app.** The switch is in: `npm run dev-app -- --native2` bundles native2's dylib and client in place of `native/`'s, and native2's client answers `desktop-client status` and `repair` with `native/`'s output. The bundled dylib is 4.3 MB and the client 0.3 MB, against 40 MB and 43 MB for `native/`'s. In the dev app, with its own grants, `live-check` through `dist/mcp.js --wire 2` passed the same checks as the standalone host except #114's Finder files paste, since fixed and passing on the standalone host. Remaining: run the dev app daily with `DESKTOP_TOOLS_STATE=~/.local/state/desktop-tools-dev node dist/mcp.js --wire 2`.
