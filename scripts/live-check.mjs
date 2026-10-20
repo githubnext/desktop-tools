@@ -1089,8 +1089,9 @@ check(70, "desktop_wait text_contains matches text typed into TextEdit", async (
 check(120, "a caller the user hasn't allowed is refused, and input waits while its prompt is open", async (s, m) => {
 	approvesCallers();
 	const win = await s.textedit("plain");
-	// perl stays the server's parent, so the host sees /usr/bin/perl as the caller.
-	const perl = new Mcp(["/usr/bin/perl", "-e", "exit(system(@ARGV) >> 8)"]);
+	// perl stays the server's parent, so the host sees /usr/bin/perl as the caller. The block form never splits a
+	// --server path with spaces, as one-argument system does.
+	const perl = new Mcp(["/usr/bin/perl", "-e", "system { $ARGV[0] } @ARGV; exit($? >> 8)"]);
 	try {
 		await perl.start();
 		const apps = await perl.call("desktop_apps", {});
