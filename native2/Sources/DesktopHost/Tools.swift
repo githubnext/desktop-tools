@@ -5,7 +5,11 @@ import Foundation
 
 /// Runs one MCP tool call in the host, which is the process macOS's grants attach to.
 public enum Tools {
-	static let actionTools: Set = ["desktop_click", "desktop_key", "desktop_type", "desktop_scroll", "desktop_drag", "desktop_hover"]
+	static let actionTools: Set = [
+		"desktop_click", "desktop_key", "desktop_type", "desktop_scroll", "desktop_drag", "desktop_hover",
+		"desktop_launch", "desktop_open", "desktop_activate", "desktop_hide", "desktop_unhide", "desktop_quit", "desktop_close",
+		"desktop_focus", "desktop_minimize", "desktop_restore", "desktop_maximize", "desktop_fullscreen", "desktop_move", "desktop_resize",
+	]
 	static let expectTools: Set = ["desktop_click", "desktop_key", "desktop_system_key", "desktop_drag", "desktop_insert"]
 
 	public static func call(_ name: String, arguments: JSON) async -> ToolResult {
@@ -33,6 +37,9 @@ public enum Tools {
 			case "desktop_scroll": return try await scroll(arguments)
 			case "desktop_drag": return try await drag(arguments)
 			case "desktop_hover": return try await hover(arguments)
+			case "desktop_launch": return try await launch(arguments, opensItem: false)
+			case "desktop_open": return try await launch(arguments, opensItem: true)
+			case _ where manageOps[name] != nil: return try await manage(name, arguments)
 			default:
 				return ToolResult(text: "\(name) isn't in the Swift spike yet.", isError: true)
 			}

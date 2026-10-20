@@ -5,7 +5,10 @@
 //   node native2/scripts/parity.mjs steps <file.json>   each [tool, args] after a fresh inspect of the fixture window
 //
 // In steps, "$snapshot" becomes the fresh snapshot's ID, "$role:AXTextField" the first element with that role, and
-// "$label:Press me" the first element with that label. Objects are compared with sorted keys; snapshot IDs, process
+// "$label:Press me" the first element with that label. "$app:Name" becomes that app's fresh desktop_apps target,
+// "$win:App:Title" the fresh desktop_windows target of its window with that title, and "$movedwin:App:Title" that
+// target with its bounds one point off, as a window that moved since. With --ids, PIDs, window and Space IDs are
+// ignored too, for steps that launch apps or open windows. Objects are compared with sorted keys; snapshot IDs, process
 // start identities, the route (local in Swift, bridge in Node), timings and the observation's own fields are ignored, so an
 // action compares by its action object and the observation's field names.
 import { spawn } from "node:child_process";
@@ -20,6 +23,7 @@ const { values, positionals } = parseArgs({
 		app: { type: "string", default: "fixture" },
 		window: { type: "string", default: "Click Fixture" },
 		all: { type: "boolean", default: false },
+		ids: { type: "boolean", default: false },
 	},
 });
 const [mode, file] = positionals;
@@ -62,7 +66,9 @@ const normal = (value) => JSON.stringify(sorted(value))
 	.replace(/(snap|ps1)_[\w-]+/g, "S")
 	.replace(/"process_start_identity_decimal":"\d+"/g, '"process_start_identity_decimal":"P"')
 	.replace(/"route":"(local|bridge)"/g, '"route":"R"')
-	.replace(/"(elapsed_ms|polls)":\d+/g, '"$1":"T"');
+	.replace(/"(elapsed_ms|polls)":\d+/g, '"$1":"T"')
+	.replace(values.ids ? /"(pid|window_id|space_id|display_current_space_id)":\d+/g : /^\b$/, '"$1":"N"')
+	.replace(values.ids ? /"space_ids":\[[\d,]*\]/g : /^\b$/, '"space_ids":"N"');
 
 function summary(result) {
 	if (mode === "calls") {
@@ -95,6 +101,16 @@ async function run(command) {
 		let text = JSON.stringify(args ?? {});
 		if (mode === "steps") {
 			text = text.replaceAll('"$pid"', String(target.pid)).replaceAll('"$window"', String(target.window));
+			for (const [found, name] of text.matchAll(/"\$app:([^"]*)"/g)) {
+				const row = json(await mcp.call("desktop_apps", { query: name })).apps?.find((row) => row.name === name);
+				text = text.replace(found, JSON.stringify(row?.target ?? `missing app ${name}`));
+			}
+			for (const [found, kind, name, title] of text.matchAll(/"\$(win|movedwin):([^:"]*):([^"]*)"/g)) {
+				const app = json(await mcp.call("desktop_apps", { query: name })).apps?.find((row) => row.name === name);
+				const row = app && json(await mcp.call("desktop_windows", { pid: app.pid })).windows?.find((row) => row.window_title === title);
+				const window = row?.target && (kind === "win" ? row.target : { ...row.target, bounds: { ...row.target.bounds, x: row.target.bounds.x + 1 } });
+				text = text.replace(found, JSON.stringify(window ?? `missing window ${title}`));
+			}
 			if (text.includes('"$')) {
 				const observed = json(await mcp.call("desktop_inspect", target));
 				text = text.replaceAll('"$snapshot"', JSON.stringify(observed.snapshot_id)).replace(/"\$(role|label):([^"]*)"/g, (_, kind, wanted) => {

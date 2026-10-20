@@ -1,0 +1,213 @@
+[
+[
+"desktop_move",
+{
+"target": "$win:ManageFix:Manage Two",
+"position": {
+"x": 250,
+"y": 150
+}
+}
+],
+[
+"desktop_move",
+{
+"target": "$win:ManageFix:Manage Two",
+"position": {
+"x": 250,
+"y": 150
+}
+}
+],
+[
+"desktop_move",
+{
+"target": "$movedwin:ManageFix:Manage Two",
+"position": {
+"x": 260,
+"y": 150
+}
+}
+],
+[
+"desktop_resize",
+{
+"target": "$win:ManageFix:Manage Two",
+"size": {
+"width": 500,
+"height": 320
+}
+}
+],
+[
+"desktop_maximize",
+{
+"target": "$win:ManageFix:Manage Two"
+}
+],
+[
+"desktop_maximize",
+{
+"target": "$win:ManageFix:Manage Two"
+}
+],
+[
+"desktop_resize",
+{
+"target": "$win:ManageFix:Manage Two",
+"size": {
+"width": 420,
+"height": 260
+}
+}
+],
+[
+"desktop_move",
+{
+"target": "$win:ManageFix:Manage Two",
+"position": {
+"x": 250,
+"y": 150
+}
+}
+],
+[
+"desktop_fullscreen",
+{
+"target": "$win:ManageFix:Manage Two",
+"enabled": false
+}
+],
+[
+"desktop_minimize",
+{
+"target": "$win:ManageFix:Manage Two"
+}
+],
+[
+"desktop_minimize",
+{
+"target": "$win:ManageFix:Manage Two"
+}
+],
+[
+"desktop_close",
+{
+"target": "$win:ManageFix:Manage Two"
+}
+],
+[
+"desktop_restore",
+{
+"target": "$win:ManageFix:Manage Two"
+}
+],
+[
+"desktop_restore",
+{
+"target": "$win:ManageFix:Manage Two"
+}
+],
+[
+"desktop_close",
+{
+"target": "$win:ManageFix:Manage Close"
+}
+],
+[
+"desktop_close",
+{
+"target": "$win:ManageFix:Manage Keep"
+}
+],
+[
+"desktop_close",
+{
+"target": "$movedwin:ManageFix:Manage Keep"
+}
+],
+[
+"desktop_hide",
+{
+"target": "$app:ManageFix"
+}
+],
+[
+"desktop_hide",
+{
+"target": "$app:ManageFix"
+}
+],
+[
+"desktop_unhide",
+{
+"target": "$app:ManageFix"
+}
+],
+[
+"desktop_activate",
+{
+"target": "$app:ManageFix"
+}
+],
+[
+"desktop_focus",
+{
+"target": "$win:ManageFix:Manage One"
+}
+],
+[
+"desktop_move",
+{
+"target": "$win:ManageFix:Manage Two",
+"position": {
+"x": 320,
+"y": 180
+}
+}
+],
+[
+"desktop_launch",
+{
+"application": {
+"path": "/tmp/dt2-manage/ManageQuit.app"
+}
+}
+],
+[
+"desktop_launch",
+{
+"application": {
+"path": "/tmp/dt2-manage/ManageQuit.app"
+}
+}
+],
+[
+"desktop_open",
+{
+"item": {
+"path": "/tmp/dt2-manage/items/note.txt"
+},
+"application": {
+"path": "/tmp/dt2-manage/ManageQuit.app"
+}
+}
+],
+[
+"desktop_open",
+{
+"item": {
+"url": "file:///tmp/dt2-manage/items/note.txt"
+},
+"application": {
+"path": "/tmp/dt2-manage/ManageQuit.app"
+}
+}
+],
+[
+"desktop_quit",
+{
+"target": "$app:ManageQuit"
+}
+]
+]
