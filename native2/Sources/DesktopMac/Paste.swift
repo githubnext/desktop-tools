@@ -385,6 +385,12 @@ extension Mac {
 			}
 			try validateBaseline()
 			try folder?.validate()
+			// An app that isn't active drops a background paste until its window is key.
+			if !Mac.isActive(target.window) {
+				_ = try prepareBackgroundWindow(target.window)
+				try validateBaseline()
+				try folder?.validate()
+			}
 			possibleInput = true
 			reserved = !replace
 			let delivery = try press(chord("v", modifiers: ["command"]), target: target)
@@ -399,6 +405,11 @@ extension Mac {
 			reserved = false
 			report.outcome = "refused"
 			report.error = errorJSON("LITERAL_INSERT_FAILED", refusal.message, hint: refusal.hint, cause: refusal.cause)
+		} catch let stopped as PreparationStopped {
+			// Nothing was pasted, but the app may have seen the activation or the title-bar click.
+			report.outcome = "unknown"
+			report.error = errorJSON("LITERAL_INSERT_FAILED", "Background keyboard preparation did not finish, so no keys or paste were sent. Its window activation or title-bar click may have reached the app; observe before another input.",
+			                         hint: "Observe the target again before retrying.", cause: stopped.cause)
 		} catch {
 			report.outcome = possibleInput ? "unknown" : "refused"
 			report.error = errorJSON("LITERAL_INSERT_FAILED", (error as? ToolError)?.message ?? String(describing: error))

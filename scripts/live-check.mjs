@@ -567,6 +567,9 @@ async function finderListFocus(s, m) {
 	const first = await finderTable(s);
 	const row = first.table?.rows?.find((r) => r.element) ?? skip("no Finder row has an ID");
 	await m.call("desktop_click", { snapshot: first.snap, element: row.element });
+	// A background Finder window has no blank title bar to make it key, so a files paste needs Finder forward; Node's
+	// desktop_open brings it forward, and native2's opens it in the background (#162).
+	await m.call("desktop_focus", { target: first.win.info.target });
 	return s.inspect(first.win);
 }
 
