@@ -55,7 +55,7 @@ All 48 tools in the contract run in the Swift host. Every calls file agrees with
 | calls-core | 62 |
 | calls-inspect | 25 |
 | calls-keys | 15 |
-| calls-manage | 166 |
+| calls-manage | 165 |
 | calls-menus | 96 |
 | calls-pointer | 39 |
 | calls-spaces | 9 |
@@ -64,6 +64,20 @@ All 48 tools in the contract run in the Swift host. Every calls file agrees with
 | calls-wait | 19 |
 
 Run calls-text between `clip save` and `clip restore`, since it writes the clipboard. The steps files act on live windows; they and `node scripts/live-check.mjs --server native2/.build/release/desktop-tools-mcp` need an unlocked session.
+
+Final results are compacted as Node's are (#144), by a port of `src/compact.ts` that CoreTests check against `dist/compact.js` on `test/fixtures/compact`. Internal reads, such as notifications reading the Notification Center window, use `Tools.whole` and keep the full shape. `DESKTOP_TOOLS_VERBOSE=1` turns compaction off.
+
+The steps files that stay in the background, run on an unlocked session:
+
+| File | Same as Node |
+|---|---|
+| steps-core | 18 of 18 |
+| steps-menus | 15 of 15 |
+| steps-dialogs, without its Dock step | 7 of 7 |
+| steps-text, without fill_password | 43 of 45 |
+| steps-inspect, steps-system | all but environmental diffs |
+
+The two steps-text diffs are reads of a field both runs insert into, one after the other. steps-inspect and steps-system differ only where the desktop changed between the runs (Node's 8 s OCR timeout, a terminal's title spinner, a transient window). steps-pointer, steps-manage and the Dock step move the real pointer or bring apps forward, so they haven't been run live. live-check's clipboard and system-state checks (#96, #83) pass; its other checks open TextEdit, Finder and browser windows.
 
 More intended differences, beyond the route and diagnostics above:
 

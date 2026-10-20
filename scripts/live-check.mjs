@@ -894,7 +894,8 @@ check(83, "desktop_apps reports system state: unlocked session, focus and keyboa
 	const sources = await m.call("desktop_input_source", {});
 	const layout = sys.input?.keyboard_layout?.id;
 	return expect(
-		sys.session?.locked === false && sys.focus?.pid > 0 && layout && layout === sources.data.keyboard_layout,
+		// Compact results leave out the session's false fields, so an unlocked session has no locked field.
+		sys.session && sys.session.locked !== true && sys.focus?.pid > 0 && layout && layout === sources.data.keyboard_layout,
 		`locked ${sys.session?.locked}; focus ${sys.focus?.app_name}; layout ${layout} vs input source ${sources.data.keyboard_layout}`,
 	);
 });
