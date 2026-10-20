@@ -4,7 +4,7 @@
 //   node native2/scripts/parity.mjs calls <file.json>   each [tool, args], sent as is
 //   node native2/scripts/parity.mjs steps <file.json>   each [tool, args] after a fresh inspect of the fixture window
 //
-// In steps, "$snapshot" becomes the fresh snapshot's ID, "$role:AXTextField" the first element with that role, and
+// In steps, "$app" and "$window_target" become the fixture's desktop_apps and desktop_windows targets, "$snapshot" the fresh snapshot's ID, "$role:AXTextField" the first element with that role, and
 // "$label:Press me" the first element with that label. Objects are compared with sorted keys; snapshot IDs, process
 // start identities, the route (local in Swift, bridge in Node), timings and the observation's own fields are ignored, so an
 // action compares by its action object and the observation's field names.
@@ -88,15 +88,16 @@ async function run(command) {
 		if (!app) throw new Error(`${values.app} isn't running.`);
 		const window = json(await mcp.call("desktop_windows", { pid: app.pid })).windows?.find((row) => row.window_title === values.window);
 		if (!window) throw new Error(`${values.app} has no window titled ${values.window}.`);
-		target = { pid: app.pid, window: window.window_id };
+		target = { pid: app.pid, window: window.window_id, app: app.target, windowTarget: window.target };
 	}
 	const results = [];
 	for (const [tool, args] of entries) {
 		let text = JSON.stringify(args ?? {});
 		if (mode === "steps") {
-			text = text.replaceAll('"$pid"', String(target.pid)).replaceAll('"$window"', String(target.window));
+			text = text.replaceAll('"$pid"', String(target.pid)).replaceAll('"$window"', String(target.window))
+				.replaceAll('"$app"', JSON.stringify(target.app)).replaceAll('"$window_target"', JSON.stringify(target.windowTarget));
 			if (text.includes('"$')) {
-				const observed = json(await mcp.call("desktop_inspect", target));
+				const observed = json(await mcp.call("desktop_inspect", { pid: target.pid, window: target.window }));
 				text = text.replaceAll('"$snapshot"', JSON.stringify(observed.snapshot_id)).replace(/"\$(role|label):([^"]*)"/g, (_, kind, wanted) => {
 					const found = observed.ui_elements?.find((element) => kind === "role" ? element.attributes?.role === wanted : element.label === wanted);
 					return JSON.stringify(found?.id ?? `missing ${kind} ${wanted}`);

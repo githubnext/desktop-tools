@@ -1,0 +1,17 @@
+[
+	["desktop_menus", {"target": "$app"}],
+	["desktop_menus", {"target": "$app", "path": ["Fixture", "More"]}],
+	["desktop_menus", {"target": "$app", "path": ["Fixture", "Twin"]}],
+	["desktop_menus", {"target": "$app", "path": ["Nope"]}],
+	["desktop_menus", {"target": "$app", "path": ["Fixture", "Nope"]}],
+	["desktop_menu", {"target": "$app", "path": ["Fixture", "Plain"]}],
+	["desktop_menu", {"target": "$app", "path": ["Fixture", "More", "Leaf B"]}],
+	["desktop_menu", {"target": "$app", "path": ["Fixture", "Disabled Item"]}],
+	["desktop_menu", {"target": "$app", "path": ["Fixture", "Twin"]}],
+	["desktop_menu", {"target": "$app", "path": ["Fixture", "Save"]}],
+	["desktop_menu", {"target": "$app", "path": ["Fixture", "More"]}],
+	["desktop_menu", {"target": "$app", "path": ["Fixture"]}],
+	["desktop_menu", {"target": "$app", "path": ["Nope", "X"]}],
+	["desktop_menu", {"target": "$app", "path": ["Fixture", "More", "Nope"]}],
+	["desktop_menu", {"target": "$app", "path": ["Fixture", "Plain", "Deeper"]}]
+]

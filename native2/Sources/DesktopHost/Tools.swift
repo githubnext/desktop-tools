@@ -5,7 +5,8 @@ import Foundation
 
 /// Runs one MCP tool call in the host, which is the process macOS's grants attach to.
 public enum Tools {
-	static let actionTools: Set = ["desktop_click", "desktop_key", "desktop_type", "desktop_scroll", "desktop_drag", "desktop_hover"]
+	static let actionTools: Set = ["desktop_click", "desktop_key", "desktop_type", "desktop_scroll", "desktop_drag", "desktop_hover",
+		"desktop_menu", "desktop_dialog_answer", "desktop_menubar_click"]
 	static let expectTools: Set = ["desktop_click", "desktop_key", "desktop_system_key", "desktop_drag", "desktop_insert"]
 
 	public static func call(_ name: String, arguments: JSON) async -> ToolResult {
@@ -33,6 +34,8 @@ public enum Tools {
 			case "desktop_scroll": return try await scroll(arguments)
 			case "desktop_drag": return try await drag(arguments)
 			case "desktop_hover": return try await hover(arguments)
+			case "desktop_menus": return try await menus(arguments)
+			case "desktop_menu": return try await menu(arguments)
 			default:
 				return ToolResult(text: "\(name) isn't in the Swift spike yet.", isError: true)
 			}
