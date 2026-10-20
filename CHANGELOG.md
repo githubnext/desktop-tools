@@ -4,6 +4,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-19
+
 ### Added
 
 - `desktop_select` selects text on a PDF page in Preview. It was refused because the page's text reports itself disabled and has no selection until one is set. To copy it, activate Preview and choose Edit > Copy, since Preview disables Copy in the background. ([#130](https://github.com/githubnext/desktop-tools/issues/130))
@@ -243,7 +245,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The first release: a signed, notarized Desktop Tools menu bar app, and the desktop tools served over MCP. ([#28](https://github.com/githubnext/desktop-tools/pull/28), [#29](https://github.com/githubnext/desktop-tools/pull/29), [#12](https://github.com/githubnext/desktop-tools/pull/12))
 
-[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/githubnext/desktop-tools/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/githubnext/desktop-tools/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/githubnext/desktop-tools/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/githubnext/desktop-tools/compare/v0.13.1...v0.14.0
