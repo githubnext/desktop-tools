@@ -13,7 +13,7 @@ let package = Package(
 		.library(name: "DesktopTools", type: .dynamic, targets: ["DesktopTools"]),
 	],
 	targets: [
-		.target(name: "DesktopProtocol", resources: [.copy("contract")]),
+		.target(name: "DesktopProtocol"),
 		.target(name: "DesktopCore", dependencies: ["DesktopProtocol"]),
 		.target(name: "DesktopMac", dependencies: ["DesktopProtocol"], linkerSettings: [.linkedLibrary("bsm")]),
 		.target(name: "DesktopHost", dependencies: ["DesktopProtocol", "DesktopCore", "DesktopMac"]),
