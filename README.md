@@ -7,24 +7,23 @@ Native macOS desktop inspection and input for agents: a Swift runtime that a sig
 
 ## Set up for an agent
 
-You need macOS 15 or later and Node 22 or later. The MCP server runs from this repository through `npx`; the package isn't on the npm registry.
+You need macOS 15 or later. The MCP server ships inside the app.
 
 1. **Install the app.** Download the DMG from the [latest release](https://github.com/githubnext/desktop-tools/releases/latest), drag **Desktop Tools** to Applications, and open it. It runs in the menu bar.
 2. **Grant permissions.** From its menu, grant Accessibility, Screen Recording and Keyboard input. The grants belong to the app, not to your terminal or agent.
-3. **Add the MCP server** to your client. The `#v…` suffix pins a release tag; leave it off to follow `main`.
+3. **Add the MCP server** to your client. It is `desktop-tools-mcp` inside the app.
 
    Claude Code:
 
    ```sh
-   claude mcp add desktop -- npx -y --package=github:githubnext/desktop-tools#v0.16.1 desktop-tools-mcp
+   claude mcp add desktop -- "/Applications/Desktop Tools.app/Contents/MacOS/desktop-tools-mcp"
    ```
 
    Codex, in `~/.codex/config.toml`:
 
    ```toml
    [mcp_servers.desktop]
-   command = "npx"
-   args = ["-y", "--package=github:githubnext/desktop-tools#v0.16.1", "desktop-tools-mcp"]
+   command = "/Applications/Desktop Tools.app/Contents/MacOS/desktop-tools-mcp"
    ```
 
    Other MCP clients that start stdio servers from JSON, such as Cursor or Claude Desktop:
@@ -33,12 +32,13 @@ You need macOS 15 or later and Node 22 or later. The MCP server runs from this r
    {
      "mcpServers": {
        "desktop": {
-         "command": "npx",
-         "args": ["-y", "--package=github:githubnext/desktop-tools#v0.16.1", "desktop-tools-mcp"]
+         "command": "/Applications/Desktop Tools.app/Contents/MacOS/desktop-tools-mcp"
        }
      }
    }
    ```
+
+   A setup from before 0.17.0 that runs `npx -y --package=github:githubnext/desktop-tools#v0.17.0 desktop-tools-mcp` (Node 22 or later) keeps working: it hands over to the app's server.
 
 4. **Verify.** Ask the agent to call `desktop_apps`. It should list the running apps with an `inventory_completeness` of `complete`. If it says the socket is missing, open the app.
 
