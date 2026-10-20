@@ -33,6 +33,10 @@ public enum Tools {
 			case "desktop_scroll": return try await scroll(arguments)
 			case "desktop_drag": return try await drag(arguments)
 			case "desktop_hover": return try await hover(arguments)
+			case "desktop_screen": return try await screen(arguments)
+			case "desktop_spaces": return try await spaces(arguments)
+			case "desktop_notifications": return try await notifications(arguments)
+			case "desktop_notification_action": return await notificationAction(arguments)
 			default:
 				return ToolResult(text: "\(name) isn't in the Swift spike yet.", isError: true)
 			}
