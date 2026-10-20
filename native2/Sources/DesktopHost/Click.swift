@@ -8,23 +8,15 @@ import Foundation
 extension Tools {
 	static func click(_ arguments: JSON) async throws -> ToolResult {
 		let snapshotID = try snapshotArgument(arguments)
-		let element = arguments["element"]
-		let point = arguments["point"]
-		guard (element == nil) != (point == nil) else {
-			throw ToolError("Choose exactly one observed element ID or normalized screenshot point.")
-		}
-		let fraction = try Tools.fraction(point)
-		if point == nil, element?.string.map({ (1...256).contains($0.count) }) != true {
-			throw ToolError("Choose an element ID from the inspected snapshot.")
-		}
+		let (element, fraction) = try target(arguments)
 		guard let kind = ClickKind(rawValue: arguments["kind"]?.string ?? "single") else {
 			throw ToolError("Choose single, double, right, middle, or triple click.")
 		}
 		if arguments["modifiers"] != nil { throw ToolError("desktop_click's modifiers isn't in the Swift spike yet.") }
 		if let expect = try expectation(arguments) {
-			return try await expectAfter(expect) { try await clickOnce(snapshotID, element: element?.string, fraction: fraction, kind: kind) }
+			return try await expectAfter(expect) { try await clickOnce(snapshotID, element: element, fraction: fraction, kind: kind) }
 		}
-		return try await clickOnce(snapshotID, element: element?.string, fraction: fraction, kind: kind)
+		return try await clickOnce(snapshotID, element: element, fraction: fraction, kind: kind)
 	}
 
 	private static func clickOnce(_ snapshotID: String, element: String?, fraction: CGPoint?, kind: ClickKind) async throws -> ToolResult {

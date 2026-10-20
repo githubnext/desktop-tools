@@ -5,7 +5,22 @@ import Foundation
 
 /// Runs one MCP tool call in the host, which is the process macOS's grants attach to.
 public enum Tools {
+	static let actionTools: Set = ["desktop_click", "desktop_key", "desktop_type", "desktop_scroll", "desktop_drag", "desktop_hover"]
+	static let expectTools: Set = ["desktop_click", "desktop_key", "desktop_system_key", "desktop_drag", "desktop_insert"]
+
 	public static func call(_ name: String, arguments: JSON) async -> ToolResult {
+		// Node checks expect before the action's own arguments.
+		if expectTools.contains(name), arguments["expect"] != nil {
+			do {
+				_ = try expectation(arguments)
+			} catch {
+				let action: JSON = .object([
+					("outcome", "refused"), ("reason", JSON((error as? ToolError)?.message ?? String(describing: error))),
+					("message", "No input was sent."),
+				])
+				return ToolResult(text: JSON.object([("action", action)]).text, outcome: "refused", isError: true)
+			}
+		}
 		do {
 			switch name {
 			case "desktop_apps": return try await apps(arguments)
@@ -15,9 +30,19 @@ public enum Tools {
 			case "desktop_wait": return try await wait(arguments)
 			case "desktop_key": return try await key(arguments)
 			case "desktop_type": return try await type(arguments)
+			case "desktop_scroll": return try await scroll(arguments)
+			case "desktop_drag": return try await drag(arguments)
+			case "desktop_hover": return try await hover(arguments)
 			default:
 				return ToolResult(text: "\(name) isn't in the Swift spike yet.", isError: true)
 			}
+		} catch let error as ToolError where actionTools.contains(name) {
+			// Node checks an action's arguments inside its action runner, so a bad argument is a refused action.
+			let action: JSON = .object([
+				("outcome", "refused"), ("reason", JSON(error.message)),
+				("message", "The desktop action was not sent to the native desktop."),
+			])
+			return ToolResult(text: JSON.object([("action", action)]).text, outcome: "refused", isError: true)
 		} catch let error as ToolError {
 			return ToolResult(text: error.message, isError: true)
 		} catch {

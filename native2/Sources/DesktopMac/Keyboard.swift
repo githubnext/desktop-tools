@@ -53,6 +53,18 @@ public struct KeyboardTarget: Sendable {
 	}
 }
 
+/// A contract key name, or one character that is neither a control, format or separator character.
+public func isDesktopKey(_ key: String) -> Bool {
+	if namedKeys[key] != nil { return true }
+	guard key.unicodeScalars.count == 1 || key.count == 1 && !key.isEmpty else { return false }
+	return key.unicodeScalars.allSatisfy { scalar in
+		switch scalar.properties.generalCategory {
+		case .control, .format, .surrogate, .privateUse, .unassigned, .spaceSeparator, .lineSeparator, .paragraphSeparator: false
+		default: true
+		}
+	}
+}
+
 extension Mac {
 	/// Resolves a named key, or the one character a key types on the current layout, refusing characters that
 	/// need Shift or Option so the model sends the modifier explicitly.
@@ -164,7 +176,7 @@ extension Mac {
 		var sent = 6
 		let source = CGEventSource(stateID: .hidSystemState)
 		for character in text {
-			do { try requireKeyboardFocus(target) } catch {
+			do { _ = try requireKeyboardFocus(target) } catch {
 				return Delivery(state: .indeterminate, mechanism: "window_targeted_events", evidence: "completion_unknown", units: sent)
 			}
 			let units = Array(String(character).utf16)

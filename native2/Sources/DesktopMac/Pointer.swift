@@ -39,6 +39,9 @@ public struct Delivery: Sendable {
 	/// Set when a tool demands more than delivery, as web typing demands a read-back.
 	public var unverified = false
 
+	/// foreground for input through the real pointer.
+	public var mode = "background"
+
 	/// completed, or unknown when the input may not have finished.
 	public var outcome: String {
 		unverified || state == .indeterminate || evidence == "operation_still_running" ? "unknown" : "completed"
@@ -51,7 +54,7 @@ public struct Delivery: Sendable {
 			"effect": JSON(confirmed ? "confirmed" : "unverifiable"),
 			"route": "local",
 			"delivery_mechanism": mechanism.map(JSON.string),
-			"delivery_mode": mechanism == nil ? nil : "background",
+			"delivery_mode": mechanism == nil ? nil : JSON(mode),
 			"evidence": JSON(evidence),
 			"dispatch_state": JSON(state == .confirmedNoChange ? "none" : state == .indeterminate ? "may_have_dispatched" : "dispatched"),
 			"dispatched_unit_count": units.map { JSON($0) },
@@ -68,17 +71,31 @@ public struct Unsupported: Error {}
 public struct Refusal: Error {
 	public let code: String
 	public let message: String
-	public init(_ code: String, _ message: String) {
+	public let hint: String?
+	public let cause: String?
+	/// Whether the result carries the refused native outcome, as host refusals do; the native client's own
+	/// checks refuse without one.
+	public let fromHost: Bool
+	public init(_ code: String, _ message: String, hint: String? = nil, cause: String? = nil, fromHost: Bool = true) {
 		self.code = code
 		self.message = message
+		self.hint = hint
+		self.cause = cause
+		self.fromHost = fromHost
 	}
 
-	/// The host's refused outcome; refusals here all name a target that can't take the click.
-	public static let outcome: JSON = .object([
-		("state", "refused"), ("effect", "refused"), ("route", "local"), ("evidence", "request_refused"),
-		("dispatch_state", "none"), ("retry_safety", "safe"), ("escalation", "refresh_target"),
-		("refusal_reason", "target_unavailable"),
-	])
+	/// target_unavailable, or operation_unsupported when no route exists for this kind of target.
+	public var reason = "target_unavailable"
+
+	/// The host's refused outcome.
+	public var outcome: JSON {
+		.object([
+			("state", "refused"), ("effect", "refused"), ("route", "local"), ("evidence", "request_refused"),
+			("dispatch_state", "none"), ("retry_safety", "safe"),
+			("escalation", JSON(reason == "operation_unsupported" ? "correct_request" : "refresh_target")),
+			("refusal_reason", JSON(reason)),
+		])
+	}
 }
 
 public enum ClickKind: String, Sendable {
@@ -240,7 +257,7 @@ extension Mac {
 		return AXUIElementIsAttributeSettable(element, attribute as CFString, &value) == .success && value.boolValue
 	}
 
-	private static func actions(_ element: AXUIElement) -> [String] {
+	static func actions(_ element: AXUIElement) -> [String] {
 		var names: CFArray?
 		return AXUIElementCopyActionNames(element, &names) == .success ? names as? [String] ?? [] : []
 	}
@@ -269,46 +286,20 @@ extension Mac {
 	/// Double, triple, right and middle clicks as real mouse events posted to the window's process with
 	/// the window under the pointer named, so the app handles them in that window without activating.
 	public static func routedClick(at point: CGPoint, kind: ClickKind, window: ClickWindow) throws -> Delivery {
-		guard let setWindowLocation = skyLight.setWindowLocation else {
-			throw Refusal("UNSUPPORTED", "This macOS lacks the event routing a background click needs.")
-		}
-		let usesSkyLight = routesThroughSkyLight(window.pid)
-		if usesSkyLight, skyLight.postToPid == nil {
-			throw Refusal("UNSUPPORTED", "This macOS lacks the event routing a background click in this app needs.")
-		}
 		guard window.bounds.contains(point) else {
 			throw Refusal("POINT_OUTSIDE_WINDOW", "The point is outside the exact window.")
 		}
+		var router = try Router(window)
 		let (button, down, up): (CGMouseButton, CGEventType, CGEventType) = switch kind {
 		case .right: (.right, .rightMouseDown, .rightMouseUp)
 		case .middle: (.center, .otherMouseDown, .otherMouseUp)
 		default: (.left, .leftMouseDown, .leftMouseUp)
 		}
 		let count = kind == .double ? 2 : kind == .triple ? 3 : 1
-		let source = CGEventSource(stateID: .hidSystemState)
-		let group = Int64(bitPattern: DispatchTime.now().uptimeNanoseconds)
-		var posted = 0
+		let group = Router.newGroup()
 		func post(_ type: CGEventType, clickState: Int64) throws {
-			// Re-checked before every event, so input never follows a window that moved or closed.
-			do { try window.check() } catch {
-				if posted > 0 { throw RoutedInterrupted(posted: posted) }
-				throw error
-			}
-			guard let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: button) else {
-				throw RoutedInterrupted(posted: posted)
-			}
-			event.flags = []
-			event.setIntegerValueField(.mouseEventClickState, value: clickState)
-			event.setIntegerValueField(.mouseEventButtonNumber, value: Int64(button.rawValue))
-			event.setIntegerValueField(.mouseEventSubtype, value: 3)
-			event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(window.pid))
-			for field in [51, 91, 92] {
-				event.setIntegerValueField(CGEventField(rawValue: UInt32(field))!, value: Int64(window.windowID))
-			}
-			event.setIntegerValueField(CGEventField(rawValue: 58)!, value: group)
-			setWindowLocation(event, CGPoint(x: point.x - window.bounds.minX, y: point.y - window.bounds.minY))
-			if usesSkyLight { skyLight.postToPid!(window.pid, event) } else { event.postToPid(window.pid) }
-			posted += 1
+			guard let event = router.mouse(type, at: point, button: button, clickState: clickState) else { throw Router.Interrupted() }
+			try router.post(event, at: point, group: group)
 		}
 		do {
 			try post(.mouseMoved, clickState: 0)
@@ -319,15 +310,15 @@ extension Mac {
 				try post(up, clickState: Int64(index))
 				if index < count { Thread.sleep(forTimeInterval: 0.08) }
 			}
-		} catch is RoutedInterrupted {
-			return Delivery(state: .indeterminate, mechanism: "window_targeted_events", evidence: "completion_unknown", units: posted)
+		} catch is Router.Interrupted {
+			return Delivery(state: .indeterminate, mechanism: "window_targeted_events", evidence: "completion_unknown", units: router.posted)
 		}
 		// Peekaboo counts every event posted, the pointer move included.
-		return .accepted("window_targeted_events", units: posted)
+		return .accepted("window_targeted_events", units: router.posted)
 	}
 
 	/// Chromium, Electron and Catalyst apps take routed events only through SkyLight's post.
-	private static func routesThroughSkyLight(_ pid: pid_t) -> Bool {
+	static func routesThroughSkyLight(_ pid: pid_t) -> Bool {
 		guard let app = NSRunningApplication(processIdentifier: pid), let url = app.bundleURL,
 		      let info = Bundle(url: url)?.infoDictionary else { return false }
 		let id = (app.bundleIdentifier ?? "").lowercased()
@@ -341,11 +332,7 @@ extension Mac {
 	}
 }
 
-private struct RoutedInterrupted: Error {
-	let posted: Int
-}
-
-private let skyLight: (setWindowLocation: (@convention(c) (CGEvent, CGPoint) -> Void)?, postToPid: (@convention(c) (pid_t, CGEvent) -> Void)?) = {
+let skyLight: (setWindowLocation: (@convention(c) (CGEvent, CGPoint) -> Void)?, postToPid: (@convention(c) (pid_t, CGEvent) -> Void)?) = {
 	_ = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY)
 	let location = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGEventSetWindowLocation")
 	let post = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "SLEventPostToPid")

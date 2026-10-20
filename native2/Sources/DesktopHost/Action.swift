@@ -8,14 +8,17 @@ extension Tools {
 	/// shares, as the native client and the Node server give them. `deliver` runs on its own thread after the
 	/// snapshot is spent; a Refusal it throws sends nothing and returns the snapshot.
 	static func act(
-		_ name: String, snapshotID: String, element id: String?, allowsDisabled: Bool = false,
+		_ name: String, snapshotID: String, element id: String?, allowsDisabled: Bool = false, early: Refusal? = nil,
 		precheck: (Snapshot, Element?) throws -> Void = { _, _ in },
 		deliver: @escaping @Sendable (Snapshot, Element?) throws -> Delivery
 	) async -> ToolResult {
 		var action: [(String, JSON)] = [("outcome", "refused"), ("action", JSON(name)), ("snapshot_id", JSON(snapshotID))]
 		var receipt: JSON?
-		func refused(_ code: String, _ message: String, fresh: Bool, native: JSON? = nil) async -> ToolResult {
-			action += [("requires_fresh_observation", JSON(fresh)), ("error", .object([("code", JSON(code)), ("message", JSON(message))]))]
+		func refused(_ code: String, _ message: String, hint: String? = nil, cause: String? = nil, fresh: Bool, native: JSON? = nil) async -> ToolResult {
+			var error: [(String, JSON)] = [("code", JSON(code)), ("message", JSON(message))]
+			if let hint { error.append(("hint", JSON(hint))) }
+			if let cause { error.append(("cause", JSON(cause))) }
+			action += [("requires_fresh_observation", JSON(fresh)), ("error", .object(error))]
 			if let native { action.append(("native_outcome", native)) }
 			if let receipt { action.append(("target_receipt", receipt)) }
 			// A refusal from a window that is no longer available says why, as the Node server's explainRefusal does.
@@ -28,8 +31,10 @@ extension Tools {
 			return ToolResult(text: JSON.object([("action", .object(action))]).text, outcome: "refused", isError: true)
 		}
 
+		// The native client refuses some requests before it looks the snapshot up.
+		if let early { return await refused(early.code, early.message, hint: early.hint, cause: early.cause, fresh: false) }
 		guard let observed = await Snapshots.shared.get(snapshotID) else {
-			return await refused("invalidRequest", "Snapshot '\(snapshotID)' is unknown or expired. Inspect the window again.", fresh: false)
+			return await refused("invalidRequest", "Invalid producer-bound snapshot reference", fresh: true)
 		}
 		receipt = .object([
 			("pid", JSON(observed.pid)), ("window_id", JSON(observed.windowID)),
@@ -46,7 +51,7 @@ extension Tools {
 			target = found
 		}
 		do { try precheck(observed, target) } catch let refusal as Refusal {
-			return await refused(refusal.code, refusal.message, fresh: false)
+			return await refused(refusal.code, refusal.message, hint: refusal.hint, cause: refusal.cause, fresh: false)
 		} catch {
 			return await refused("invalidRequest", (error as? ToolError)?.message ?? String(describing: error), fresh: false)
 		}
@@ -62,7 +67,7 @@ extension Tools {
 			delivery = try await run { try deliver(snapshot, chosen) }
 		} catch let refusal as Refusal {
 			await Snapshots.shared.release(snapshotID)
-			return await refused(refusal.code, refusal.message, fresh: false, native: Refusal.outcome)
+			return await refused(refusal.code, refusal.message, hint: refusal.hint, cause: refusal.cause, fresh: false, native: refusal.fromHost ? refusal.outcome : nil)
 		} catch {
 			// Anything else may have happened mid-delivery.
 			action[0] = ("outcome", "unknown")
@@ -104,10 +109,10 @@ extension Tools {
 	/// A normalized screenshot point from the arguments.
 	static func fraction(_ value: JSON?) throws -> CGPoint? {
 		guard let value else { return nil }
-		guard let x = value["x"]?.number, let y = value["y"]?.number else {
+		guard let keys = value.keys, keys.contains("x"), keys.contains("y") else {
 			throw ToolError("Choose a normalized screenshot point with x and y coordinates.")
 		}
-		guard [x, y].allSatisfy({ $0.isFinite && $0 >= 0 && $0 < 1 }) else {
+		guard let x = value["x"]?.number, let y = value["y"]?.number, [x, y].allSatisfy({ $0.isFinite && $0 >= 0 && $0 < 1 }) else {
 			throw ToolError("Screenshot point coordinates must be at least 0 and less than 1.")
 		}
 		return CGPoint(x: x, y: y)
