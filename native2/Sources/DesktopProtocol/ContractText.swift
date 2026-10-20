@@ -18,6 +18,7 @@ After completed, interrupted, or uncertain input, inspect the current target bef
 Find targets with desktop_apps and desktop_windows, and pass them back unchanged; a stale target is refused, never redirected. Check a window's availability before acting: its hint names the tool that recovers it.
 Input acts on a desktop_inspect snapshot: pass its snapshot_id, with element IDs from it or points as fractions of its screenshot from the top-left. Each snapshot is single-use; inspect again after every action.
 Input is background unless its tool says foreground: background input reaches the exact window without moving the pointer or changing the frontmost app, while foreground input uses the real pointer or keys, or brings an app forward.
+Work in the background so the user's typing isn't taken: launch and open apps without activate, and bring an app forward only for a step whose tool says foreground or when the user asks to see it.
 completed means the host delivered the input to the exact target, or read the change back where the tool says so; unknown means it may or may not have taken effect; refused means nothing was sent.
 If a refusal says input is paused, the user paused agent input in Desktop Tools: tell them, and wait for them to resume it from its menu. Observing still works; don't retry or work around the pause.
 CALLER_NOT_APPROVED means the user hasn't allowed this agent in Desktop Tools, which asks them once per agent: tell them to choose Allow in its prompt or under Approved Agents in its menu, then retry. SELF_TARGET_REFUSED means the input would reach Desktop Tools's own menu, prompt or window, which only the user may answer: ask them, and don't work around it.
@@ -206,7 +207,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 	},
 	{
 		"name": "desktop_launch",
-		"description": "Launch or activate one app by absolute .app path or exact bundle ID. Foreground: it brings the app forward and may switch Spaces. Completed means it is running, not that a window is ready; created_windows lists windows that appeared (attribution exclusive, ambiguous or none). Opens no documents (use desktop_open), extra instances or relaunches. Timeout or interruption is unknown: the app may still open, so check desktop_apps before launching again.",
+		"description": "Launch one app by absolute .app path or exact bundle ID. Background unless activate is true: macOS starts the app or hands it the item without bringing it forward, so the user keeps typing where they are. Pass activate only when a later step is foreground or the user asks to see the app; activate brings the app forward and may switch Spaces. Completed means it is running, not that a window is ready; created_windows lists windows that appeared (attribution exclusive, ambiguous or none). Opens no documents (use desktop_open), extra instances or relaunches. Timeout or interruption is unknown: the app may still open, so check desktop_apps before launching again.",
 		"inputSchema": {
 			"type": "object",
 			"required": [
@@ -244,6 +245,9 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 							"additionalProperties": false
 						}
 					]
+				},
+				"activate": {
+					"type": "boolean"
 				}
 			},
 			"additionalProperties": false
@@ -254,7 +258,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 	},
 	{
 		"name": "desktop_open",
-		"description": "Open one existing absolute path (file, folder or app) or one complete, already-encoded URL, in application (path or bundle ID) or the default handler. Foreground: the receiving app comes forward and may switch Spaces. Completed means macOS accepted it, not that it loaded; created_windows lists new windows as for desktop_launch. A file URL with a query or fragment is refused (serve it over http). After an unknown result, observe the receiving app before opening again.",
+		"description": "Open one existing absolute path (file, folder or app) or one complete, already-encoded URL, in application (path or bundle ID) or the default handler. Background unless activate is true: macOS starts the app or hands it the item without bringing it forward, so the user keeps typing where they are. Pass activate only when a later step is foreground or the user asks to see the app; activate brings the app forward and may switch Spaces. Completed means macOS accepted it, not that it loaded; created_windows lists new windows as for desktop_launch. A file URL with a query or fragment is refused (serve it over http). After an unknown result, observe the receiving app before opening again.",
 		"inputSchema": {
 			"type": "object",
 			"required": [
@@ -324,6 +328,9 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 							"additionalProperties": false
 						}
 					]
+				},
+				"activate": {
+					"type": "boolean"
 				}
 			},
 			"additionalProperties": false

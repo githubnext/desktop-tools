@@ -867,9 +867,11 @@ extension Mac {
 		return Set(list.compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue })
 	}
 
-	/// Opens the app, or items in it or their default handler, in the foreground, then waits until it has
-	/// finished launching and is active. Ported from Peekaboo's performApplicationLaunchWithOutcomeOwnedLane.
-	public static func launch(path: String?, bundleID: String?, urls: [URL]) async throws(ManageFailure) -> Launched {
+	/// Opens the app, or items in it or their default handler, then waits until it has finished launching. In
+	/// the background unless `activate`, so the user keeps typing where they are (#162); with `activate`, it also
+	/// waits until the app is active. Ported from Peekaboo's performApplicationLaunchWithOutcomeOwnedLane.
+	public static func launch(path: String?, bundleID: String?, urls: [URL], activate: Bool) async throws(ManageFailure) -> Launched {
+		let mode = activate ? "foreground" : "background"
 		let hint = "Verify the application selector or launch options before choosing a new action."
 		var applicationURL: URL?
 		if let bundleID {
@@ -885,7 +887,7 @@ extension Mac {
 			applicationURL = URL(fileURLWithPath: expanded)
 		}
 		let configuration = NSWorkspace.OpenConfiguration()
-		configuration.activates = true
+		configuration.activates = activate
 		if path != nil { configuration.allowsRunningApplicationSubstitution = false }
 		let opened: NSRunningApplication
 		do {
@@ -906,7 +908,7 @@ extension Mac {
 				}
 			}
 		} catch {
-			throw ManageFailure(Outcome.indeterminate("native_framework", mode: "foreground", units: 1),
+			throw ManageFailure(Outcome.indeterminate("native_framework", mode: mode, units: 1),
 			                    "Launch application may have been dispatched, but completion is unknown.",
 			                    hint: "Observe the target state before retrying.", cause: String(describing: error))
 		}
@@ -919,7 +921,7 @@ extension Mac {
 					throw .commandFailed("Application changed process generation during launch readiness")
 				}
 			}
-			if !(await MainActor.run { opened.isActive }) {
+			if activate, !(await MainActor.run { opened.isActive }) {
 				if await MainActor.run(body: { opened.activate(options: [.activateAllWindows]) }) { units += 1 }
 			}
 			let ready = Date().addingTimeInterval(10)
@@ -930,24 +932,26 @@ extension Mac {
 				try? await Task.sleep(for: .milliseconds(100))
 			}
 			try check()
-			let active = Date().addingTimeInterval(2)
-			while !(await MainActor.run { opened.isActive }), Date() < active {
-				if await MainActor.run(body: { opened.activate(options: [.activateAllWindows]) }) { units += 1 }
-				try? await Task.sleep(for: .milliseconds(50))
+			if activate {
+				let active = Date().addingTimeInterval(2)
+				while !(await MainActor.run { opened.isActive }), Date() < active {
+					if await MainActor.run(body: { opened.activate(options: [.activateAllWindows]) }) { units += 1 }
+					try? await Task.sleep(for: .milliseconds(50))
+				}
+				guard await MainActor.run(body: { opened.isActive }) else {
+					throw .timeout("Application did not become active within 2 seconds: \(opened.localizedName ?? "unknown")")
+				}
+				try check()
 			}
-			guard await MainActor.run(body: { opened.isActive }) else {
-				throw .timeout("Application did not become active within 2 seconds: \(opened.localizedName ?? "unknown")")
-			}
-			try check()
 			// An explicit path is reported in one canonical spelling.
 			let bundlePath = path != nil ? applicationURL.map { $0.standardizedFileURL.resolvingSymlinksInPath().path } : opened.bundleURL?.path
 			// LaunchServices accepting a document or URL doesn't establish its effect.
-			let outcome = urls.isEmpty ? Outcome.change("native_framework", mode: "foreground", units: units)
-				: Outcome.unverified("native_framework", mode: "foreground", evidence: "delivery_accepted", units: units)
+			let outcome = urls.isEmpty ? Outcome.change("native_framework", mode: mode, units: units)
+				: Outcome.unverified("native_framework", mode: mode, evidence: "delivery_accepted", units: units)
 			return Launched(pid: pid, generation: generation, name: opened.localizedName ?? "Unknown", bundleID: opened.bundleIdentifier,
 			                path: bundlePath, outcome: outcome)
 		} catch {
-			throw ManageFailure(Outcome.unverified("native_framework", mode: "foreground", evidence: "operation_still_running", units: units),
+			throw ManageFailure(Outcome.unverified("native_framework", mode: mode, evidence: "operation_still_running", units: units),
 			                    "Launch application was dispatched, but completion could not be confirmed.",
 			                    hint: "Observe the target state before retrying.", cause: error.cause)
 		}
