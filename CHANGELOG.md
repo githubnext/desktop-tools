@@ -6,7 +6,7 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ### Changed
 
-- The agent's name label under the window outline is smaller and tighter, and edged in a darker shade of the outline color instead of white.
+- The agent's name label under the window outline is a point smaller and tighter, and edged in a darker shade of the outline color instead of white.
 
 ### Fixed
 
