@@ -335,9 +335,11 @@ private func rows(_ extras: [Extra]) -> [StatusItemRow] {
 	// The set's identity: any item added, removed, moved or renamed changes it.
 	let set = extras.enumerated().map { index, extra -> String in
 		let anchored = extra.identifier != nil || extra.windowID != nil
-		return [String(index), titles[index], String(extra.pid), extra.windowID.map(String.init) ?? "", extra.windowLayer.map(String.init) ?? "",
-		        anchored ? "" : extra.title, anchored ? "" : extra.label ?? "", extra.bundleID ?? "", extra.ownerName ?? "", extra.identifier ?? "",
-		        extra.source, "\(extra.frame.origin.x),\(extra.frame.origin.y)", String(extra.isVisible)].joined(separator: "\u{1f}")
+		// Typed in parts: one literal of every field takes the release build's type checker too long.
+		let owner: [String] = [String(index), titles[index], String(extra.pid), extra.windowID.map(String.init) ?? "", extra.windowLayer.map(String.init) ?? ""]
+		let names: [String] = [anchored ? "" : extra.title, anchored ? "" : extra.label ?? "", extra.bundleID ?? "", extra.ownerName ?? "", extra.identifier ?? ""]
+		let place: [String] = [extra.source, "\(extra.frame.origin.x),\(extra.frame.origin.y)", String(extra.isVisible)]
+		return (owner + names + place).joined(separator: "\u{1f}")
 	}.joined(separator: "\u{1e}")
 	return extras.enumerated().map { index, extra in
 		let generation = startIdentity(extra.pid).value
