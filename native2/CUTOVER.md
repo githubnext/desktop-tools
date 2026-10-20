@@ -54,7 +54,7 @@ Found while porting desktop_dialog_answer's path entry, which now follows Peekab
 | desktop_inspect Ghostty | 551 / 737 | 42 / 53 |
 | desktop_windows, missing pid | 69 / 115 | 5 / 6 |
 
-The outputs are the same size, except that an inspect is about 4.7 KB larger on native2.
+The outputs are the same size, except that an inspect is about 4.7 KB larger on native2. Its text is identical; the difference is the screenshot, about 3% larger at the same JPEG quality (70), because native2 scales with CoreGraphics and Node with `sips`.
 
 ### Intended differences
 
