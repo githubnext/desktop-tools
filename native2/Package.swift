@@ -21,8 +21,10 @@ let package = Package(
 		.target(name: "DesktopHost", dependencies: ["DesktopProtocol", "DesktopCore", "DesktopMac"]),
 		.executableTarget(name: "desktop-tools-host", dependencies: ["DesktopHost"]),
 		.target(name: "DesktopTools", dependencies: ["DesktopProtocol", "DesktopCore", "DesktopMac", "DesktopHost"]),
-		.executableTarget(name: "desktop-tools-mcp", dependencies: ["DesktopProtocol"]),
-		.executableTarget(name: "desktop-tools-client", dependencies: ["DesktopProtocol"]),
+		// How the client and MCP server bundled in the app find its socket, and open the app when nothing serves it.
+		.target(name: "DesktopAppLink"),
+		.executableTarget(name: "desktop-tools-mcp", dependencies: ["DesktopProtocol", "DesktopAppLink"]),
+		.executableTarget(name: "desktop-tools-client", dependencies: ["DesktopProtocol", "DesktopAppLink"]),
 		.testTarget(name: "CoreTests", dependencies: ["DesktopCore", "DesktopProtocol"]),
 		.testTarget(name: "RuntimeTests", dependencies: ["DesktopTools", "DesktopHost", "DesktopMac", "DesktopProtocol"]),
 	],

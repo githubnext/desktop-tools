@@ -94,9 +94,12 @@ if (values.native2) {
 	run(native2);
 	const located = spawn([...native2, "--show-bin-path"]);
 	if (located.status !== 0) throw new Error("Cannot locate the native2 build products");
-	for (const name of ["libDesktopTools.dylib", "desktop-tools-client"]) {
+	for (const name of ["libDesktopTools.dylib", "desktop-tools-client", "desktop-tools-mcp"]) {
 		copyFileSync(join(located.stdout.trim(), name), join(out, name));
 	}
+} else {
+	// native/ has no MCP binary, so one left by a native2 build would be bundled with the wrong host.
+	rmSync(join(out, "desktop-tools-mcp"), { force: true });
 }
 
 // Every artifact carries the notices of what it links; other files in <out>/Licenses stay.
