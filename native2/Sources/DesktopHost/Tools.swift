@@ -14,8 +14,21 @@ public enum Tools {
 	]
 	static let expectTools: Set = ["desktop_click", "desktop_key", "desktop_system_key", "desktop_drag", "desktop_insert"]
 
+	/// Returns native results whole, with detection metadata, timings, receipts and every window, instead of the
+	/// compact shape written for models, as Node's `DESKTOP_TOOLS_VERBOSE=1` does.
+	static let verbose = ProcessInfo.processInfo.environment["DESKTOP_TOOLS_VERBOSE"] == "1"
+
 	/// `client` is the connected MCP binary's pid, which names the caller the user approves.
 	public static func call(_ name: String, arguments: JSON, client: pid_t? = nil) async -> ToolResult {
+		var result = await whole(name, arguments: arguments, client: client)
+		if !verbose {
+			result.text = compactResult(result.text, allWindows: name == "desktop_windows" && arguments["all"] == .bool(true))
+		}
+		return result
+	}
+
+	/// The full native result, which internal reads such as desktop_notifications' take.
+	static func whole(_ name: String, arguments: JSON, client: pid_t? = nil) async -> ToolResult {
 		if let refusal = await admission(name, arguments: arguments, client: client) { return refused(name, refusal) }
 		Hooks.admitted()
 		// Node checks expect before the action's own arguments.
@@ -115,6 +128,7 @@ public enum Tools {
 	}
 
 	static func windows(_ arguments: JSON) async throws -> ToolResult {
+		if let all = arguments["all"], all.bool == nil { throw ToolError("Choose all true or false.") }
 		guard let pid = arguments["pid"]?.int.flatMap(Int32.init(exactly:)), pid > 0 else {
 			throw ToolError("Choose a positive application PID and window ID from the desktop inventory.")
 		}

@@ -144,7 +144,7 @@ private func entries(_ inspection: JSON, pid: Int, window: Int) -> [JSON] {
 
 /// What one read Node's notifications make through its own tools returns: parsed text, or the error it throws.
 private func observe(_ tool: String, _ arguments: JSON) async throws -> (data: JSON, isError: Bool) {
-	let result = await Tools.call(tool, arguments: arguments)
+	let result = await Tools.whole(tool, arguments: arguments)
 	guard let data = try? JSON(parsing: result.text), case .object = data else { throw ToolError(result.text) }
 	if result.isError, tool != "desktop_inspect" { throw ToolError(result.text) }
 	return (data, result.isError)

@@ -284,29 +284,26 @@ extension Tools {
 			guard let list = windows["windows"]?.array else { throw ToolError("Native window inventory is unavailable.") }
 			data.set("window_inventory_completeness", windows["inventory_completeness"])
 			data.set("window_inventory_warnings", windows["inventory_warnings"])
-			data.set("windows", .array(list))
+			let locked = windows["session_locked"]?.bool == true
+			let hidden = windows["app_hidden"]?.bool
+			let windowRows = list.map { row in
+				var row = row
+				row.set("availability", windowAvailability(row, sessionLocked: locked, appHidden: hidden))
+				return row
+			}
+			data.set("windows", .array(windowRows))
 			if list.contains(where: { $0["process_start_identity_decimal"] != identity }) {
 				throw ToolError("Later window inventory could not be bound to the original application generation.")
 			}
 			if applicationLevel || op == "close" { return managementResult(data, action: action, outcome: outcome) }
-			guard list.contains(where: { $0["window_id"]?.int == window }) else {
+			guard let row = windowRows.first(where: { $0["window_id"]?.int == window }) else {
 				throw ToolError("The exact window was not returned by the later inventory.")
 			}
-			// Minimizing removes the visible capture target; the refreshed inventory holds its state.
-			if op == "minimize" { return managementResult(data, action: action) }
-			let observation = try await inspect(.object([("pid", JSON(pid)), ("window", JSON(window!))]))
-			let fresh = try JSON(parsing: observation.text)
-			if observation.isError {
-				data.set("observation_error", fresh)
-				data.set("message", JSON(completedObservationError))
-				return managementResult(data, action: action)
-			}
-			guard fresh["target_receipt"]?["process_start_identity_decimal"] == identity else {
-				throw ToolError("The application changed process generation before the later inspection.")
-			}
-			var merged = data
-			for (key, value) in fresh.pairs ?? [] { merged.set(key, value) }
-			return ToolResult(text: try boundedObservation(merged), outcome: "completed", image: observation.image)
+			// A window action returns only that window's refreshed row, whose target the next call takes. Input needs a
+			// new snapshot, so the agent inspects next instead of paying for an inspection attached here.
+			data.set("windows", nil)
+			data.set("window", row)
+			return managementResult(data, action: action)
 		} catch {
 			data.set("observation_error", JSON((error as? ToolError)?.message ?? String(describing: error)))
 			data.set("message", JSON(outcome == "completed" ? completedObservationError

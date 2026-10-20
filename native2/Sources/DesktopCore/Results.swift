@@ -26,37 +26,38 @@ public struct ToolResult: Sendable {
 	}
 }
 
-/// Fits `field` within `limit` bytes by dropping its last values, those `keep` accepts only after all others.
+/// Fits `field` within `limit` bytes by dropping its last values, those `keep` accepts only after all others. The
+/// limit applies to the compact result a model reads; the text returned stays whole for internal reads.
 public func bounded(_ data: JSON, field: String, limit: Int = maxText, keep: ((JSON) -> Bool)? = nil) throws -> String {
 	guard let source = data[field]?.array else { throw ToolError("Native inspection returned no \(field) array.") }
 	var values = source
 	var value = data
 	value.set(field, .array(values))
-	var text = value.text
-	func truncated(_ kept: [JSON]) -> String {
+	func size(_ value: JSON) -> Int { compact(value, allWindows: true).text.utf8.count }
+	func truncated(_ kept: [JSON]) -> JSON {
 		var shorter = data
 		shorter.set(field, .array(kept))
 		shorter.set("truncated", true)
 		shorter.set("omitted", JSON(source.count - kept.count))
-		return shorter.text
+		return shorter
 	}
 	// Without `keep`, dropping from the end keeps the longest prefix that fits, so search for it
 	// rather than writing the whole result once per dropped value.
-	if keep == nil, text.utf8.count > limit {
+	if keep == nil, size(value) > limit {
 		var fits = 0
 		var over = values.count
 		while over - fits > 1 {
 			let mid = (fits + over) / 2
-			if truncated(Array(values[..<mid])).utf8.count <= limit { fits = mid } else { over = mid }
+			if size(truncated(Array(values[..<mid]))) <= limit { fits = mid } else { over = mid }
 		}
 		values = Array(values[..<fits])
-		text = truncated(values)
+		value = truncated(values)
 	}
-	while text.utf8.count > limit, !values.isEmpty {
+	while size(value) > limit, !values.isEmpty {
 		let index = keep.flatMap { keep in values.lastIndex { !keep($0) } } ?? values.count - 1
 		values.remove(at: index)
-		text = truncated(values)
+		value = truncated(values)
 	}
-	guard text.utf8.count <= limit else { throw ToolError("Native inspection metadata exceeds the result limit.") }
-	return text
+	guard size(value) <= limit else { throw ToolError("Native inspection metadata exceeds the result limit.") }
+	return value.text
 }

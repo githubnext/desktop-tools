@@ -99,7 +99,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 	},
 	{
 		"name": "desktop_apps",
-		"description": "List running apps on this Mac, optionally filtered by query (name or bundle ID). Read-only. Rows carry the target for app tools and the pid for desktop_windows. system gives desktop-wide state: focus (the frontmost app, window and focused element, where keys and desktop_system_key land), appearance, session (locked, displays asleep, secure_keyboard_entry, which blocks typing), input (keyboard layout, pointer) and menu bar/Dock autohide. Activity and visibility are unknown unless is_active_known/is_hidden_known; see metadata_warnings.",
+		"description": "List running apps on this Mac, optionally filtered by query (name or bundle ID). Read-only. Rows carry the target for app tools and the pid for desktop_windows; active and hidden appear when true. system gives desktop-wide state: focus (the frontmost app, window and focused element, where keys and desktop_system_key land), appearance, session (locked, displays asleep, secure_keyboard_entry, which blocks typing), input (keyboard layout, pointer) and menu bar/Dock autohide. Either reads \"unknown\" when macOS couldn't say; see metadata_warnings.",
 		"inputSchema": {
 			"type": "object",
 			"properties": {
@@ -117,7 +117,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 	},
 	{
 		"name": "desktop_windows",
-		"description": "List one app's windows by pid, with the target that window tools take. Read-only. Each row's availability gives state (available, limited or unavailable), a reason (minimized, app_hidden, other_space, off_screen, session_locked, display_asleep, accessibility_unavailable…) and a hint naming the tool that recovers it; check it before acting, since nothing recovers automatically. Rows also carry space_ids and their display.",
+		"description": "List one app's windows by pid, with the target that window tools take. Read-only. Each row's availability gives state (available, limited or unavailable), a reason (minimized, app_hidden, other_space, off_screen, session_locked, display_asleep, accessibility_unavailable…) and a hint naming the tool that recovers it; check it before acting, since nothing recovers automatically. Rows also carry space_ids, and display_index off the main display. Untitled windows off screen and on no Space, such as menu bar strips, are only counted in hidden_windows; all true lists them.",
 		"inputSchema": {
 			"type": "object",
 			"required": [
@@ -127,6 +127,9 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 				"pid": {
 					"type": "integer",
 					"minimum": 1
+				},
+				"all": {
+					"type": "boolean"
 				}
 			}
 		},
@@ -751,7 +754,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 	},
 	{
 		"name": "desktop_unhide",
-		"description": "Show one hidden app by its desktop_apps target. Foreground: macOS has no background unhide, so this activates the app as desktop_activate does. Check is_hidden in the refreshed inventory and inspect before input.",
+		"description": "Show one hidden app by its desktop_apps target. Foreground: macOS has no background unhide, so this activates the app as desktop_activate does. Check hidden in the refreshed application row and inspect before input.",
 		"inputSchema": {
 			"type": "object",
 			"required": [
@@ -1210,7 +1213,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 	},
 	{
 		"name": "desktop_inspect",
-		"description": "Read one window's Accessibility elements and a screenshot by pid and window, returning the single-use snapshot_id that input tools take. Read-only and never activates or focuses, except that in a Chromium or Electron app, or a window whose web area is nearly empty, it first turns on the app's web accessibility so web content appears, once per app launch, and reports web_accessibility; it stays on until the app quits. Pass web_accessibility false to leave the app as it is. mode pixels, for windows Accessibility can't read, gives a snapshot for point clicks, scrolls and drags only. A large window lists its first 200 elements and reports truncated: pass scope (a container's snapshot and element from an earlier inspection) to list its subtree with a much larger budget. ocr true adds recognized_text, whose box centers are points for this snapshot. save_path, an absolute .png path in an existing folder, keeps the full-resolution capture; region, in global points, saves only part of it; an existing file needs overwrite true.",
+		"description": "Read one window's Accessibility elements and a screenshot by pid and window, returning the single-use snapshot_id that input tools take. Read-only and never activates or focuses, except that in a Chromium or Electron app, or a window whose web area is nearly empty, it first turns on the app's web accessibility so web content appears, once per app launch, and reports web_accessibility; it stays on until the app quits. Pass web_accessibility false to leave the app as it is. mode pixels, for windows Accessibility can't read, gives a snapshot for point clicks, scrolls and drags only. A large window lists its first 200 elements and reports truncated: pass scope (a container's snapshot and element from an earlier inspection) to list its subtree with a much larger budget. Each element gives id, role, label, value when it differs, bounds as [x, y, width, height] in global points, state only when set (enabled false or \"unknown\", selected, focused, actionable, settable), kind when its role description adds to the role, and attributes such as identifier, help, actions and depth. ocr true adds recognized_text, whose box centers are points for this snapshot. save_path, an absolute .png path in an existing folder, keeps the full-resolution capture; region, in global points, saves only part of it; an existing file needs overwrite true.",
 		"inputSchema": {
 			"type": "object",
 			"required": [
@@ -2070,7 +2073,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 	},
 	{
 		"name": "desktop_element_action",
-		"description": "Perform one Accessibility action that an element from a fresh desktop_inspect snapshot lists in attributes.actions, with no pointer or keys: AXShowMenu (context menu), AXIncrement/AXDecrement (step), AXConfirm/AXCancel, AXPick (choose an open menu's item; a Chromium browser's <select> menu closes between calls, so use one desktop_key call there), AXRaise, AXScrollToVisible. Background. Unlisted actions are refused before input. Completed means delivered, not the effect; each repeat can step, toggle or open again. Press buttons with desktop_click.",
+		"description": "Perform one Accessibility action that an element from a fresh desktop_inspect snapshot lists in actions, with no pointer or keys: AXShowMenu (context menu), AXIncrement/AXDecrement (step), AXConfirm/AXCancel, AXPick (choose an open menu's item; a Chromium browser's <select> menu closes between calls, so use one desktop_key call there), AXRaise, AXScrollToVisible. Background. Unlisted actions are refused before input. Completed means delivered, not the effect; each repeat can step, toggle or open again. Press buttons with desktop_click.",
 		"inputSchema": {
 			"type": "object",
 			"required": [
