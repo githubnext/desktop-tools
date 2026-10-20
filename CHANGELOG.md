@@ -4,6 +4,10 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Fixed
+
+- Text selected in a Safari page with `desktop_select` can be copied: selecting focuses the page, as a click would, so Edit > Copy in the activated Safari copies the selection instead of the page's address. Safari copies only while active, so `desktop_activate` it and choose Edit > Copy with `desktop_menu`; the tool description and docs said to press Command-C, which Safari ignores in the background. ([#188](https://github.com/githubnext/desktop-tools/issues/188))
+
 ## [0.17.0] - 2026-10-20
 
 ### Changed
