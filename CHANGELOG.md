@@ -4,6 +4,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-10-20
+
 ### Fixed
 
 - `desktop_select` selects text in a web page that isn't a field, such as a paragraph or a link, through WebKit's text markers. An image pasted into a web field is refused with `PASTE_UNVERIFIABLE_RECEIVER` before the focus check, since the page's handling can't be read back. ([#88](https://github.com/githubnext/desktop-tools/issues/88), [#99](https://github.com/githubnext/desktop-tools/issues/99))
@@ -271,7 +273,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The first release: a signed, notarized Desktop Tools menu bar app, and the desktop tools served over MCP. ([#28](https://github.com/githubnext/desktop-tools/pull/28), [#29](https://github.com/githubnext/desktop-tools/pull/29), [#12](https://github.com/githubnext/desktop-tools/pull/12))
 
-[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.17.1...HEAD
+[0.17.1]: https://github.com/githubnext/desktop-tools/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/githubnext/desktop-tools/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/githubnext/desktop-tools/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/githubnext/desktop-tools/compare/v0.15.0...v0.16.0

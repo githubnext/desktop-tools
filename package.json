@@ -1,6 +1,6 @@
 {
 	"name": "@githubnext/desktop-tools",
-	"version": "0.17.0",
+	"version": "0.17.1",
 	"description": "Signed macOS desktop inspection and input for agents, with a pure Swift host and MCP server",
 	"license": "MIT",
 	"type": "module",
