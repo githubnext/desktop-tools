@@ -12,6 +12,11 @@ private func onMain<T>(_ work: () throws -> T) rethrows -> T {
 	return try DispatchQueue.main.sync(execute: work)
 }
 
+/// Whether a paste no longer needs its reservation, which the reservation's deferred proof reads.
+private final class Resolution {
+	var value = false
+}
+
 /// What a paste puts on the clipboard.
 public enum PastePayload: Sendable {
 	case text(String)
@@ -301,21 +306,23 @@ extension Mac {
 		guard !text.isEmpty, text.utf16.count <= 8192, target.focusedRole != nil else {
 			throw pasteRefusal("Literal insertion requires 1–8192 UTF-16 units and an exact focused receiver.")
 		}
-		let focused = try requireKeyboardFocus(target)
-		if secureFocus(focused) { throw secureFocusRefusal }
-		guard let baseline = ReceiverState.read(focused, target: target),
-		      let range = Range(NSRange(location: baseline.location, length: baseline.length), in: baseline.text)
-		else { throw pasteRefusal("The exact receiver's complete text and selection cannot be read safely.") }
-		let expected = baseline.text.replacingCharacters(in: range, with: text)
-		guard expected.utf16.count <= 65_536 else { throw pasteRefusal("The intended edit exceeds the complete text verification limit.") }
-		let write: TemporaryWrite
-		do { write = try TemporaryWrite(replacing: false) } catch let error as TemporaryWriteError {
-			throw pasteRefusal("Literal insertion could not establish its read-only preflight: \(error.description)")
+		return try ClipboardGate.exclusive { transaction in
+			let focused = try requireKeyboardFocus(target)
+			if secureFocus(focused) { throw secureFocusRefusal }
+			guard let baseline = ReceiverState.read(focused, target: target),
+			      let range = Range(NSRange(location: baseline.location, length: baseline.length), in: baseline.text)
+			else { throw pasteRefusal("The exact receiver's complete text and selection cannot be read safely.") }
+			let expected = baseline.text.replacingCharacters(in: range, with: text)
+			guard expected.utf16.count <= 65_536 else { throw pasteRefusal("The intended edit exceeds the complete text verification limit.") }
+			let write: TemporaryWrite
+			do { write = try TemporaryWrite(replacing: false) } catch let error as TemporaryWriteError {
+				throw pasteRefusal("Literal insertion could not establish its read-only preflight: \(error.description)")
+			}
+			return try paste(
+				.text(text), write: write, expectation: PasteExpectation(baseline: baseline, text: expected, location: baseline.location + text.utf16.count, attachments: 0),
+				folder: nil, replace: false, focused: focused, target: target, transaction: transaction
+			)
 		}
-		return try paste(
-			.text(text), write: write, expectation: PasteExpectation(baseline: baseline, text: expected, location: baseline.location + text.utf16.count, attachments: 0),
-			folder: nil, replace: false, focused: focused, target: target
-		)
 	}
 
 	/// Pastes an image or file references into the focused control, or files into a Finder folder. Only a native
@@ -323,35 +330,37 @@ extension Mac {
 	/// a paste only when the caller lets the clipboard stay replaced.
 	public static func pasteAttachment(_ payload: PastePayload, replace: Bool, target: KeyboardTarget) throws -> PasteReport {
 		guard target.focusedRole != nil else { throw pasteRefusal("Attachment insertion requires an exact focused receiver.") }
-		let focused = try requireKeyboardFocus(target)
-		if secureFocus(focused) { throw secureFocusRefusal }
-		var folder: FolderExpectation?
-		var expectation: PasteExpectation?
-		if case let .files(_, paths) = payload, NSRunningApplication(processIdentifier: target.window.pid)?.bundleIdentifier == "com.apple.finder" {
-			folder = try finderFolder(focused, role: target.focusedRole, paths: paths)
-		} else if target.focusedRole == "AXTextArea", !isWebField(focused), let baseline = ReceiverState.read(focused, target: target),
-		          let range = Range(NSRange(location: baseline.location, length: baseline.length), in: baseline.text)
-		{
-			let text = baseline.text.replacingCharacters(in: range, with: String(repeating: "\u{FFFC}", count: payload.count))
-			guard text.utf16.count <= 65_536 else { throw pasteRefusal("The intended edit exceeds the complete text verification limit.") }
-			expectation = PasteExpectation(baseline: baseline, text: text, location: baseline.location + payload.count, attachments: payload.count)
+		return try ClipboardGate.exclusive { transaction in
+			let focused = try requireKeyboardFocus(target)
+			if secureFocus(focused) { throw secureFocusRefusal }
+			var folder: FolderExpectation?
+			var expectation: PasteExpectation?
+			if case let .files(_, paths) = payload, NSRunningApplication(processIdentifier: target.window.pid)?.bundleIdentifier == "com.apple.finder" {
+				folder = try finderFolder(focused, role: target.focusedRole, paths: paths)
+			} else if target.focusedRole == "AXTextArea", !isWebField(focused), let baseline = ReceiverState.read(focused, target: target),
+			          let range = Range(NSRange(location: baseline.location, length: baseline.length), in: baseline.text)
+			{
+				let text = baseline.text.replacingCharacters(in: range, with: String(repeating: "\u{FFFC}", count: payload.count))
+				guard text.utf16.count <= 65_536 else { throw pasteRefusal("The intended edit exceeds the complete text verification limit.") }
+				expectation = PasteExpectation(baseline: baseline, text: text, location: baseline.location + payload.count, attachments: payload.count)
+			}
+			guard expectation != nil || folder != nil || replace else {
+				var refusal = Refusal("PASTE_UNVERIFIABLE_RECEIVER", attachmentPasteRefusal.message, hint: attachmentPasteRefusal.hint, fromHost: false)
+				refusal.reason = "operation_unsupported"
+				throw refusal
+			}
+			let write: TemporaryWrite
+			do { write = try TemporaryWrite(replacing: replace) } catch let error as TemporaryWriteError {
+				throw pasteRefusal("Attachment insertion could not establish its read-only preflight: \(error.description)")
+			}
+			return try paste(payload, write: write, expectation: expectation, folder: folder, replace: replace, focused: focused, target: target, transaction: transaction)
 		}
-		guard expectation != nil || folder != nil || replace else {
-			var refusal = Refusal("PASTE_UNVERIFIABLE_RECEIVER", attachmentPasteRefusal.message, hint: attachmentPasteRefusal.hint, fromHost: false)
-			refusal.reason = "operation_unsupported"
-			throw refusal
-		}
-		let write: TemporaryWrite
-		do { write = try TemporaryWrite(replacing: replace) } catch let error as TemporaryWriteError {
-			throw pasteRefusal("Attachment insertion could not establish its read-only preflight: \(error.description)")
-		}
-		return try paste(payload, write: write, expectation: expectation, folder: folder, replace: replace, focused: focused, target: target)
 	}
 
 	/// One temporary paste into the exact receiver, then the wait for its evidence and the clipboard's cleanup.
 	private static func paste(
 		_ payload: PastePayload, write: TemporaryWrite, expectation: PasteExpectation?, folder: FolderExpectation?, replace: Bool,
-		focused: AXUIElement, target: KeyboardTarget
+		focused: AXUIElement, target: KeyboardTarget, transaction: ClipboardTransaction
 	) throws -> PasteReport {
 		guard replace || clipboardReadAdmitted() else {
 			var refusal = Refusal(
@@ -365,8 +374,11 @@ extension Mac {
 		var report = PasteReport()
 		report.folder = folder?.folder.path
 		var possibleInput = false
-		// A guarded paste stays reserved from Command-V until its edit is seen.
+		// A guarded paste stays reserved from Command-V until its edit is seen, so no later clipboard write or paste
+		// replaces what a pending Command-V would paste.
 		var reserved = false
+		var token: UUID?
+		let resolved = Resolution()
 		func validateBaseline() throws {
 			guard let current = try? requireKeyboardFocus(target), CFEqual(current, focused) else {
 				throw pasteRefusal("The exact text receiver or its selection changed before insertion.")
@@ -390,6 +402,15 @@ extension Mac {
 				_ = try prepareBackgroundWindow(target.window)
 				try validateBaseline()
 				try folder?.validate()
+			}
+			if !replace, let claim = write.claim {
+				token = try transaction.reservePaste(pid: target.window.pid, generation: target.window.generation, windowID: target.window.windowID) {
+					if resolved.value { return true }
+					if let folder { return write.changeCount == claim && folder.present() }
+					guard meaningful, let expectation, write.changeCount == claim else { return false }
+					let observed = ReceiverState.read(focused, target: target, attachmentRange: expectation.attachmentRange)
+					return expectation.evidence(observed) != nil && write.changeCount == claim
+				}
 			}
 			possibleInput = true
 			reserved = !replace
@@ -458,6 +479,15 @@ extension Mac {
 				)
 			}
 		} else if !reserved || report.consumption == "observed" {
+			resolved.value = true
+			if let token {
+				do { try transaction.releasePaste(token) } catch {
+					report.error = errorJSON(
+						"CLIPBOARD_OWNERSHIP_RELEASE_FAILED",
+						folder != nil ? "The files appeared, but shared clipboard ownership could not be released." : report.consumption == "observed" ? "The edit was observed, but shared clipboard ownership could not be released." : "Shared clipboard ownership could not be released."
+					)
+				}
+			}
 			do { report.cleanup = try write.cleanup() } catch {
 				report.cleanup = "failed"
 				if report.error == nil {
@@ -475,7 +505,7 @@ extension Mac {
 				)
 			}
 		}
-		report.ownership = reserved ? "reserved" : "released"
+		report.ownership = transaction.hasUnresolvedPaste ? "reserved" : "released"
 		guard report.clipboardChanged else {
 			throw pasteRefusal(report.error?["message"]?.string ?? "Literal insertion was refused before clipboard mutation.")
 		}

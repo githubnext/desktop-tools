@@ -320,7 +320,8 @@ extension Mac {
 
 	/// Replaces the clipboard with representations, each type declared first, then reads them back.
 	private static func writeRepresentations(_ representations: [(String, Data)], text: String?) throws -> Delivery {
-		try onMain {
+		// Waits for, and never replaces, a paste whose Command-V may still be pending.
+		try ClipboardGate.exclusive { _ in try onMain {
 			let pasteboard = NSPasteboard.general
 			var types = representations.map { NSPasteboard.PasteboardType($0.0) }
 			if text != nil, !types.contains(.string) { types.append(.string) }
@@ -338,7 +339,7 @@ extension Mac {
 				return actual == data
 			}
 			return clipboardDelivery(verified)
-		}
+		} }
 	}
 
 	private static var clipboardIndeterminate: Delivery {
@@ -360,7 +361,8 @@ extension Mac {
 
 	/// Replaces the clipboard with one file reference item per URL.
 	public static func writeClipboardFiles(_ urls: [String]) throws -> Delivery {
-		try onMain {
+		// Waits for, and never replaces, a paste whose Command-V may still be pending.
+		try ClipboardGate.exclusive { _ in try onMain {
 			let pasteboard = NSPasteboard.general
 			let items = urls.map { url in
 				let item = NSPasteboardItem()
@@ -375,6 +377,6 @@ extension Mac {
 			let verified = clipboardReadAdmitted() && pasteboard.changeCount == claimed && written.count == urls.count
 				&& zip(written, urls).allSatisfy { $0.types.contains(.fileURL) && $0.data(forType: .fileURL) == Data($1.utf8) }
 			return clipboardDelivery(verified)
-		}
+		} }
 	}
 }

@@ -13,14 +13,13 @@ native2 is merged beside the shipped stack, not in place of it. This page lists 
 | Socket and state | `~/.local/state/desktop-tools` | `~/.local/state/desktop-tools2`, or `$DESKTOP_TOOLS2_STATE` |
 | Wire | Peekaboo Bridge requests | length-prefixed JSON frames (`DesktopProtocol/Wire.swift`) |
 
-They share no socket, state folder, lock or hotkey. native2 takes none of Peekaboo's `~/.peekaboo` locks, and neither the npm package (`files`), CI nor the release builds it. Every parity run so far drove both at once. The macOS grants differ: the standalone host uses the grants of the terminal that runs it, while the app holds its own.
+They share no socket, state folder or hotkey, and only one lock: Peekaboo's clipboard paste lock in `~/Library/Application Support/Peekaboo`, whose record of a paste still pending keeps either stack from replacing the clipboard under the other's Command-V. native2 takes none of Peekaboo's `~/.peekaboo` locks, and neither the npm package (`files`), CI nor the release builds it. Every parity run so far drove both at once. The macOS grants differ: the standalone host uses the grants of the terminal that runs it, while the app holds its own.
 
 ## Issues
 
 ### Tools that don't do everything yet
 
 - **desktop_fill_password** fills only inside the dylib, where the app's hook decides. The standalone host refuses.
-- The clipboard isn't reserved across calls, as Peekaboo's `ClipboardPasteTransactionGate` does while a paste is pending.
 - **desktop_menubar_items** has no fallback when MenuBarAgent doesn't draw the menu bar.
 - **desktop_switch_space** is checked only up to its refusals, on a Mac with one Space.
 
@@ -34,7 +33,7 @@ Found while porting desktop_dialog_answer's path entry, which now follows Peekab
 
 ### Runtime dylib
 
-- It has been run only unsigned. Nothing has exercised the signed peer check (same team, expected identifier, CDHash read before and after) or the app's approval prompt end to end.
+- The dev app signs it and the client with the team identity, and its signed peer check holds: the bundled client is served, and an unsigned one is dropped before its hello and refused with HOST_NOT_SERVING. The app's approval prompt and pause haven't been run end to end through it.
 
 ### Not yet checked live
 
@@ -78,9 +77,9 @@ Each step ships on its own and can be reverted.
 1. **Keep it from rotting.** Done: CI builds and tests native2 and checks the contract. Port each tool change to native2 in the same PR, with its calls entries.
 2. **Close the tool gaps** above. Run each fix through its calls and steps files.
 3. **Finish the live checks** with the user's go-ahead, since they take over the pointer and the front app. Done: steps-pointer, steps-manage, the Dock step, and live-check #70, #77, #79, #81, #82, #86, #88, #89, #92, #99, #107, #110, #111 and #114 through `--server`, where Swift and Node now pass the same checks. Still to run: the Safari checks with Safari closed, the bench on real apps, and #162.
-4. **Harden the runtime.** The socket lease (`<socket>.lock`, as Peekaboo's) and draining calls on stop are in. Still to do: sign the dylib, client and MCP binary with the team identity. Run the approval prompt, pause and SELF_TARGET checks through the app.
+4. **Harden the runtime.** The socket lease (`<socket>.lock`, as Peekaboo's) and draining calls on stop are in. The dev app signs the dylib and client, and the peer check refuses an unsigned client. Still to do: sign the MCP binary once it's bundled (step 7), and run the approval prompt, pause and SELF_TARGET checks through the app.
 5. **Bridge the wire.** Done: native2's one-shot `desktop-tools-client` (`<client> <socket> <tool> [--verbose]`, arguments on stdin, one JSON line out, opening its containing app in the background when no host serves) and `createDesktop({ wire: 2 })`. `createDesktop`, `/protocol`, `/tools`, `dist/mcp.js` and ace keep working against a native2 host by changing one option.
-6. **Dogfood in the app.** The switch is in: `npm run dev-app -- --native2` bundles native2's dylib and client in place of `native/`'s, and native2's client answers `desktop-client status` and `repair` with `native/`'s output. The bundled dylib is 4.3 MB and the client 0.3 MB, against 40 MB and 43 MB for `native/`'s. In the dev app, with its own grants, `live-check` through `dist/mcp.js --wire 2` passes the same 26 checks as the standalone host, failing only #114's Finder files paste (see the tool gaps). Remaining: run the dev app daily with `DESKTOP_TOOLS_STATE=~/.local/state/desktop-tools-dev node dist/mcp.js --wire 2`.
+6. **Dogfood in the app.** The switch is in: `npm run dev-app -- --native2` bundles native2's dylib and client in place of `native/`'s, and native2's client answers `desktop-client status` and `repair` with `native/`'s output. The bundled dylib is 4.3 MB and the client 0.3 MB, against 40 MB and 43 MB for `native/`'s. In the dev app, with its own grants, `live-check` through `dist/mcp.js --wire 2` passed the same checks as the standalone host except #114's Finder files paste, since fixed and passing on the standalone host. Remaining: run the dev app daily with `DESKTOP_TOOLS_STATE=~/.local/state/desktop-tools-dev node dist/mcp.js --wire 2`.
 7. **Ship the Swift MCP server.** Bundle and sign `desktop-tools-mcp` in the app, and point the README's setup at it. Keep `dist/mcp.js` as a shim that runs the bundled binary, so existing `npx` configs keep working. Release it, and cut a release that can switch back.
 8. **Delete, after agreeing it with ace:** `native/vendor/Peekaboo`, `native/sources/client` and runtime, and the tool logic in `src/client.ts`, leaving a thin wrapper for the API ace imports. Make native2 the contract's source of truth, so `ContractText` stops being generated from Node. This step is the user's decision.
 
