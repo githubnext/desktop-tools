@@ -296,9 +296,12 @@ private func isFileDialog(_ dialog: AXUIElement, budget: Budget) throws -> Bool 
 	return hasCancel && hasPrimary
 }
 
-private func boundsJSON(_ rect: CGRect) -> JSON {
-	.object([("x", JSON(Double(rect.origin.x))), ("y", JSON(Double(rect.origin.y))),
-	         ("width", JSON(Double(rect.width))), ("height", JSON(Double(rect.height)))])
+extension Mac {
+	/// A rectangle as the native client's Bounds encodes it.
+	public static func boundsJSON(_ rect: CGRect) -> JSON {
+		.object([("x", JSON(Double(rect.origin.x))), ("y", JSON(Double(rect.origin.y))),
+		         ("width", JSON(Double(rect.width))), ("height", JSON(Double(rect.height)))])
+	}
 }
 
 /// Peekaboo's normalization of a requested button title.
@@ -393,7 +396,7 @@ extension Mac {
 			"role": JSON(text(dialog, kAXRoleAttribute) ?? "Unknown"),
 			"subrole": text(dialog, kAXSubroleAttribute).map(JSON.string),
 			"is_file_dialog": JSON(file),
-			"bounds": boundsJSON(AX.frame(dialog) ?? .zero),
+			"bounds": Mac.boundsJSON(AX.frame(dialog) ?? .zero),
 		])
 		let buttonRows = try buttons(dialog, budget: budget).compactMap { button -> (String, Bool, Bool)? in
 			guard let title = text(button, kAXTitleAttribute) else { return nil }

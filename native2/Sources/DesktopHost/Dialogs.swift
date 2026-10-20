@@ -53,11 +53,6 @@ private func dialogWindows(_ pid: pid_t) async -> [DialogWindow] {
 	}
 }
 
-private func boundsJSON(_ rect: CGRect) -> JSON {
-	.object([("x", JSON(Double(rect.origin.x))), ("y", JSON(Double(rect.origin.y))),
-	         ("width", JSON(Double(rect.width))), ("height", JSON(Double(rect.height)))])
-}
-
 /// Reads the target's dialog; a native refusal reads as the bridge reported it, an unmatched dialog as the client did.
 private func readDialog(_ target: DialogTarget) async throws -> DialogRead {
 	let windows = await dialogWindows(target.pid)
@@ -90,7 +85,7 @@ extension Tools {
 		let data: JSON = .object([
 			("target", .object([
 				("pid", JSON(target.pid)), ("process_start_identity_decimal", JSON(String(read.generation))), ("window_id", JSON(read.window.id)),
-				("bounds", boundsJSON(read.window.bounds)), ("is_minimized", JSON(read.window.isMinimized)),
+				("bounds", Mac.boundsJSON(read.window.bounds)), ("is_minimized", JSON(read.window.isMinimized)),
 			])),
 			("application_name", JSON(read.applicationName)),
 			("window_title", JSON(read.window.title)),

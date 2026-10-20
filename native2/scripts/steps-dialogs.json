@@ -1,0 +1,10 @@
+[
+	["desktop_dialog", {"target": "$app"}],
+	["desktop_dialog", {"target": "$window_target"}],
+	["desktop_dialog_answer", {"target": "$app", "button": "Nope"}],
+	["desktop_dialog_answer", {"target": "$app", "button": "ok"}],
+	["desktop_dialog_answer", {"target": "$app", "field": 0, "text": "x"}],
+	["desktop_dialog_answer", {"target": "$app", "path": "/tmp"}],
+	["desktop_menubar_items", {}],
+	["desktop_dock", {}]
+]
