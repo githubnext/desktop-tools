@@ -13,6 +13,9 @@ final class AgentWindow {
 	static let shared = AgentWindow()
 
 	private static let tint = NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1).cgColor
+	/// The tint darkened, to edge the label.
+	private static let rim = NSColor(srgbRed: 0.55, green: 0.27, blue: 0.18, alpha: 1).cgColor
+	private static let labelFont = NSFont.systemFont(ofSize: 10, weight: .semibold)
 	private static let idle: Duration = .seconds(4)
 	/// Room around the window for the outline and the label that straddles its bottom edge.
 	private static let margin: CGFloat = 16
@@ -153,15 +156,15 @@ final class AgentWindow {
 			root.addSublayer(outline)
 
 			pill.backgroundColor = AgentWindow.tint
-			pill.cornerRadius = 11
-			pill.borderColor = CGColor(gray: 1, alpha: 0.9)
+			pill.cornerRadius = 9
+			pill.borderColor = AgentWindow.rim
 			pill.borderWidth = 1
 			pill.shadowColor = .black
 			pill.shadowOpacity = 0.25
 			pill.shadowRadius = 4
 			pill.shadowOffset = .zero
-			text.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-			text.fontSize = 12
+			text.font = AgentWindow.labelFont
+			text.fontSize = AgentWindow.labelFont.pointSize
 			text.foregroundColor = .white
 			text.alignmentMode = .center
 			text.truncationMode = .end
@@ -237,12 +240,12 @@ final class AgentWindow {
 			let clamped = outside.intersection(display)
 			let edge = clamped.isNull || clamped.isEmpty ? outside : clamped
 			outline.path = CGPath(roundedRect: edge, cornerWidth: 14, cornerHeight: 14, transform: nil)
-			let measured = (label as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold)])
-			let width = min(ceil(measured.width) + 24, max(window.width - 32, 60))
+			let measured = (label as NSString).size(withAttributes: [.font: AgentWindow.labelFont])
+			let width = min(ceil(measured.width) + 16, max(window.width - 32, 60))
 			// The label straddles the bottom edge, or sits just inside it when the window reaches the display's bottom.
-			let top = clamped.isNull || clamped.isEmpty ? edge.maxY - 11 : min(edge.maxY - 11, display.maxY - 24)
-			pill.frame = CGRect(x: window.midX - width / 2, y: top, width: width, height: 22)
-			text.frame = pill.bounds.insetBy(dx: 12, dy: 3)
+			let top = clamped.isNull || clamped.isEmpty ? edge.maxY - 9 : min(edge.maxY - 9, display.maxY - 20)
+			pill.frame = CGRect(x: window.midX - width / 2, y: top, width: width, height: 18)
+			text.frame = pill.bounds.insetBy(dx: 8, dy: 2)
 			text.contentsScale = panel.backingScaleFactor
 			CATransaction.commit()
 		}
