@@ -63,6 +63,7 @@ public enum Tools {
 			case "desktop_dock": return try await dock(arguments)
 			case "desktop_screen": return try await screen(arguments)
 			case "desktop_spaces": return try await spaces(arguments)
+			case "desktop_switch_space": return await switchSpace(arguments)
 			case "desktop_notifications": return try await notifications(arguments)
 			case "desktop_notification_action": return await notificationAction(arguments)
 			case "desktop_launch": return try await launch(arguments, opensItem: false)

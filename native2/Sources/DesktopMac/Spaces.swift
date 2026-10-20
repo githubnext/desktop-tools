@@ -172,3 +172,140 @@ extension Mac {
 		])
 	}
 }
+
+// MARK: Switching
+
+private let maximumSpaceSteps = 16
+
+/// A refusal before any key, with the hint the native client gave it.
+private struct SwitchRefusal: Error {
+	let message: String
+	var hint: String?
+}
+
+/// The current Space of the display that lists `space`, read afresh.
+private func currentSpace(holding space: UInt64) -> (display: ManagedDisplay, current: UInt64?)? {
+	guard let entry = managedDisplays().first(where: { $0.spaces.contains { $0.id == space } }) else { return nil }
+	return (entry, entry.current)
+}
+
+/// Refuses unless Control-arrow would act on the display that holds the target Space.
+private func checkReachable(_ target: Int?, spans: Bool, displays: [DisplayRow]) async throws {
+	guard !spans, displays.count > 1 else { return }
+	guard let target else { throw SwitchRefusal(message: "The display that holds this Space isn't active, so its Spaces can't be switched.") }
+	let focus = await spacesFocus(displays)
+	let hint = "Move the pointer onto display \(target) with desktop_hover, and bring a window on that display to the front with desktop_focus, then list Spaces again."
+	guard let pointer = focus.pointer else {
+		throw SwitchRefusal(message: "The pointer's display can't be read, so the Space switch might act on another display.", hint: hint)
+	}
+	guard pointer == target else {
+		throw SwitchRefusal(
+			message: "The pointer is on display \(pointer), not display \(target). Switching Spaces acts on the display with the pointer or the key window, so nothing was sent.",
+			hint: hint
+		)
+	}
+	if let window = focus.windowDisplay, window != target {
+		throw SwitchRefusal(
+			message: "The frontmost window is on display \(window), not display \(target). Switching Spaces acts on the display with the pointer or the key window, so nothing was sent.",
+			hint: hint
+		)
+	}
+}
+
+extension Mac {
+	/// Switches one display to a Space with Mission Control's Control-arrow shortcuts, one step at a time, reading
+	/// WindowServer back after each step, as the native client's nativeSwitchSpace did. Returns the action object.
+	public static func switchSpace(_ id: UInt64) async -> (outcome: String, action: JSON) {
+		var outcome = "refused"
+		var before: UInt64?, after: UInt64?, displayIndex: Int?
+		var steps = 0
+		var delivery: Delivery?
+		var fresh = false
+		var message: String?
+		var failure: JSON?
+		do {
+			let displays = try await displayRows()
+			guard let start = currentSpace(holding: id), let current = start.current else {
+				throw SwitchRefusal(message: "No display lists Space \(id).", hint: "List Spaces with desktop_spaces and pass one of its space_id values.")
+			}
+			before = current
+			let target = display(for: start.display.uuid, in: displays)?.index
+			displayIndex = target
+			let order = start.display.spaces.map(\.id)
+			guard let from = order.firstIndex(of: current), let to = order.firstIndex(of: id) else {
+				throw SwitchRefusal(message: "The display's current Space isn't in its Space list. List Spaces again.")
+			}
+			if from == to {
+				outcome = "completed"
+				after = current
+				message = "That Space is already current on its display; nothing was sent."
+			} else {
+				guard abs(to - from) <= maximumSpaceSteps else { throw SwitchRefusal(message: "That Space is more than \(maximumSpaceSteps) steps away.") }
+				let shortcut = to > from ? switchShortcut(81, arrow: "right", keyCode: 124) : switchShortcut(79, arrow: "left", keyCode: 123)
+				guard let keys = shortcut.keys else {
+					throw SwitchRefusal(
+						message: "The Mission Control shortcut to move a Space \(to > from ? "right" : "left") can't be used. \(shortcut.note ?? "")",
+						hint: "Turn on the default Control-arrow shortcut in System Settings, or open Mission Control with desktop_system_key control up and click the Space."
+					)
+				}
+				if sessionLocked {
+					throw SwitchRefusal(message: "The macOS GUI session is locked. No key was sent.", hint: "Unlock the active user session, then list Spaces before retrying.")
+				}
+				let names = ["cmd": "command", "ctrl": "control", "alt": "option", "shift": "shift"]
+				let parts = keys.split(separator: ",").map(String.init)
+				let chord = try chord(parts.last!, modifiers: parts.dropLast().map { names[$0] ?? $0 })
+				let spans = spansDisplays()
+				var position = from
+				while position != to {
+					// Each step can change the frontmost window, so the display is checked before every key.
+					try await checkReachable(target, spans: spans, displays: displays)
+					try Task.checkCancellation()
+					delivery = try postGlobalChord(chord)
+					fresh = true
+					steps += 1
+					let expected = order[position + (to > from ? 1 : -1)]
+					var now: UInt64?
+					for _ in 0..<40 {
+						now = currentSpace(holding: id)?.current
+						if now == expected { break }
+						try await Task.sleep(for: .milliseconds(50))
+					}
+					guard now == expected else { break }
+					position += to > from ? 1 : -1
+				}
+				after = currentSpace(holding: id)?.current
+				fresh = true
+				if after == id {
+					outcome = "completed"
+					message = "WindowServer reports Space \(id) as current on its display. Windows and focus changed; observe again before acting."
+				} else {
+					outcome = "unknown"
+					message = "The shortcut was sent, but WindowServer doesn't report Space \(id) as current (now \(after.map(String.init) ?? "unknown")). It may have acted on another display, or the shortcut may be blocked. List Spaces with desktop_spaces before acting, and do not blindly repeat it."
+				}
+			}
+		} catch {
+			let sent = steps > 0
+			outcome = sent ? "unknown" : "refused"
+			fresh = sent
+			if sent { after = currentSpace(holding: id)?.current }
+			let (code, text, hint): (String, String, String?) = switch error {
+			case let refusal as SwitchRefusal: ("DESKTOP_ACTION_FAILED", refusal.message, refusal.hint)
+			case let refusal as Refusal: (refusal.code, refusal.message, refusal.hint)
+			default: ("DESKTOP_ACTION_FAILED", String(describing: error), nil)
+			}
+			failure = .object([
+				"code": JSON(code), "message": JSON(text),
+				"hint": (sent ? "List Spaces with desktop_spaces; the shortcut may already have switched. Do not blindly repeat it." : hint).map(JSON.string),
+			])
+		}
+		// Absent fields are left out, as the native client's encoder left them.
+		let action: JSON = .object([
+			"outcome": JSON(outcome), "action": "switch-space", "space_id": JSON(Double(id)),
+			"display_index": displayIndex.map { JSON($0) }, "space_before": before.map { JSON(Double($0)) },
+			"space_after": after.map { JSON(Double($0)) }, "steps_sent": JSON(steps),
+			"native_outcome": delivery?.json, "requires_fresh_observation": JSON(fresh),
+			"message": message.map(JSON.string), "error": failure,
+		])
+		return (outcome, action)
+	}
+}
