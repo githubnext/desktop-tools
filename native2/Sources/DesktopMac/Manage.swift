@@ -408,8 +408,16 @@ extension Mac {
 					throw ServiceError.interactionFailed("restore window", "Window restore operation failed or the exact minimized receipt became ambiguous")
 				}
 				do throws(ServiceError) {
-					let bounds = try repin(window, to: window.bounds, until: Date().addingTimeInterval(2))
-					guard bounds == window.bounds, bool(element, kAXMinimizedAttribute) != true else {
+					// WindowServer listing the window again at its bounds proves the restore. AXMinimized can stay
+					// true until the animation ends, so Peekaboo's repinned receipt doesn't read it.
+					// Within a point is still mid-animation here, so wait for the receipt's exact bounds.
+					let deadline = Date().addingTimeInterval(2)
+					var bounds = try repin(window, to: window.bounds, until: deadline)
+					while bounds != window.bounds, Date() < deadline {
+						pause(0.05)
+						bounds = try repin(window, to: window.bounds, until: deadline)
+					}
+					guard bounds == window.bounds else {
 						throw ServiceError.commandFailed("Window \(window.id) became ambiguous after restore dispatch")
 					}
 				} catch {
@@ -794,7 +802,7 @@ extension Mac {
 			if result == .success {
 				mechanism = "accessibility_action"
 			} else if [.actionUnsupported, .apiDisabled].contains(result) {
-				guard onMain({ NSRunningApplication(processIdentifier: pid)?.hide() == true }) else { throw notAccepted(app, pid, hidden()) }
+				submitHide(pid)
 				mechanism = "native_framework"
 			} else {
 				throw ManageFailure(Outcome.indeterminate("accessibility_action", units: 1),
@@ -802,7 +810,7 @@ extension Mac {
 				                    hint: "Observe the target state before retrying.", cause: "AX error \(result.rawValue)")
 			}
 		} else {
-			guard onMain({ NSRunningApplication(processIdentifier: pid)?.hide() == true }) else { throw notAccepted(app, pid, hidden()) }
+			submitHide(pid)
 			mechanism = "native_framework"
 		}
 		let deadline = Date().addingTimeInterval(1)
@@ -820,9 +828,10 @@ extension Mac {
 		                    hint: "Refresh the application inventory before retrying.")
 	}
 
-	private static func notAccepted(_ app: NSRunningApplication, _ pid: pid_t, _ alreadyHidden: Bool) -> ManageFailure {
-		.refused("target_unavailable", "The application visibility request was not accepted for \(app.localizedName ?? "Unknown").",
-		         hint: "Refresh the application inventory before retrying.")
+	/// NSRunningApplication.hide can return false although the request takes effect, so the hidden state polled
+	/// after it decides the outcome, as in Peekaboo's submitNativeApplicationVisibility.
+	private static func submitHide(_ pid: pid_t) {
+		onMain { _ = NSRunningApplication(processIdentifier: pid)?.hide() }
 	}
 
 	/// Asks the app to quit, or force quits it, and waits up to 3 s for it to end. Ported from Peekaboo's

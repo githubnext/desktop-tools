@@ -107,7 +107,8 @@ extension Tools {
 		guard let text = arguments["text"]?.string, text.utf16.count <= 8192 else {
 			throw ToolError("Replacement text must contain at most 8192 UTF-16 code units.")
 		}
-		return await act("type", snapshotID: snapshotID, element: element, precheck: { _, target in
+		return await act("type", snapshotID: snapshotID, element: element, precheck: { snapshot, target in
+			if isFinderFileName(target!, in: snapshot) { throw finderNameRefusal }
 			let attributes = target!.attributes
 			if attributes["role"] == "AXSecureTextField" || attributes["subrole"] == "AXSecureTextField" {
 				throw Refusal(

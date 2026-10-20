@@ -105,10 +105,19 @@ extension Tools {
 		let first = try await read()
 		guard allowed, !tree(first).truncated else { return (first, web) }
 		if web?.change == .enabled {
-			// A fresh Chrome turned on with AXEnhancedUserInterface can take over a second to build its tree.
-			guard !webAreas(tree(first).elements).contains(where: { $0 > 2 }) else { return (first, web) }
+			// A fresh Chrome turned on with AXEnhancedUserInterface takes about two seconds to build its tree. The
+			// Bridge's slower reads made one more read after a second enough; this host reads again until it is
+			// built, for at most three seconds.
+			func populated(_ value: T) -> Bool { webAreas(tree(value).elements).contains { $0 > 2 } }
+			guard !populated(first) else { return (first, web) }
+			let deadline = ContinuousClock.now + .seconds(3)
 			try await Task.sleep(for: .seconds(1))
-			return (try await read(), web)
+			var again = try await read()
+			while !populated(again), !tree(again).truncated, ContinuousClock.now < deadline {
+				try await Task.sleep(for: .milliseconds(500))
+				again = try await read()
+			}
+			return (again, web)
 		}
 		guard web == nil, webAreas(tree(first).elements).contains(where: { $0 <= 2 }) else { return (first, web) }
 		web = Mac.enableWebAccessibility(pid: pid, chromium: Mac.shipsChromium(pid))

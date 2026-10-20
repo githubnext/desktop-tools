@@ -187,8 +187,9 @@ extension Tools {
 		} catch let failure as ManageFailure {
 			outcome = failure.dispatched ? "unknown" : "refused"
 			native = failure.outcome
-			// The Bridge attributes a close failure to the window only once its pinned target checked out.
-			if op == "close", serviced { receipt = receiptJSON }
+			// The Bridge attributes a close failure to the window only once its pinned target checked out and the
+			// close was sent; a refusal before dispatch, such as a minimized window's, names no target.
+			if op == "close", serviced, failure.dispatched { receipt = receiptJSON }
 			fresh = failure.dispatched || failure.refreshTarget
 			error = .object([
 				"code": "DESKTOP_ACTION_FAILED", "message": JSON(failure.message), "hint": failure.hint.map(JSON.string),

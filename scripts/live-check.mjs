@@ -309,7 +309,10 @@ class Session {
 
 	async windows(pid) {
 		const { data } = await this.mcp.call("desktop_windows", { pid });
-		return data.windows ?? [];
+		// Compact rows (#144) carry the title as title and the window number only in target.
+		return (data.windows ?? []).map((w) => ({
+			...w, window_id: w.window_id ?? w.target?.window_id, window_title: w.window_title ?? w.title ?? "", bounds: w.bounds ?? w.target?.bounds,
+		}));
 	}
 
 	/** Opens a fixture in an app and returns its new window, tracked for cleanup. */
@@ -496,9 +499,12 @@ class Session {
 // ---------- element helpers ----------
 
 const label = (e) => `${e.label ?? ""} ${e.attributes?.title ?? ""} ${e.attributes?.description ?? ""}`;
+/** inspect's type for an Accessibility role it names; other roles stay as they are. */
+const TYPES = { AXTextField: "textField", AXTextArea: "textField", AXSearchField: "textField", AXLink: "link", AXButton: "button" };
+/** Whether an element has the Accessibility `role`: compact rows (#144) give only inspect's type, such as textField. */
+const hasRole = (e, role) => (e.attributes?.role ?? e.role) === role || (TYPES[role] !== undefined && e.role === TYPES[role]);
 const find = (els, role, pattern) =>
-	// role is inspect's normalized role, such as textField; the Accessibility role is attributes.role.
-	els.find((e) => (e.attributes?.role ?? e.role) === role && (!pattern || pattern.test(label(e)) || pattern.test(e.value ?? "")));
+	els.find((e) => hasRole(e, role) && (!pattern || pattern.test(label(e)) || pattern.test(e.value ?? "")));
 const findOrSkip = (els, role, pattern, what) => find(els, role, pattern) ?? skip(`no ${what} (${role}) found in the inspection`);
 // A table read gives columns and rows at the top level; its table field only names the table.
 const tableOf = (result) => Array.isArray(result.data.rows) ? result.data : null;
@@ -507,7 +513,7 @@ async function finderTable(s) {
 	const win = await s.finder();
 	const { snap, els } = await s.inspect(win);
 	// The sidebar is an outline too, listed first.
-	const lists = els.filter((e) => ["AXOutline", "AXTable"].includes(e.attributes?.role) && !/sidebar/i.test(label(e)));
+	const lists = els.filter((e) => (hasRole(e, "AXOutline") || hasRole(e, "AXTable")) && !/sidebar/i.test(label(e)));
 	const outline = lists[0] ?? skip("Finder window has no list outline; list view did not apply");
 	const read = await s.read(win, { scope: { snapshot: snap, element: outline.id }, table: true });
 	return { win, snap, outline, read, table: tableOf(read) };

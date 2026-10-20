@@ -20,7 +20,8 @@ They share no socket, state folder, lock or hotkey. native2 takes none of Peekab
 ### Tools that don't do everything yet
 
 - **desktop_fill_password** fills only inside the dylib, where the app's hook decides. The standalone host refuses.
-- **desktop_set_cell** can't edit Finder's cells (it returns CELL_NOT_EDITABLE), and the clipboard isn't reserved across calls.
+- **desktop_insert format files into Finder** sends Command-V but Finder doesn't paste, so it ends unknown and leaves the files on the clipboard (live-check #114). Peekaboo first prepares a background window that isn't active: it makes it key through SkyLight and clicks its title bar with a window-routed event (`BackgroundWindowKeyboardPreparation`, `BackgroundWindowActivationDriver`, `BackgroundWindowChromeReader`). native2 has the routed click but not the rest.
+- The clipboard isn't reserved across calls, as Peekaboo's `ClipboardPasteTransactionGate` does while a paste is pending.
 - **desktop_dialog_answer** doesn't type a path into an Open or Save panel.
 - **desktop_menubar_items** has no fallback when MenuBarAgent doesn't draw the menu bar.
 - **desktop_switch_space** is checked only up to its refusals, on a Mac with one Space.
@@ -31,8 +32,7 @@ They share no socket, state folder, lock or hotkey. native2 takes none of Peekab
 
 ### Not yet checked live
 
-- steps-pointer, steps-manage and steps-dialogs' Dock step haven't run live: they move the real pointer or bring apps forward.
-- Of live-check, only #96 and #83 have run through `--server`. The rest opens TextEdit, Finder, Safari and Chrome, switches input sources (#90), presses Command-Space (#89), or needs the app's approval prompt (#120).
+- live-check's Safari checks (#79, #82, #86, #88, #92's web grid, #99's web field, #107's read) skip while the user's Safari is open. #90 switches input sources and #120 needs the app's approval prompt.
 - The bench has run only on the fixture.
 - Background launch and open ([#162](https://github.com/githubnext/desktop-tools/issues/162)) haven't run live. The check: type continuously in TextEdit while launching an app that isn't running and opening a PDF in Preview, both without `activate`. No keystroke should land elsewhere and TextEdit should stay frontmost; then inspect and click the new windows in the background. It needs the user's go-ahead, since a regression takes their focus.
 
@@ -44,6 +44,8 @@ A model shouldn't care about any of these, but they make Node's tests and the pa
 - A key refused because focus isn't in the window says refused, since nothing was sent; Node says unknown.
 - desktop_wait reads the app's full inventory. Node's size-bounded apps list can report a running app as `app_not_listed`.
 - An unknown but well-formed `ps1_` snapshot says the observation no longer belongs to the running desktop.
+- Actions that list an app's windows leave out the untitled off-screen windows Node counts in `hidden_windows` while an app launches or changes, so steps-manage shows that count only on Node.
+- KEY_SEQUENCE_STOPPED says the sequence stopped after N keys; Node adds that the next key may have been sent.
 - desktop_launch and desktop_open run in the background unless `activate` is true, so an agent opening an app doesn't take the user's typing ([#162](https://github.com/githubnext/desktop-tools/issues/162)). Node always brings the app forward, and has no `activate`.
 
 ### Keeping the two in step
@@ -68,7 +70,7 @@ Each step ships on its own and can be reverted.
 
 1. **Keep it from rotting.** Done: CI builds and tests native2 and checks the contract. Port each tool change to native2 in the same PR, with its calls entries.
 2. **Close the tool gaps** above. Run each fix through its calls and steps files.
-3. **Finish the live checks** with the user's go-ahead, since they take over the pointer and the front app: steps-pointer, steps-manage, the Dock step and the full `live-check --server`, then the bench on real apps.
+3. **Finish the live checks** with the user's go-ahead, since they take over the pointer and the front app. Done: steps-pointer, steps-manage, the Dock step, and live-check #70, #77, #79, #81, #82, #86, #88, #89, #92, #99, #107, #110, #111 and #114 through `--server`, where Swift and Node now differ only on #114 above. Still to run: the Safari checks with Safari closed, the bench on real apps, and #162.
 4. **Harden the runtime.** The socket lease (`<socket>.lock`, as Peekaboo's) and draining calls on stop are in. Still to do: sign the dylib, client and MCP binary with the team identity. Run the approval prompt, pause and SELF_TARGET checks through the app.
 5. **Bridge the wire.** Done: native2's one-shot `desktop-tools-client` (`<client> <socket> <tool> [--verbose]`, arguments on stdin, one JSON line out, opening its containing app in the background when no host serves) and `createDesktop({ wire: 2 })`. `createDesktop`, `/protocol`, `/tools`, `dist/mcp.js` and ace keep working against a native2 host by changing one option.
 6. **Dogfood in the app.** Add a build switch so `npm run dev-app` bundles native2's dylib and client instead of `native/`'s, and run the dev app daily with the MCP server on `--wire 2`.
