@@ -64,16 +64,23 @@ if input.allSatisfy({ $0 == 0x20 || $0 == 0x0A || $0 == 0x0D || $0 == 0x09 }) {
 
 /// Connects and exchanges hellos; nil with the connect errno when no host accepted.
 func connect() throws -> (Connection?, Int32) {
-	do {
-		let connection = try Connection.connect(to: socketPath)
-		try connection.send(.object([("hello", JSON(wireVersion))]))
-		guard try connection.receive()["hello"]?.int == wireVersion else {
-			refuse("DESKTOP_ERROR", "The host at \(socketPath) speaks another wire version.")
-		}
-		return (connection, 0)
-	} catch let WireError.system("connect", code) {
+	let connection: Connection
+	do { connection = try Connection.connect(to: socketPath) } catch let WireError.system("connect", code) {
 		return (nil, code)
 	}
+	// No call is sent before the hellos, so a host that drops the connection here ran nothing. A signed host drops a
+	// client that isn't signed as its own app's.
+	let hello: JSON
+	do {
+		try connection.send(.object([("hello", JSON(wireVersion))]))
+		hello = try connection.receive()
+	} catch {
+		refuse("HOST_NOT_SERVING", "The host at \(socketPath) closed the connection before serving it (\(error)). A signed host serves only the client bundled with its app.")
+	}
+	guard hello["hello"]?.int == wireVersion else {
+		refuse("DESKTOP_ERROR", "The host at \(socketPath) speaks another wire version.")
+	}
+	return (connection, 0)
 }
 
 let host = HostApp.containing()
