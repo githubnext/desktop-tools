@@ -110,13 +110,13 @@ async function run(command) {
 	if (mode === "steps") {
 		const app = json(await mcp.call("desktop_apps", { query: values.app })).apps?.find((row) => row.name === values.app);
 		if (!app) throw new Error(`${values.app} isn't running.`);
-		const window = json(await mcp.call("desktop_windows", { pid: app.pid })).windows?.find((row) => row.window_title === values.window);
+		const window = json(await mcp.call("desktop_windows", { pid: app.pid })).windows?.find((row) => (row.title ?? row.window_title) === values.window);
 		if (!window) throw new Error(`${values.app} has no window titled ${values.window}.`);
-		target = { pid: app.pid, window: window.window_id, app: app.target, windowTarget: window.target };
+		target = { pid: app.pid, window: (window.window_id ?? window.target.window_id), app: app.target, windowTarget: window.target };
 		if (values.window2) {
-			const second = json(await mcp.call("desktop_windows", { pid: app.pid })).windows?.find((row) => row.window_title === values.window2);
+			const second = json(await mcp.call("desktop_windows", { pid: app.pid })).windows?.find((row) => (row.title ?? row.window_title) === values.window2);
 			if (!second) throw new Error(`${values.app} has no window titled ${values.window2}.`);
-			target.window2 = second.window_id;
+			target.window2 = (second.window_id ?? second.target.window_id);
 		}
 	}
 	const results = [];
@@ -131,7 +131,7 @@ async function run(command) {
 			}
 			for (const [found, kind, name, title] of text.matchAll(/"\$(win|movedwin):([^:"]*):([^"]*)"/g)) {
 				const app = json(await mcp.call("desktop_apps", { query: name })).apps?.find((row) => row.name === name);
-				const row = app && json(await mcp.call("desktop_windows", { pid: app.pid })).windows?.find((row) => row.window_title === title);
+				const row = app && json(await mcp.call("desktop_windows", { pid: app.pid })).windows?.find((row) => (row.title ?? row.window_title) === title);
 				const window = row?.target && (kind === "win" ? row.target : { ...row.target, bounds: { ...row.target.bounds, x: row.target.bounds.x + 1 } });
 				text = text.replace(found, JSON.stringify(window ?? `missing window ${title}`));
 			}
@@ -142,7 +142,7 @@ async function run(command) {
 					text = text.replaceAll('"$snapshot2"', JSON.stringify(other.snapshot_id));
 				}
 				text = text.replaceAll('"$snapshot"', JSON.stringify(observed.snapshot_id)).replace(/"\$(role|label):([^"]*)"/g, (_, kind, wanted) => {
-					const found = observed.ui_elements?.find((element) => kind === "role" ? element.attributes?.role === wanted : element.label === wanted);
+					const found = observed.ui_elements?.find((element) => kind === "role" ? (element.role ?? element.attributes?.role) === wanted : element.label === wanted);
 					return JSON.stringify(found?.id ?? `missing ${kind} ${wanted}`);
 				});
 			}

@@ -160,7 +160,7 @@ extension Tools {
 		}
 		let recognized: JSON? = request.ocr
 			? await Mac.recognizeText(in: image, seconds: max(1, min(8, 26 - seconds(started.duration(to: .now)))))
-			: nil
+			: JSON?.none
 		let ms = { (from: ContinuousClock.Instant, to: ContinuousClock.Instant) -> JSON in JSON((seconds(from.duration(to: to)) * 1000).rounded()) }
 		let title = elements.windowTitle ?? window.title
 		let display = Mac.displayIndex(window.bounds)

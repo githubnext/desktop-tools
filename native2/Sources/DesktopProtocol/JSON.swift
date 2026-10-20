@@ -53,14 +53,13 @@ public enum JSON: Sendable, Equatable {
 }
 
 extension JSON: ExpressibleByStringLiteral, ExpressibleByBooleanLiteral, ExpressibleByIntegerLiteral,
-	ExpressibleByFloatLiteral, ExpressibleByArrayLiteral, ExpressibleByNilLiteral
+	ExpressibleByFloatLiteral, ExpressibleByArrayLiteral
 {
 	public init(stringLiteral value: String) { self = .string(value) }
 	public init(booleanLiteral value: Bool) { self = .bool(value) }
 	public init(integerLiteral value: Int) { self = .number(Double(value)) }
 	public init(floatLiteral value: Double) { self = .number(value) }
 	public init(arrayLiteral elements: JSON...) { self = .array(elements) }
-	public init(nilLiteral: ()) { self = .null }
 }
 
 extension JSON {

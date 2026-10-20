@@ -41,7 +41,7 @@ extension Tools {
 		// Recognition and the window inventory don't depend on each other.
 		async let recognition: JSON? = ocr
 			? Mac.recognizeText(in: image, display: display.bounds, seconds: max(1, min(8, 26 - seconds(started.duration(to: .now)))))
-			: nil
+			: JSON?.none
 		let (windows, warnings) = await screenWindows(on: display.bounds)
 		var recognized = await recognition
 		recognized?.set("note", JSON(recognizedNote))

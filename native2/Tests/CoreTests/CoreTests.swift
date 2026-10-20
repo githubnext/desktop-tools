@@ -6,7 +6,7 @@ import Testing
 	@Test func writesAsJSONStringify() throws {
 		let value: JSON = .object([
 			("int", 3), ("float", 295.16796875), ("negative", -0.5), ("big", 1792438875817382),
-			("text", "a\"b\\c\n\t\u{01}/é😀"), ("list", [true, false, nil]), ("empty", .object([])),
+			("text", "a\"b\\c\n\t\u{01}/é😀"), ("list", [true, false, .null]), ("empty", .object([])),
 		])
 		#expect(value.text == #"{"int":3,"float":295.16796875,"negative":-0.5,"big":1792438875817382,"text":"a\"b\\c\n\t\u0001/é😀","list":[true,false,null],"empty":{}}"#)
 	}

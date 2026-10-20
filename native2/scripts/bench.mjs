@@ -13,14 +13,14 @@ const res={};
 for(const [name,cmd] of Object.entries(S)){
  const s=server(cmd);await s.req("initialize",{protocolVersion:"2025-06-18",capabilities:{},clientInfo:{name:"b"}});
  const app=j(await s.call("desktop_apps",{query:"fixture"})).apps.find(a=>a.name==="fixture");
- const win=j(await s.call("desktop_windows",{pid:app.pid})).windows.find(w=>w.window_title==="Click Fixture");
- const ins=async()=>{const t0=performance.now();const d=j(await s.call("desktop_inspect",{pid:app.pid,window:win.window_id}));const ms=performance.now()-t0;
-  const id=f=>d.ui_elements.find(f)?.id;return {ms,snap:d.snapshot_id,field:id(e=>e.attributes.role==="AXTextField"),button:id(e=>e.label==="Press me"),scroll:id(e=>e.attributes.role==="AXScrollArea")}};
+ const win=j(await s.call("desktop_windows",{pid:app.pid})).windows.find(w=>(w.title??w.window_title)==="Click Fixture");
+ const ins=async()=>{const t0=performance.now();const d=j(await s.call("desktop_inspect",{pid:app.pid,window:(win.window_id??win.target.window_id)}));const ms=performance.now()-t0;
+  const id=f=>d.ui_elements.find(f)?.id;return {ms,snap:d.snapshot_id,field:id(e=>(e.role??e.attributes?.role)==="AXTextField"),button:id(e=>e.label==="Press me"),scroll:id(e=>(e.role??e.attributes?.role)==="AXScrollArea")}};
  const scen={
   apps:async()=>[ "desktop_apps",{}],
   windows:async()=>["desktop_windows",{pid:app.pid}],
-  inspect:async()=>["desktop_inspect",{pid:app.pid,window:win.window_id}],
-  wait:async()=>["desktop_wait",{until:"element_appears",pid:app.pid,window:win.window_id,element:{role:"AXButton",title:"Press me"},timeout_ms:2000}],
+  inspect:async()=>["desktop_inspect",{pid:app.pid,window:(win.window_id??win.target.window_id)}],
+  wait:async()=>["desktop_wait",{until:"element_appears",pid:app.pid,window:(win.window_id??win.target.window_id),element:{role:"AXButton",title:"Press me"},timeout_ms:2000}],
   click:async(i,o)=>["desktop_click",{snapshot:o.snap,element:o.button}],
   double:async(i,o)=>["desktop_click",{snapshot:o.snap,point:{x:0.2,y:0.5},kind:"double"}],
   type:async(i,o)=>["desktop_type",{snapshot:o.snap,element:o.field,text:"t"+i}],
