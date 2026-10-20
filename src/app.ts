@@ -15,10 +15,13 @@ function run(command: string[]) {
 	if (result.status !== 0) throw new Error(`Command failed: ${command.join(" ")}`);
 }
 
-/** Builds the native products into `<out>/build` and assembles an unsigned `<out>/Desktop Tools.app`, or `Desktop Tools Dev.app` for `dev`. */
-export function assemble(out: string, scratch?: string, dev = false) {
+/**
+ * Builds the native products into `<out>/build` and assembles an unsigned `<out>/Desktop Tools.app`, or `Desktop Tools Dev.app` for `dev`.
+ * `native2` puts the pure Swift host's runtime and client in place of native/'s (#143).
+ */
+export function assemble(out: string, scratch?: string, dev = false, native2 = false) {
 	const build = join(out, "build");
-	run(["node", join(root, "dist", "build.js"), "--out", build, ...(scratch ? ["--scratch", scratch] : [])]);
+	run(["node", join(root, "dist", "build.js"), "--out", build, ...(scratch ? ["--scratch", scratch] : []), ...(native2 ? ["--native2"] : [])]);
 	const name = dev ? "Desktop Tools Dev" : "Desktop Tools";
 	const app = join(out, `${name}.app`);
 	rmSync(app, { recursive: true, force: true });

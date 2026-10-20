@@ -189,6 +189,9 @@ func activityName(_ tool: String, arguments: JSON, mutatesDesktop: Bool) -> Stri
 		if let key = arguments["key"]?.string, mediaKeys.contains(key) { return "Media key" }
 	case "desktop_insert":
 		if arguments["format"] != nil { return "Insert attachment" }
+	case "desktop_input_source":
+		// Without select it only lists the sources, which the old runtime didn't log.
+		if arguments["select"] == nil { return nil }
 	default:
 		break
 	}

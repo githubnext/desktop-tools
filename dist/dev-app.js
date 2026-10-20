@@ -67,7 +67,12 @@ export function launch() {
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
     const { values } = parseArgs({
-        options: { stop: { type: "boolean", default: false }, scratch: { type: "string" }, "no-open": { type: "boolean", default: false } },
+        options: {
+            stop: { type: "boolean", default: false },
+            scratch: { type: "string" },
+            "no-open": { type: "boolean", default: false },
+            native2: { type: "boolean", default: false },
+        },
         strict: true,
     });
     if (values.stop) {
@@ -80,7 +85,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         rmSync(staging, { recursive: true, force: true });
         mkdirSync(staging, { recursive: true });
         try {
-            const built = assemble(staging, values.scratch && resolve(values.scratch), true);
+            const built = assemble(staging, values.scratch && resolve(values.scratch), true, values.native2);
             sign(built, identity, false);
             stop();
             rmSync(devApp, { recursive: true, force: true });
@@ -92,7 +97,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         console.log(devApp);
         if (!values["no-open"]) {
             const state = launch();
-            console.log(`Serving ${join(state, "desktop.sock")}. Use it with: DESKTOP_TOOLS_STATE=${state} node dist/mcp.js`);
+            const wire = values.native2 ? " --wire 2" : "";
+            console.log(`Serving ${join(state, "desktop.sock")}. Use it with: DESKTOP_TOOLS_STATE=${state} node dist/mcp.js${wire}`);
         }
     }
 }
