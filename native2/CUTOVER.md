@@ -27,8 +27,6 @@ They share no socket, state folder, lock or hotkey. native2 takes none of Peekab
 
 ### Runtime dylib
 
-- It has no socket lease.
-- `desktop_tools_stop` doesn't drain calls in flight.
 - It has been run only unsigned. Nothing has exercised the signed peer check (same team, expected identifier, CDHash read before and after) or the app's approval prompt end to end.
 
 ### Not yet checked live
@@ -71,7 +69,7 @@ Each step ships on its own and can be reverted.
 1. **Keep it from rotting.** Done: CI builds and tests native2 and checks the contract. Port each tool change to native2 in the same PR, with its calls entries.
 2. **Close the tool gaps** above. Run each fix through its calls and steps files.
 3. **Finish the live checks** with the user's go-ahead, since they take over the pointer and the front app: steps-pointer, steps-manage, the Dock step and the full `live-check --server`, then the bench on real apps.
-4. **Harden the runtime:** add the socket lease, drain calls in flight on stop, then sign the dylib, client and MCP binary with the team identity. Run the approval prompt, pause and SELF_TARGET checks through the app.
+4. **Harden the runtime.** The socket lease (`<socket>.lock`, as Peekaboo's) and draining calls on stop are in. Still to do: sign the dylib, client and MCP binary with the team identity. Run the approval prompt, pause and SELF_TARGET checks through the app.
 5. **Bridge the wire.** Done: native2's one-shot `desktop-tools-client` (`<client> <socket> <tool> [--verbose]`, arguments on stdin, one JSON line out, opening its containing app in the background when no host serves) and `createDesktop({ wire: 2 })`. `createDesktop`, `/protocol`, `/tools`, `dist/mcp.js` and ace keep working against a native2 host by changing one option.
 6. **Dogfood in the app.** Add a build switch so `npm run dev-app` bundles native2's dylib and client instead of `native/`'s, and run the dev app daily with the MCP server on `--wire 2`.
 7. **Ship the Swift MCP server.** Bundle and sign `desktop-tools-mcp` in the app, and point the README's setup at it. Keep `dist/mcp.js` as a shim that runs the bundled binary, so existing `npx` configs keep working. Release it, and cut a release that can switch back.

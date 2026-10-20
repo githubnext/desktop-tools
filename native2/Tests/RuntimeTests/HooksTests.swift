@@ -50,6 +50,42 @@ struct HooksTests {
 		#expect(lstat(path, &info) != 0)
 		Thread.sleep(forTimeInterval: 0.4)
 	}
+
+	@Test
+	func `a second host can't take the socket until the first has stopped and drained`() async throws {
+		let path = NSTemporaryDirectory() + "dt2-lease-\(getpid()).sock"
+		let first = Server(path: path)
+		try first.start()
+		#expect(throws: SocketOwned.self) { try Server(path: path).start() }
+
+		// A call still running at stop keeps the lease, and no new call starts.
+		#expect(first.begin())
+		first.stop()
+		#expect(!first.begin())
+		#expect(throws: SocketOwned.self) { try Server(path: path).start() }
+
+		first.end()
+		let second = Server(path: path)
+		try second.start()
+		second.stop()
+		await second.drained()
+		try await Task.sleep(for: .milliseconds(400))
+	}
+
+	@Test
+	func `drained gives up the lease after its limit even with a call still running`() async throws {
+		let path = NSTemporaryDirectory() + "dt2-drain-\(getpid()).sock"
+		let server = Server(path: path)
+		try server.start()
+		#expect(server.begin())
+		server.stop()
+		await server.drained(within: 0.2)
+		let next = Server(path: path)
+		try next.start()
+		next.stop()
+		server.end()
+		try await Task.sleep(for: .milliseconds(400))
+	}
 }
 
 private final class Seen: @unchecked Sendable {

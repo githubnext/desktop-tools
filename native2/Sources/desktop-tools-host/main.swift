@@ -10,7 +10,8 @@ let server = Server(path: path)
 do {
 	try server.start()
 } catch {
-	FileHandle.standardError.write(Data("desktop-tools-host: \(error)\n".utf8))
+	let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+	FileHandle.standardError.write(Data("desktop-tools-host: \(message)\n".utf8))
 	exit(1)
 }
 FileHandle.standardError.write(Data("desktop-tools-host: serving \(path)\n".utf8))

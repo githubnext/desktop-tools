@@ -91,7 +91,7 @@ Known gaps:
 - desktop_set_cell can't edit Finder's cells (CELL_NOT_EDITABLE), and the clipboard isn't reserved across calls.
 - desktop_dialog_answer doesn't type a path into an Open or Save panel, and desktop_menubar_items has no fallback when MenuBarAgent doesn't draw the menu bar.
 - desktop_switch_space is checked only up to its refusals, on a Mac with one Space.
-- The runtime dylib has no socket lease, its stop doesn't drain calls in flight, and it has been run only unsigned.
+- The runtime dylib has been run only unsigned.
 
 ## Speed
 

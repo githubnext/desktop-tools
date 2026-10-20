@@ -115,7 +115,11 @@ private final class Desktop {
 				try? await Task.sleep(nanoseconds: pause * NSEC_PER_SEC)
 				guard !Task.isCancelled else { return }
 			}
-			server?.stop()
+			if let server {
+				// The lease goes with the old server's last call; the new one can't serve until then.
+				server.stop()
+				await server.drained()
+			}
 			server = nil
 			state.set("starting")
 			// A failed start, such as a socket folder that can't be made yet, is retried.
@@ -176,7 +180,10 @@ private final class Desktop {
 		tail = Task {
 			await previous?.value
 			state.set("stopping")
-			server?.stop()
+			if let server {
+				server.stop()
+				await server.drained()
+			}
 			server = nil
 			state.set("stopped")
 		}
@@ -214,7 +221,7 @@ public func status() -> UnsafeMutablePointer<CChar>? {
 	return strdup(String(decoding: data, as: UTF8.self))
 }
 
-/// Stops serving; poll status until `stopped`. Connections already open finish their calls.
+/// Stops serving once the calls already running finish, at most 30 seconds; poll status until `stopped`.
 @_cdecl("desktop_tools_stop")
 public func stop() {
 	state.set("stopping")
