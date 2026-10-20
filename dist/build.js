@@ -5,11 +5,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 const { values } = parseArgs({
-    options: { out: { type: "string" }, scratch: { type: "string" } },
+    options: { out: { type: "string" }, scratch: { type: "string" }, native2: { type: "boolean", default: false } },
     strict: true,
 });
 if (!values.out) {
-    throw new Error("Usage: desktop-tools-build --out <directory> [--scratch <directory>]");
+    throw new Error("Usage: desktop-tools-build --out <directory> [--scratch <directory>] [--native2]");
 }
 if (process.platform !== "darwin")
     throw new Error("Native desktop tools build on macOS");
@@ -54,11 +54,7 @@ const dropped = [...requested].filter((name) => !remote.has(name) || excluded.ha
 if (dropped.length) {
     throw new Error(`The embedded host would drop these allowed operations: ${dropped.join(", ")}`);
 }
-const build = [
-    "xcrun",
-    "swift",
-    "build",
-    ...package_,
+const release = [
     "--configuration",
     "release",
     "--force-resolved-versions",
@@ -68,6 +64,7 @@ const build = [
     "-Xlinker",
     "@loader_path/../Frameworks",
 ];
+const build = ["xcrun", "swift", "build", ...package_, ...release];
 run(build);
 const location = spawn([...build, "--show-bin-path"]);
 if (location.status !== 0)
@@ -76,6 +73,17 @@ const products = location.stdout.trim();
 mkdirSync(out, { recursive: true });
 for (const name of ["libDesktopTools.dylib", "desktop-tools-client", "desktop-tools-app"]) {
     copyFileSync(join(products, name), join(out, name));
+}
+// The pure Swift host (#143) exports the same C ABI, so the app runs it in place of native/'s runtime and client.
+if (values.native2) {
+    const native2 = ["xcrun", "swift", "build", "--package-path", join(root, "native2"), ...release];
+    run(native2);
+    const located = spawn([...native2, "--show-bin-path"]);
+    if (located.status !== 0)
+        throw new Error("Cannot locate the native2 build products");
+    for (const name of ["libDesktopTools.dylib", "desktop-tools-client"]) {
+        copyFileSync(join(located.stdout.trim(), name), join(out, name));
+    }
 }
 // Every artifact carries the notices of what it links; other files in <out>/Licenses stay.
 const licenses = join(out, "Licenses");

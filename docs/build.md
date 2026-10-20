@@ -50,6 +50,8 @@ npm run dev-app            # build, sign, install and open
 npm run dev-app -- --stop  # quit it
 ```
 
+`npm run dev-app -- --native2` bundles the pure Swift host's `libDesktopTools.dylib` and `desktop-tools-client` from `native2/` in place of `native/`'s, keeping the same app, identity and state folder (see [native2/CUTOVER.md](../native2/CUTOVER.md)). Run the MCP server against it with `--wire 2`. Building without the switch puts `native/`'s back.
+
 Every checkout and worktree installs the same `~/Library/Application Support/desktop-tools/dev/Desktop Tools Dev.app`. It has its own bundle identity, `dev.githubnext.desktop-tools.dev`, nested under the release app's, and the name **Desktop Tools Dev**. Building quits the running copy, replaces the bundle in place and opens it again through LaunchServices with `open`. Launching its executable directly can attribute permission checks to the launching terminal or agent instead of the app.
 
 This exists because macOS ties permissions to the app. The Accessibility, Screen Recording and Keyboard input grants belong to a bundle identity and its signing requirement. Screen capture also needs a separate, dated approval to "bypass the system private window picker", which macOS appears to ask for again for each copy of an app that captures, even when the grant is on. Development builds therefore never use the release identity, which would swap the installed app's binaries under its grants, and never run from scattered build folders, each of which would ask again. Grant **Desktop Tools Dev** once in System Settings, and approve its capture prompt once; rebuilds keep both.
