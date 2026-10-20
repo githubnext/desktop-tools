@@ -468,8 +468,9 @@ struct ActionInputDriver: ActionInputDriving {
                 } catch {
                     throw unavailable
                 }
-                guard case let .string(text)? = sample?.value, let range = sample?.selectedTextRange else { return nil }
-                return TextSelectionState(text: text, range: range)
+                // A text sample without a range has nothing selected yet.
+                guard case let .string(text)? = sample?.value else { return nil }
+                return TextSelectionState(text: text, range: sample?.selectedTextRange)
             }
             guard let text = element.stringValue, let range = element.textSelectionRange,
                   range.location + range.length <= text.utf16.count

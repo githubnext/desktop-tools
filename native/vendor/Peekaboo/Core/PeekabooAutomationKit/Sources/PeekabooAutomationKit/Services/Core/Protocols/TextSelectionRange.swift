@@ -36,6 +36,16 @@ public struct TextSelectionRange: Codable, Equatable, Sendable {
         self.init(location: range.location, length: range.length)
     }
 
+    /// Whether a native range says the text has neither a selection nor a caret: read-only text, such as a PDF page in
+    /// Preview, reports location NSNotFound until something is selected.
+    static func isAbsent(nativeValue: CFTypeRef?) -> Bool {
+        guard let nativeValue, CFGetTypeID(nativeValue) == AXValueGetTypeID() else { return false }
+        let value = unsafeDowncast(nativeValue, to: AXValue.self)
+        var range = CFRange()
+        guard AXValueGetType(value) == .cfRange, AXValueGetValue(value, .cfRange, &range) else { return false }
+        return (range.location == NSNotFound || range.location == kCFNotFound) && range.length == 0
+    }
+
     var nativeRange: CFRange {
         CFRange(location: self.location, length: self.length)
     }

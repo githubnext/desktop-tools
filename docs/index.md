@@ -15,6 +15,6 @@ The native runtime and client require macOS 15 or later. The `protocol` export a
 - [Tools](tools.md): what agents can observe and do, and what isn't supported.
 - [Use from Node](node.md): the TypeScript client and its results.
 - [Embed](embed.md): ship the runtime inside your own signed app.
-- [Install and build](build.md): Git installs, native builds, and the patch stack.
+- [Install and build](build.md): Git installs, native builds, and the vendored Peekaboo.
 - [Live checks](live-checks.md): run the automatable checks on an unlocked Mac, and the ones that stay manual.
 - [Licenses](licenses.md): notices native builds must ship.

@@ -94,7 +94,8 @@ public struct TextSelectionResult: Codable, Equatable, Sendable {
 
 struct TextSelectionState: Equatable {
     let text: String
-    let range: TextSelectionRange
+    /// nil when the text has neither a selection nor a caret, as on a PDF page in Preview before anything is selected.
+    let range: TextSelectionRange?
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.text.utf16.elementsEqual(rhs.text.utf16) && lhs.range == rhs.range

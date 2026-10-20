@@ -11,7 +11,7 @@ let package = Package(
 		.executable(name: "desktop-tools-app", targets: ["DesktopToolsApp"]),
 	],
 	dependencies: [
-		.package(url: "https://github.com/openclaw/Peekaboo.git", exact: "4.8.0"),
+		.package(path: "vendor/Peekaboo"),
 	],
 	targets: [
 		.target(

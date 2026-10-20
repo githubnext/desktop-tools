@@ -78,7 +78,9 @@ struct AXMutationObservationReaderTests {
         }
     }
 
-    @Test(arguments: ["stable", "changed", "canonical", "missingBefore", "missingAfter", "missingRange", "outOfBounds"])
+    @Test(arguments: [
+        "stable", "changed", "canonical", "missingBefore", "missingAfter", "missingRange", "outOfBounds", "absent",
+    ])
     func `focused value completion requires one coherent UTF16 text and selection sample`(change: String) {
         let reference = RetainedFocusElement(element: AXUIElementCreateApplication(4242))
         var textReads = 0
@@ -103,7 +105,10 @@ struct AXMutationObservationReaderTests {
                 default:
                     #expect(name == kAXSelectedTextRangeAttribute)
                     guard change != "missingRange" else { return nil }
-                    var range = CFRange(location: change == "outOfBounds" ? 2 : 1, length: 0)
+                    // Read-only text with nothing selected, such as a PDF page in Preview, reports NSNotFound.
+                    var range = CFRange(
+                        location: change == "absent" ? NSNotFound : change == "outOfBounds" ? 2 : 1,
+                        length: 0)
                     return AXValueCreate(.cfRange, &range)
                 }
             })
@@ -112,6 +117,9 @@ struct AXMutationObservationReaderTests {
         if change == "stable" {
             #expect(observed?.value == .string("\u{00E9}"))
             #expect(observed?.selectedTextRange == TextSelectionRange(location: 1, length: 0))
+        } else if change == "absent" {
+            #expect(observed?.value == .string("\u{00E9}"))
+            #expect(observed?.selectedTextRange == nil)
         } else {
             #expect(observed?.value == nil)
             #expect(observed?.selectedTextRange == nil)

@@ -190,14 +190,22 @@ enum DetachedAXMutationReader {
             }
         case .textSelection:
             if DetachedExactWindowFocusReader.allowsValueRead(before),
-               let text = readAttribute(kAXValueAttribute, deadline) as? String,
-               let range = TextSelectionRange(nativeValue: readAttribute(kAXSelectedTextRangeAttribute, deadline)),
-               let afterText = readAttribute(kAXValueAttribute, deadline) as? String,
-               text.utf16.elementsEqual(afterText.utf16),
-               range.location + range.length <= text.utf16.count
+               let text = readAttribute(kAXValueAttribute, deadline) as? String
             {
-                value = .string(text)
-                selectedTextRange = range
+                let nativeRange = readAttribute(kAXSelectedTextRangeAttribute, deadline)
+                if let afterText = readAttribute(kAXValueAttribute, deadline) as? String,
+                   text.utf16.elementsEqual(afterText.utf16)
+                {
+                    if let range = TextSelectionRange(nativeValue: nativeRange),
+                       range.location + range.length <= text.utf16.count
+                    {
+                        value = .string(text)
+                        selectedTextRange = range
+                    } else if TextSelectionRange.isAbsent(nativeValue: nativeRange) {
+                        // The text is readable but has nothing selected yet, so only the value is reported.
+                        value = .string(text)
+                    }
+                }
             }
         }
 

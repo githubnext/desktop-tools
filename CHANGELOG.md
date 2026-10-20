@@ -11,6 +11,7 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 ### Changed
 
 - The agent's name label under the window outline is a point smaller and tighter, and edged in a darker shade of the outline color instead of white.
+- Peekaboo is vendored in `native/vendor/Peekaboo`, with our changes applied, instead of fetched and patched at build time. Native builds no longer fetch Peekaboo, and `npm run peekaboo-test` runs the vendored tests without `--scratch`. `git diff peekaboo-upstream-4d43dc9 -- native/vendor/Peekaboo` shows our changes to upstream.
 
 ### Fixed
 
