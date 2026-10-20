@@ -114,7 +114,9 @@ async function bench(command) {
 			const { data: listing } = await mcp.call("desktop_windows", { pid: app.pid });
 			const window = listing.windows?.find((w) => w.availability?.state === "available");
 			if (!window) continue;
-			results[key] = await time(() => mcp.call("desktop_inspect", { pid: app.pid, window: window.window_id }));
+			// Compact rows carry the window ID only in their target.
+			const id = window.window_id ?? window.target?.window_id;
+			results[key] = await time(() => mcp.call("desktop_inspect", { pid: app.pid, window: id }));
 		}
 		if (want("windows_missing")) {
 			results.windows_missing = await time(() => mcp.call("desktop_windows", { pid: 999999 }).catch(() => undefined));
