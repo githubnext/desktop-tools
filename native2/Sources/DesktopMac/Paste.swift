@@ -330,12 +330,18 @@ extension Mac {
 	/// a paste only when the caller lets the clipboard stay replaced.
 	public static func pasteAttachment(_ payload: PastePayload, replace: Bool, target: KeyboardTarget) throws -> PasteReport {
 		guard target.focusedRole != nil else { throw pasteRefusal("Attachment insertion requires an exact focused receiver.") }
+		let finderFiles: Bool = if case .files = payload {
+			NSRunningApplication(processIdentifier: target.window.pid)?.bundleIdentifier == "com.apple.finder"
+		} else { false }
+		// A receiver the snapshot already shows can't show the attachment is refused as that, before keyboard focus
+		// is checked, so the refusal names what would stop the paste anyway.
+		guard finderFiles || target.focusedRole == "AXTextArea" || replace else { throw unverifiableReceiver() }
 		return try ClipboardGate.exclusive { transaction in
 			let focused = try requireKeyboardFocus(target)
 			if secureFocus(focused) { throw secureFocusRefusal }
 			var folder: FolderExpectation?
 			var expectation: PasteExpectation?
-			if case let .files(_, paths) = payload, NSRunningApplication(processIdentifier: target.window.pid)?.bundleIdentifier == "com.apple.finder" {
+			if finderFiles, case let .files(_, paths) = payload {
 				folder = try finderFolder(focused, role: target.focusedRole, paths: paths)
 			} else if target.focusedRole == "AXTextArea", !isWebField(focused), let baseline = ReceiverState.read(focused, target: target),
 			          let range = Range(NSRange(location: baseline.location, length: baseline.length), in: baseline.text)
@@ -344,17 +350,19 @@ extension Mac {
 				guard text.utf16.count <= 65_536 else { throw pasteRefusal("The intended edit exceeds the complete text verification limit.") }
 				expectation = PasteExpectation(baseline: baseline, text: text, location: baseline.location + payload.count, attachments: payload.count)
 			}
-			guard expectation != nil || folder != nil || replace else {
-				var refusal = Refusal("PASTE_UNVERIFIABLE_RECEIVER", attachmentPasteRefusal.message, hint: attachmentPasteRefusal.hint, fromHost: false)
-				refusal.reason = "operation_unsupported"
-				throw refusal
-			}
+			guard expectation != nil || folder != nil || replace else { throw unverifiableReceiver() }
 			let write: TemporaryWrite
 			do { write = try TemporaryWrite(replacing: replace) } catch let error as TemporaryWriteError {
 				throw pasteRefusal("Attachment insertion could not establish its read-only preflight: \(error.description)")
 			}
 			return try paste(payload, write: write, expectation: expectation, folder: folder, replace: replace, focused: focused, target: target, transaction: transaction)
 		}
+	}
+
+	private static func unverifiableReceiver() -> Refusal {
+		var refusal = Refusal("PASTE_UNVERIFIABLE_RECEIVER", attachmentPasteRefusal.message, hint: attachmentPasteRefusal.hint, fromHost: false)
+		refusal.reason = "operation_unsupported"
+		return refusal
 	}
 
 	/// One temporary paste into the exact receiver, then the wait for its evidence and the clipboard's cleanup.

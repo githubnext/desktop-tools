@@ -389,8 +389,13 @@ extension Mac {
 	) throws -> (Delivery, SelectionResult) {
 		AXUIElementSetMessagingTimeout(element, 1)
 		let unavailable = Refusal("DESKTOP_ACTION_FAILED", "The target text or selection is unreadable or changed; observe it again.")
-		guard AX.string(element, kAXRoleAttribute) != "AXSecureTextField", AX.string(element, kAXSubroleAttribute) != "AXSecureTextField",
-		      settable(element, kAXSelectedTextRangeAttribute)
+		guard AX.string(element, kAXRoleAttribute) != "AXSecureTextField", AX.string(element, kAXSubroleAttribute) != "AXSecureTextField"
+		else { throw unsupported("The nonsecure target must expose a settable AXSelectedTextRange.") }
+		// Web text that isn't editable has no settable range, but its web area selects by text markers.
+		if !settable(element, kAXSelectedTextRangeAttribute), let markers = AXWebTextMarkers(element: element) {
+			return try selectWebText(markers, text: text, prefix: prefix, suffix: suffix, kind: kind, window: window)
+		}
+		guard settable(element, kAXSelectedTextRangeAttribute)
 		else { throw unsupported("The nonsecure target must expose a settable AXSelectedTextRange.") }
 		func state() -> (String, CFRange?)? {
 			guard let text = AX.string(element, kAXValueAttribute) else { return nil }
@@ -428,6 +433,44 @@ extension Mac {
 		}
 		guard observe({ same(state(), desired) }) else { throw unverifiedValue("textSelection") }
 		return (Delivery(state: .confirmedChange, mechanism: accessibilityValue, evidence: "verified_change", units: 1), selection)
+	}
+}
+
+extension Mac {
+	static func selectWebText(
+		_ markers: any WebTextMarkerAccess, text: String, prefix: String?, suffix: String?, kind: SelectionKind, window: ClickWindow
+	) throws -> (Delivery, SelectionResult) {
+		try window.check()
+		guard let span = markers.span() else {
+			throw Refusal("DESKTOP_ACTION_FAILED", "The web text's markers are unreadable; observe it again.")
+		}
+		let selection = try resolveSelection(text, prefix: prefix, suffix: suffix, kind: kind, in: span.text)
+		let range = selection.selected
+		if WebTextSelection.matches(range, in: span, markers: markers) {
+			return (Delivery(state: .confirmedNoChange, mechanism: nil, evidence: "verified_no_change", units: nil), selection)
+		}
+		guard let target = WebTextSelection.locate(range, in: span, markers: markers) else {
+			var refusal = Refusal(
+				"DESKTOP_ACTION_FAILED",
+				"The web text's markers could not be matched to this text within the step limit; nothing was selected.",
+				hint: "Select within a smaller element from the inspection, or read the text with desktop_read.")
+			refusal.reason = "operation_unsupported"
+			throw refusal
+		}
+		try window.check()
+		guard markers.select(target) else { throw unsupported("The web area did not accept a text marker selection.") }
+		let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+		repeat {
+			if WebTextSelection.matches(range, in: span, markers: markers) {
+				return (Delivery(state: .confirmedChange, mechanism: accessibilityValue, evidence: "verified_change", units: 1), selection)
+			}
+			Thread.sleep(forTimeInterval: 0.05)
+		} while ContinuousClock.now < deadline
+		throw Indeterminate(
+			Delivery(state: .indeterminate, mechanism: accessibilityValue, evidence: "completion_unknown", units: 1),
+			"The web area accepted the selection, but it did not read back as the requested text.",
+			hint: "Observe the page before deciding whether to retry the selection."
+		)
 	}
 }
 
