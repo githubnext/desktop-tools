@@ -53,6 +53,22 @@ public struct KeyboardTarget: Sendable {
 	}
 }
 
+/// Peekaboo's explanation of why background keys can't move focus to a window.
+let backgroundFocusRemediation = "Background keystrokes follow the application's own keyboard focus and cannot be aimed at a window that does not hold it; such a window also refuses accessibility focus requests, so no amount of retrying moves focus there in the background. To write into this window without focusing it, observe it and set its editable element's accessibility value (`set-value` command, `set_value` tool). Use foreground delivery only when the window may take focus."
+
+/// Keys, typing and pastes stop while a secure text field has keyboard focus.
+let secureFocusRefusal = {
+	var refusal = Refusal(
+		"SECURE_FIELD_REQUIRES_FILL",
+		"The focused element is a secure text field, such as a password field, so characters and pastes are refused. Nothing was sent.",
+		hint: "Fill password fields with desktop_fill_password, from a Keychain item or with the user's approval."
+	)
+	refusal.reason = "operation_unsupported"
+	return refusal
+}()
+
+struct LayoutMissing: Error {}
+
 /// A contract key name, or one character that is neither a control, format or separator character.
 public func isDesktopKey(_ key: String) -> Bool {
 	if namedKeys[key] != nil { return true }
@@ -78,7 +94,9 @@ extension Mac {
 		}
 		let base: UInt32 = modifiers.contains("command") ? UInt32(cmdKey >> 8) : 0
 		let quoted = "\"\(key)\""
-		let layout = try onMain { try Layout() }
+		guard let layout = try? onMain({ try Layout() }) else {
+			throw layoutRefusal("The current keyboard layout has no key map, so no key can be found for \(quoted).", hint: "Select a keyboard layout input source, then retry.")
+		}
 		if let code = layout.code(typing: key, modifiers: base) {
 			let paste = modifiers == ["command"] && key.lowercased() == "v"
 			return Chord(key: key, code: code, modifiers: modifiers, entersText: entersByModifiers || paste, isCharacter: true)
@@ -86,11 +104,26 @@ extension Mac {
 		for (state, names) in [(UInt32(shiftKey >> 8), "Shift"), (UInt32(optionKey >> 8), "Option"), (UInt32((shiftKey | optionKey) >> 8), "Shift and Option")] {
 			guard let code = layout.code(typing: key, modifiers: base | state) else { continue }
 			if let plain = layout.text(code, modifiers: base), !plain.isEmpty, plain.unicodeScalars.allSatisfy({ !$0.properties.isWhitespace && $0.properties.generalCategory != .control }) {
-				throw Refusal("DESKTOP_ACTION_FAILED", "On the current keyboard layout, \(quoted) needs \(names) with the key that types \"\(plain)\". Send the key that types \"\(plain)\" with \(names) held instead.")
+				throw layoutRefusal(
+					"On the current keyboard layout, \(quoted) needs \(names) with the key that types \"\(plain)\".",
+					hint: "Send the key that types \"\(plain)\" with \(names) held instead."
+				)
 			}
-			throw Refusal("DESKTOP_ACTION_FAILED", "On the current keyboard layout, \(quoted) needs \(names) with a key that has no character of its own. Use text insertion for this character.")
+			throw layoutRefusal(
+				"On the current keyboard layout, \(quoted) needs \(names) with a key that has no character of its own.",
+				hint: "Use text insertion for this character."
+			)
 		}
-		throw Refusal("DESKTOP_ACTION_FAILED", "No key types \(quoted) on the current keyboard layout. Use text insertion for this character, or select a layout that has it.")
+		throw layoutRefusal(
+			"No key types \(quoted) on the current keyboard layout.",
+			hint: "Use text insertion for this character, or select a layout that has it."
+		)
+	}
+
+	private static func layoutRefusal(_ message: String, hint: String) -> Refusal {
+		var refusal = Refusal("DESKTOP_ACTION_FAILED", message, hint: hint)
+		refusal.reason = "invalid_request"
+		return refusal
 	}
 
 	/// The app's focused element, which must be in the exact window, inside its bounds, in the app's own key
@@ -100,7 +133,11 @@ extension Mac {
 		try window.check()
 		let app = AXUIElementCreateApplication(window.pid)
 		AXUIElementSetMessagingTimeout(app, 0.2)
-		let refusal = Refusal("FOCUS_NOT_IN_WINDOW", "Exact-window keyboard focus is not on the target window at dispatch. Click the control to focus it, inspect again, and retry; keys never bring a background window forward.")
+		let refusal = Refusal(
+			"DESKTOP_ACTION_FAILED",
+			"Invalid target: Exact-window keyboard focus is not on the target window at dispatch. " + backgroundFocusRemediation,
+			hint: "Observe the intended target before retrying this operation."
+		)
 		guard let focusedWindow = AX.element(AX.value(app, kAXFocusedWindowAttribute)), AX.windowID(focusedWindow) == window.windowID,
 		      let focused = AX.element(AX.value(app, kAXFocusedUIElementAttribute))
 		else { throw refusal }
@@ -112,7 +149,7 @@ extension Mac {
 			guard AX.string(focused, kAXRoleAttribute) == role, let expected = target.focusedFrame, let frame = AX.frame(focused),
 			      abs(frame.minX - expected.minX) <= 1, abs(frame.minY - expected.minY) <= 1,
 			      abs(frame.width - expected.width) <= 1, abs(frame.height - expected.height) <= 1
-			else { throw Refusal("FOCUS_CHANGED", "Keyboard focus moved off the control the snapshot saw focused. Inspect the window again.") }
+			else { throw refusal }
 		}
 		return focused
 	}
@@ -126,7 +163,7 @@ extension Mac {
 	public static func press(_ chord: Chord, target: KeyboardTarget) throws -> Delivery {
 		let focused = try requireKeyboardFocus(target)
 		if chord.entersText, secureFocus(focused) {
-			throw Refusal("SECURE_FIELD_REQUIRES_FILL", "A password field has keyboard focus, so keys that type characters aren't sent. Use desktop_fill_password.")
+			throw secureFocusRefusal
 		}
 		// AppKit ignores a background Command-A key event, so a native text field selects all through Accessibility.
 		if chord.modifiers == ["command"], chord.key.lowercased() == "a", !isWebField(focused),
@@ -160,10 +197,15 @@ extension Mac {
 	public static func typeKeys(_ text: String, target: KeyboardTarget) throws -> Delivery {
 		let focused = try requireKeyboardFocus(target)
 		if secureFocus(focused) {
-			throw Refusal("SECURE_FIELD_REQUIRES_FILL", "A password field has keyboard focus. Use desktop_fill_password.")
+			throw secureFocusRefusal
 		}
 		if IsSecureEventInputEnabled() {
-			throw Refusal("SECURE_INPUT_ACTIVE", "Secure keyboard entry is on, so typed keys can't reach the window.")
+			throw Refusal(
+				"DESKTOP_ACTION_FAILED",
+				"Secure keyboard entry is on, as for a password field or a terminal's Secure Keyboard Entry, so typed text can't be delivered. Nothing was typed.",
+				hint: "Use a field that isn't secure, or turn off Secure Keyboard Entry in the app.",
+				fromHost: false
+			)
 		}
 		var plan: [(CGKeyCode, Bool, CGEventFlags)] = [(0x37, true, .maskCommand), (0x00, true, .maskCommand), (0x00, false, .maskCommand), (0x37, false, [])]
 		var delivery = try postKeys(plan, target: target, check: { try requireKeyboardFocus(target) })
@@ -292,7 +334,7 @@ private struct Layout {
 	init() throws {
 		guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
 		      let raw = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
-		else { throw Refusal("DESKTOP_ACTION_FAILED", "The current keyboard layout has no key map. Select a keyboard layout input source, then retry.") }
+		else { throw LayoutMissing() }
 		data = Unmanaged<CFData>.fromOpaque(raw).takeUnretainedValue() as Data
 	}
 

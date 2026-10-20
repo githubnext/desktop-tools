@@ -62,8 +62,13 @@ extension Tools {
 		}.first
 		let send = {
 			await act("key", snapshotID: snapshotID, element: nil, early: semantic) { snapshot, _ in
-				let chords = try wanted.map { try Mac.chord($0.key, modifiers: $0.modifiers) }
 				let window = window(snapshot)
+				let receiver: JSON = sequence || snapshot.focused == nil ? "window_focus" : "observed_control"
+				let chords: [Chord]
+				do { chords = try wanted.map { try Mac.chord($0.key, modifiers: $0.modifiers) } } catch var refusal as Refusal {
+					refusal.fields = [("receiver", receiver)]
+					throw refusal
+				}
 				if !sequence {
 					let focused = snapshot.focused
 					var delivery = try Mac.press(chords[0], target: KeyboardTarget(window: window, focusedRole: focused?.attributes["role"], focusedFrame: focused?.frame))

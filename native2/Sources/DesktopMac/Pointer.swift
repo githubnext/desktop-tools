@@ -54,7 +54,7 @@ public struct Delivery: Sendable {
 			"effect": JSON(confirmed ? "confirmed" : "unverifiable"),
 			"route": "local",
 			"delivery_mechanism": mechanism.map(JSON.string),
-			"delivery_mode": mechanism == nil ? nil : JSON(mode),
+			"delivery_mode": mechanism.map { _ in JSON(mode) },
 			"evidence": JSON(evidence),
 			"dispatch_state": JSON(state == .confirmedNoChange ? "none" : state == .indeterminate ? "may_have_dispatched" : "dispatched"),
 			"dispatched_unit_count": units.map { JSON($0) },
@@ -86,13 +86,15 @@ public struct Refusal: Error {
 
 	/// target_unavailable, or operation_unsupported when no route exists for this kind of target.
 	public var reason = "target_unavailable"
+	/// Fields the refused action result adds, as a delivery's do.
+	public var fields: [(String, JSON)] = []
 
 	/// The host's refused outcome.
 	public var outcome: JSON {
 		.object([
 			("state", "refused"), ("effect", "refused"), ("route", "local"), ("evidence", "request_refused"),
 			("dispatch_state", "none"), ("retry_safety", "safe"),
-			("escalation", JSON(reason == "operation_unsupported" ? "correct_request" : "refresh_target")),
+			("escalation", JSON(["operation_unsupported", "invalid_request"].contains(reason) ? "correct_request" : "refresh_target")),
 			("refusal_reason", JSON(reason)),
 		])
 	}

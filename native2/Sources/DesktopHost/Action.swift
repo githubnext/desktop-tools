@@ -67,6 +67,7 @@ extension Tools {
 			delivery = try await run { try deliver(snapshot, chosen) }
 		} catch let refusal as Refusal {
 			await Snapshots.shared.release(snapshotID)
+			action += refusal.fields
 			return await refused(refusal.code, refusal.message, hint: refusal.hint, cause: refusal.cause, fresh: false, native: refusal.fromHost ? refusal.outcome : nil)
 		} catch {
 			// Anything else may have happened mid-delivery.

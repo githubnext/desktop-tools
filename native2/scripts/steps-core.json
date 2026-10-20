@@ -1,0 +1,20 @@
+[
+	["desktop_click", {"snapshot": "$snapshot", "element": "$label:Press me"}],
+	["desktop_click", {"snapshot": "$snapshot", "point": {"x": 0.2, "y": 0.5}, "kind": "double"}],
+	["desktop_click", {"snapshot": "$snapshot", "point": {"x": 0.2, "y": 0.5}, "kind": "right"}],
+	["desktop_click", {"snapshot": "$snapshot", "element": "$label:Press me", "expect": {"until": "app_running", "pid": 1}}],
+	["desktop_type", {"snapshot": "$snapshot", "element": "$role:AXTextField", "text": "abc"}],
+	["desktop_type", {"snapshot": "$snapshot", "element": "$role:AXTextField", "text": "abc"}],
+	["desktop_click", {"snapshot": "$snapshot", "element": "$role:AXTextField"}],
+	["desktop_key", {"snapshot": "$snapshot", "key": "a", "modifiers": ["command"]}],
+	["desktop_key", {"snapshot": "$snapshot", "keys": [{"key": "backspace"}, {"key": "x"}]}],
+	["desktop_key", {"snapshot": "$snapshot", "key": "?"}],
+	["desktop_scroll", {"snapshot": "$snapshot", "element": "$role:AXScrollArea", "direction": "down", "amount": 3}],
+	["desktop_scroll", {"snapshot": "$snapshot", "point": {"x": 0.8, "y": 0.5}, "direction": "up", "amount": 2}],
+	["desktop_scroll", {"snapshot": "$snapshot", "element": "$role:AXTextArea", "direction": "up", "amount": 1}],
+	["desktop_scroll", {"snapshot": "$snapshot", "point": {"x": 0.3, "y": 0.5}, "direction": "down", "amount": 2}],
+	["desktop_drag", {"snapshot": "$snapshot", "from": {"x": 0.1, "y": 0.4}, "to": {"x": 0.5, "y": 0.6}}],
+	["desktop_drag", {"snapshot": "$snapshot", "from": {"x": 0.1, "y": 0.4}, "to": {"x": 0.5, "y": 0.6}, "path": [{"x": 0.3, "y": 0.3}], "button": "right", "duration_ms": 100}],
+	["desktop_wait", {"until": "element_appears", "pid": "$pid", "window": "$window", "element": {"role": "AXButton", "title": "Press me"}}],
+	["desktop_wait", {"until": "element_gone", "pid": "$pid", "window": "$window", "element": {"role": "AXButton", "title": "Press me"}, "timeout_ms": 300}]
+]

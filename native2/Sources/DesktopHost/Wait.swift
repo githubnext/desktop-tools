@@ -173,6 +173,7 @@ struct WaitCondition: Sendable {
 		budget.maxElements = 4000
 		budget.maxChildren = 1000
 		let wide = budget
+		let generation = Mac.generation(pid)
 		let tree = try await run { try Mac.elements(pid: pid, windowID: window, budget: wide) }
 		let found = tree.elements.filter { element in
 			let attributes = element.attributes
@@ -203,6 +204,9 @@ struct WaitCondition: Sendable {
 			"traversed_element_count": JSON(tree.elements.count),
 			"truncated": JSON(!truncation.isEmpty),
 			"truncation": .array(truncation.map(JSON.string)),
+			"target_receipt": generation.map { .object([
+				("pid", JSON(pid)), ("process_start_identity_decimal", JSON(String($0))), ("window_id", JSON(window)),
+			]) },
 		])
 	}
 
@@ -291,7 +295,13 @@ struct WaitCondition: Sendable {
 				polls += 1
 				lastError = (error as? ToolError)?.message ?? String(describing: error)
 			}
-			if last?.holds == true || ContinuousClock.now + .milliseconds(delay) >= deadline { break }
+			if last?.holds == true { break }
+			// Like Node, the last sleep runs to the deadline, which ends the wait without another read.
+			let remaining = ContinuousClock.now.duration(to: deadline)
+			if remaining <= .milliseconds(delay) {
+				if remaining > .zero { try await Task.sleep(for: remaining) }
+				break
+			}
 			try await Task.sleep(for: .milliseconds(delay))
 			delay = min(Int((Double(delay) * 1.5).rounded()), maxDelay)
 		}
