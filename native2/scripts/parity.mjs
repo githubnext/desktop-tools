@@ -65,6 +65,13 @@ const normal = (value) => JSON.stringify(sorted(value))
 	.replace(/"(elapsed_ms|polls)":\d+/g, '"$1":"T"')
 	.replace(/"observed_at":"[^"]+"/g, '"observed_at":"T"');
 
+/** Any other plain observation, such as desktop_screen's, compares without its timings and by its recognized lines' text. */
+function plain(observation) {
+	const { timings: _t, ...content } = observation;
+	if (content.recognized_text?.lines) content.recognized_text = { ...content.recognized_text, lines: content.recognized_text.lines.map((line) => line.text) };
+	return content;
+}
+
 function summary(result) {
 	if (mode === "calls") {
 		return { ...result, content: result.content?.map((item) => item.type === "image" ? { type: "image" } : { ...item, text: sorted(parsed(item.text)) }) };
@@ -82,7 +89,7 @@ function summary(result) {
 		first: result.content?.[0]?.text?.startsWith("{") ? "json" : result.content?.[0]?.text?.split("\n")[0],
 		images: result.content?.filter((item) => item.type === "image").length,
 		fields: Object.keys(observation).sort(),
-		action: action ?? data,
+		action: action ?? (typeof data === "object" ? plain(observation) : data),
 	};
 }
 
