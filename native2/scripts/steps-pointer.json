@@ -1,0 +1,11 @@
+[
+	["desktop_press", {"snapshot": "$snapshot", "point": {"x": 0.33, "y": 0.48}, "duration_ms": 300}],
+	["desktop_press", {"snapshot": "$snapshot", "point": {"x": 0.33, "y": 0.48}, "button": "right", "duration_ms": 150}],
+	["desktop_press", {"snapshot": "$snapshot", "element": "$role:AXStaticText", "duration_ms": 50}],
+	["desktop_press", {"snapshot": "$snapshot", "element": "e99999"}],
+	["desktop_click", {"snapshot": "$snapshot", "point": {"x": 0.33, "y": 0.48}, "modifiers": ["command"]}],
+	["desktop_click", {"snapshot": "$snapshot", "point": {"x": 0.33, "y": 0.48}, "modifiers": ["shift", "option"], "kind": "double"}],
+	["desktop_drag", {"snapshot": "$snapshot", "from": {"x": 0.2, "y": 0.4}, "to": {"x": 0.5, "y": 0.6}, "modifiers": ["option"], "duration_ms": 200}],
+	["desktop_drag", {"snapshot": "$snapshot", "from": {"x": 0.82, "y": 0.48}, "to": {"x": 0.5, "y": 0.5}, "to_snapshot": "$snapshot2", "duration_ms": 300}],
+	["desktop_drag", {"snapshot": "$snapshot", "from": {"x": 0.82, "y": 0.48}, "to": {"x": 0.5, "y": 0.5}, "to_snapshot": "snap_unknown"}]
+]

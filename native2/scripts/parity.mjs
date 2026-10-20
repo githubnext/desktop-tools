@@ -6,7 +6,8 @@
 //
 // In steps, "$app" and "$window_target" become the fixture's desktop_apps and desktop_windows targets, "$snapshot" the fresh
 // snapshot's ID, "$role:AXTextField" the first element with that role, and "$label:Press me" the first element with that
-// label. "$app:Name" becomes that app's fresh desktop_apps target,
+// label; with --window2, "$snapshot2" is a fresh snapshot of that second window of the same app, for drags between
+// windows. "$app:Name" becomes that app's fresh desktop_apps target,
 // "$win:App:Title" the fresh desktop_windows target of its window with that title, and "$movedwin:App:Title" that
 // target with its bounds one point off, as a window that moved since. With --ids, PIDs, window and Space IDs are
 // ignored too, for steps that launch apps or open windows. Objects are compared with sorted keys; snapshot IDs, process
@@ -23,13 +24,14 @@ const { values, positionals } = parseArgs({
 		node: { type: "string", default: "node dist/mcp.js" },
 		app: { type: "string", default: "fixture" },
 		window: { type: "string", default: "Click Fixture" },
+		window2: { type: "string" },
 		all: { type: "boolean", default: false },
 		ids: { type: "boolean", default: false },
 	},
 });
 const [mode, file] = positionals;
 if (!["calls", "steps"].includes(mode) || !file) {
-	console.error("Usage: node native2/scripts/parity.mjs calls|steps <file.json> [--swift cmd] [--node cmd] [--app name] [--window title] [--all]");
+	console.error("Usage: node native2/scripts/parity.mjs calls|steps <file.json> [--swift cmd] [--node cmd] [--app name] [--window title] [--window2 title] [--all]");
 	process.exit(1);
 }
 const entries = JSON.parse(readFileSync(file, "utf8"));
@@ -111,6 +113,11 @@ async function run(command) {
 		const window = json(await mcp.call("desktop_windows", { pid: app.pid })).windows?.find((row) => row.window_title === values.window);
 		if (!window) throw new Error(`${values.app} has no window titled ${values.window}.`);
 		target = { pid: app.pid, window: window.window_id, app: app.target, windowTarget: window.target };
+		if (values.window2) {
+			const second = json(await mcp.call("desktop_windows", { pid: app.pid })).windows?.find((row) => row.window_title === values.window2);
+			if (!second) throw new Error(`${values.app} has no window titled ${values.window2}.`);
+			target.window2 = second.window_id;
+		}
 	}
 	const results = [];
 	for (const [tool, args] of entries) {
@@ -130,6 +137,10 @@ async function run(command) {
 			}
 			if (text.includes('"$')) {
 				const observed = json(await mcp.call("desktop_inspect", { pid: target.pid, window: target.window }));
+				if (text.includes('"$snapshot2"')) {
+					const other = json(await mcp.call("desktop_inspect", { pid: target.pid, window: target.window2 }));
+					text = text.replaceAll('"$snapshot2"', JSON.stringify(other.snapshot_id));
+				}
 				text = text.replaceAll('"$snapshot"', JSON.stringify(observed.snapshot_id)).replace(/"\$(role|label):([^"]*)"/g, (_, kind, wanted) => {
 					const found = observed.ui_elements?.find((element) => kind === "role" ? element.attributes?.role === wanted : element.label === wanted);
 					return JSON.stringify(found?.id ?? `missing ${kind} ${wanted}`);

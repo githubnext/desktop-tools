@@ -6,7 +6,7 @@ import Foundation
 /// Runs one MCP tool call in the host, which is the process macOS's grants attach to.
 public enum Tools {
 	static let actionTools: Set = [
-		"desktop_click", "desktop_key", "desktop_type", "desktop_scroll", "desktop_drag", "desktop_hover", "desktop_set_value",
+		"desktop_click", "desktop_key", "desktop_type", "desktop_scroll", "desktop_drag", "desktop_hover", "desktop_press", "desktop_set_value",
 		"desktop_element_action", "desktop_select", "desktop_insert", "desktop_fill_password", "desktop_clipboard_write",
 		"desktop_menu", "desktop_dialog_answer", "desktop_menubar_click",
 		"desktop_launch", "desktop_open", "desktop_activate", "desktop_hide", "desktop_unhide", "desktop_quit", "desktop_close",
@@ -42,6 +42,7 @@ public enum Tools {
 			case "desktop_scroll": return try await scroll(arguments)
 			case "desktop_drag": return try await drag(arguments)
 			case "desktop_hover": return try await hover(arguments)
+			case "desktop_press": return try await press(arguments)
 			case "desktop_system_key": return try await systemKey(arguments)
 			case "desktop_input_source": return try await inputSource(arguments)
 			case "desktop_read": return try await readText(arguments)
