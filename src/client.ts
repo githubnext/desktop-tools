@@ -69,6 +69,11 @@ export type DesktopConfig = {
 	 * shape written for models. Defaults to `DESKTOP_TOOLS_VERBOSE=1` in the environment.
 	 */
 	verbose?: boolean;
+	/**
+	 * 2 when `client` is native2's `desktop-tools-client` (#143), which runs each request whole in a native2 host, so
+	 * every check and result comes from Swift. Defaults to 1, `native/`'s client.
+	 */
+	wire?: 1 | 2;
 };
 /** `data` is the parsed final bounded `text`; image bytes stay only in `image`. */
 export type DesktopClientResult = DesktopResult & { data: unknown };
@@ -1754,6 +1759,7 @@ function managementResult(
 
 /** Creates a client bound to one host socket and signed client; calls are independent processes. */
 export function createDesktop(config: DesktopConfig): DesktopClient {
+	if (config.wire === 2) return forwarder(config);
 	const native = caller(config);
 	const verbose = config.verbose ?? process.env.DESKTOP_TOOLS_VERBOSE === "1";
 	return async (request, signal) => {
@@ -2042,4 +2048,68 @@ async function execute(
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+type ToolCallResult = { content?: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[]; isError?: boolean };
+
+/**
+ * Wire 2: each request goes whole to native2's client as one tool call, `desktop_` and its op, and the tool result
+ * comes back as the MCP server would send it. The host checks the arguments and compacts the result.
+ */
+function forwarder(config: DesktopConfig): DesktopClient {
+	return async (request, signal = new AbortController().signal) => {
+		const { client, socket } = config;
+		if (!existsSync(client)) throw new Error(`The native desktop client is missing at ${client}.`);
+		const { op, ...args } = request;
+		const verbose = config.verbose ?? process.env.DESKTOP_TOOLS_VERBOSE === "1";
+		const output = await run(
+			client,
+			[socket, `desktop_${op.replaceAll("-", "_")}`, ...(verbose ? ["--verbose"] : [])],
+			signal,
+			true,
+			JSON.stringify(args),
+			config.agent,
+		);
+		let reply: { result?: ToolCallResult; error?: { code: string; message: string } };
+		try {
+			reply = JSON.parse(output) as typeof reply;
+		} catch {
+			throw new Error("The native desktop client returned invalid JSON.");
+		}
+		if (reply.error) {
+			const name = config.name ?? "the desktop host app";
+			if (reply.error.code === "HOST_NOT_RUNNING") {
+				throw new NativeError(
+					"HOST_NOT_RUNNING",
+					`HOST_NOT_RUNNING: ${name} isn't serving ${socket}, so nothing ran. Ask the user to open ${name}.`,
+				);
+			}
+			if (reply.error.code === "HOST_NOT_SERVING") {
+				throw new NativeError(
+					"HOST_NOT_SERVING",
+					`HOST_NOT_SERVING: ${name} isn't serving ${socket}, so nothing ran. Ask the user to check the status line in its menu, or to quit and reopen it.`,
+				);
+			}
+			throw new NativeError(reply.error.code, reply.error.message);
+		}
+		const content = reply.result?.content ?? [];
+		const texts = content.flatMap((item) => item.type === "text" ? [item.text] : []);
+		const outcome = texts.length > 1 ? /^Outcome: (completed|refused|unknown)\.$/.exec(texts[0]!)?.[1] : undefined;
+		const text = texts[outcome ? 1 : 0] ?? "";
+		let data: unknown;
+		try {
+			data = JSON.parse(text);
+		} catch {
+			// Plain text is an error the MCP server reports as is, as it does for a thrown one.
+			throw new Error(text || "The native desktop client returned no result.");
+		}
+		const image = content.find((item) => item.type === "image");
+		return {
+			text,
+			data,
+			...(outcome ? { outcome: outcome as DesktopOutcome } : {}),
+			...(image?.type === "image" ? { image: { data: image.data, mimeType: image.mimeType } } : {}),
+			...(reply.result?.isError ? { isError: true } : {}),
+		};
+	};
 }

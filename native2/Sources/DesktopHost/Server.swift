@@ -98,7 +98,10 @@ private final class Session: @unchecked Sendable {
 				}
 				guard let id = frame["id"]?.int else { continue }
 				let task = Task { [self] in
-					let result = await Tools.observed(frame["tool"]?.string ?? "", arguments: frame["arguments"] ?? .object([]), client: client)
+					let result = await Tools.observed(
+						frame["tool"]?.string ?? "", arguments: frame["arguments"] ?? .object([]), client: client,
+						verbose: frame["verbose"] == .bool(true)
+					)
 					lock.withLock { _ = running.removeValue(forKey: id) }
 					try? connection.send(.object([("id", JSON(id)), ("result", result.mcp)]))
 				}

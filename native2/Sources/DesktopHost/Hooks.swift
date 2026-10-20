@@ -179,12 +179,12 @@ public enum Hooks {
 
 extension Tools {
 	/// One call as the server runs it, reported to the hooks.
-	static func observed(_ name: String, arguments: JSON, client: pid_t) async -> ToolResult {
+	static func observed(_ name: String, arguments: JSON, client: pid_t, verbose: Bool = false) async -> ToolResult {
 		// Read before dispatch, and only when watched: an action spends its snapshot.
 		let watched = Hooks.operation != nil || Hooks.targetWindow != nil
 		let target = watched ? await Hooks.target(arguments) : (process: nil, window: nil)
 		let result = await Hooks.$call.withValue(Hooks.Call(client: client, process: target.process, window: target.window)) {
-			await call(name, arguments: arguments, client: client)
+			await call(name, arguments: arguments, client: client, verbose: verbose)
 		}
 		guard watched else { return result }
 		Hooks.operation?(Hooks.Operation(

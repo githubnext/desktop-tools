@@ -14,6 +14,11 @@ export type DesktopConfig = {
      * shape written for models. Defaults to `DESKTOP_TOOLS_VERBOSE=1` in the environment.
      */
     verbose?: boolean;
+    /**
+     * 2 when `client` is native2's `desktop-tools-client` (#143), which runs each request whole in a native2 host, so
+     * every check and result comes from Swift. Defaults to 1, `native/`'s client.
+     */
+    wire?: 1 | 2;
 };
 /** `data` is the parsed final bounded `text`; image bytes stay only in `image`. */
 export type DesktopClientResult = DesktopResult & {

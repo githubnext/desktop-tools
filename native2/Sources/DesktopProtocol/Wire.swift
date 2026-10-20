@@ -3,7 +3,8 @@ import Foundation
 
 /// The MCP binary and the host speak length-prefixed JSON frames over one long-lived Unix socket.
 ///
-/// Requests: `{"id", "tool", "arguments", "agent"?}`, `{"id", "ping": true}` or `{"cancel": id}`.
+/// Requests: `{"id", "tool", "arguments", "agent"?, "verbose"?}`, `{"id", "ping": true}` or `{"cancel": id}`. verbose asks
+/// for the full result in place of the compact one.
 /// Replies: `{"id", "result"}` with an MCP tool result, or `{"id", "error"}` with a message.
 /// The first frame each way is `{"hello": wireVersion}`; a mismatch closes the connection.
 public let wireVersion = 1

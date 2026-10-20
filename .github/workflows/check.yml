@@ -17,6 +17,8 @@ jobs:
       # dist/ is checked in for Git installs; it must match a fresh compile exactly.
       - run: npm run check
       - run: npm test
+      # native2 (#143) serves the Node server's instructions and tools/list, compiled in; they must not drift.
+      - run: node scripts/contract.mjs --check
       # Hosted consumers import the protocol and client modules off macOS.
       - run: >-
           node --input-type=module -e "const p = await import('@githubnext/desktop-tools/protocol');
@@ -41,3 +43,6 @@ jobs:
           mkdir -p build/Licenses/embedder && echo kept > build/Licenses/embedder/NOTICE
           node dist/build.js --out build --scratch .build/native
           test "$(cat build/Licenses/embedder/NOTICE)" = kept
+      # native2 (#143) runs beside the shipped stack until the cutover; keep it building and its tests passing.
+      - run: swift build -c release --package-path native2 --scratch-path .build/native2
+      - run: swift test --package-path native2 --scratch-path .build/native2

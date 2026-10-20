@@ -19,9 +19,10 @@ public enum Tools {
 	static let verbose = ProcessInfo.processInfo.environment["DESKTOP_TOOLS_VERBOSE"] == "1"
 
 	/// `client` is the connected MCP binary's pid, which names the caller the user approves.
-	public static func call(_ name: String, arguments: JSON, client: pid_t? = nil) async -> ToolResult {
+	/// The result as a model sees it: compact, unless the host or this request asks for the full shape.
+	public static func call(_ name: String, arguments: JSON, client: pid_t? = nil, verbose: Bool = false) async -> ToolResult {
 		var result = await whole(name, arguments: arguments, client: client)
-		if !verbose {
+		if !(verbose || self.verbose) {
 			result.text = compactResult(result.text, allWindows: name == "desktop_windows" && arguments["all"] == .bool(true))
 		}
 		return result
