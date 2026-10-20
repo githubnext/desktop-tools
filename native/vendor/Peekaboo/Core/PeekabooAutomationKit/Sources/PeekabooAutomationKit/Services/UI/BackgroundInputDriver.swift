@@ -330,8 +330,10 @@ enum BackgroundInputDriver {
         try Task.checkCancellation()
 
         let hit = Element(retained.element)
-        var candidates: [any AutomationElementRepresenting] = [AutomationElement(hit)]
-        candidates.append(contentsOf: self.descendantsBreadthFirst(of: hit, maxVisited: 256, maxDepth: 8))
+        let hitElement = AutomationElement(hit)
+        var candidates: [any AutomationElementRepresenting] = [hitElement]
+        candidates.append(contentsOf: self.descendantsBreadthFirst(
+            of: hitElement, containing: point, maxVisited: 256, maxDepth: 8))
 
         var current = hit.parent()
         var remainingAncestors = 8
@@ -343,22 +345,29 @@ enum BackgroundInputDriver {
         return candidates
     }
 
+    /// Descendants of the hit-test element, breadth-first, expanding only subtrees that can hold
+    /// the point. Reading children can make SwiftUI materialize lazy rows and grow the layout (System
+    /// Settings' Spotlight app list pushes the buttons below it down with every full read), so
+    /// expanding off-point containers would move the target before its frame is checked.
     @MainActor
-    private static func descendantsBreadthFirst(
-        of root: Element,
+    static func descendantsBreadthFirst(
+        of root: any AutomationElementRepresenting,
+        containing point: CGPoint,
         maxVisited: Int,
         maxDepth: Int) -> [any AutomationElementRepresenting]
     {
         var result: [any AutomationElementRepresenting] = []
-        var queue: [(element: Element, depth: Int)] = (root.children() ?? []).map { ($0, 1) }
+        var queue: [(element: any AutomationElementRepresenting, depth: Int)] =
+            root.automationChildren.map { ($0, 1) }
         var visited = 0
         while !queue.isEmpty, visited < maxVisited {
             let (element, depth) = queue.removeFirst()
             visited += 1
-            result.append(AutomationElement(element))
-            if depth < maxDepth {
-                queue.append(contentsOf: (element.children() ?? []).map { ($0, depth + 1) })
-            }
+            result.append(element)
+            guard depth < maxDepth else { continue }
+            // Elements without a usable frame may still wrap the point, so they stay expandable.
+            if let frame = element.frame, !frame.isEmpty, !frame.contains(point) { continue }
+            queue.append(contentsOf: element.automationChildren.map { ($0, depth + 1) })
         }
         return result
     }

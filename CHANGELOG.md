@@ -8,6 +8,7 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The window outline no longer draws over a sheet or Open panel that opens on top of its window, such as an Open panel on System Settings' Search Privacy sheet. The window server keeps a window's sheets with it, so the outline is cut away under them, and it follows them as they open and close. ([#149](https://github.com/githubnext/desktop-tools/issues/149))
 - `desktop_dialog` and `desktop_dialog_answer` read and answer an Open panel stacked on a sheet, such as the one **+** opens on System Settings' Search Privacy sheet. With the app or the parent window as the target, they picked neither and refused the target as ambiguous; the innermost dialog, which the others wait on, is now the one chosen. ([#148](https://github.com/githubnext/desktop-tools/issues/148))
+- A point click on a control below a list that grows as it's read, such as **Search Privacy…** in System Settings > Spotlight, presses it. Finding the control read the whole pane, which made the app list longer and moved the button off the point, so the click was refused as finding no pressable element. ([#147](https://github.com/githubnext/desktop-tools/issues/147))
 
 ## [0.16.0] - 2026-10-19
 
