@@ -6,6 +6,7 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ### Fixed
 
+- `desktop_select` selects text in a web page that isn't a field, such as a paragraph or a link, through WebKit's text markers. An image pasted into a web field is refused with `PASTE_UNVERIFIABLE_RECEIVER` before the focus check, since the page's handling can't be read back. ([#88](https://github.com/githubnext/desktop-tools/issues/88), [#99](https://github.com/githubnext/desktop-tools/issues/99))
 - Text selected in a Safari page with `desktop_select` can be copied: selecting focuses the page, as a click would, so Edit > Copy in the activated Safari copies the selection instead of the page's address. Safari copies only while active, so `desktop_activate` it and choose Edit > Copy with `desktop_menu`; the tool description and docs said to press Command-C, which Safari ignores in the background. ([#188](https://github.com/githubnext/desktop-tools/issues/188))
 
 ## [0.17.0] - 2026-10-20
