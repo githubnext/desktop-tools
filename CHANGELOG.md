@@ -10,6 +10,9 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ### Changed
 
+- Results are compact, so an agent's context fills far more slowly: the restore, focus, inspect and click loop on a TextEdit window went from 34,721 characters to 5,543. Elements list their fields once, with bounds as `[x, y, width, height]`, real booleans and state only when set; window and app rows keep their target and drop the fields it repeats; detection metadata, timings, diagnostics, coordinate context and checked receipts are left out. A large window lists more of its 200 elements, since the limit applies to the compact result. See [Result shape](docs/tools.md#result-shape). `DESKTOP_TOOLS_VERBOSE=1`, or `verbose` in the client config, returns native results whole. ([#144](https://github.com/githubnext/desktop-tools/issues/144))
+- Window actions (focus, restore, minimize, maximize, full screen, move, resize) return the window's refreshed row instead of the app's whole window inventory and an inspection with a screenshot; inspect before input. ([#144](https://github.com/githubnext/desktop-tools/issues/144))
+- `desktop_windows` counts the untitled off-screen windows that most apps keep, such as menu bar strips, in `hidden_windows` instead of listing them; `all: true` lists them. ([#144](https://github.com/githubnext/desktop-tools/issues/144))
 - The agent's name label under the window outline is a point smaller and tighter, and edged in a darker shade of the outline color instead of white.
 - Peekaboo is vendored in `native/vendor/Peekaboo`, with our changes applied, instead of fetched and patched at build time. Native builds no longer fetch Peekaboo, and `npm run peekaboo-test` runs the vendored tests without `--scratch`. `git diff peekaboo-upstream-4d43dc9 -- native/vendor/Peekaboo` shows our changes to upstream.
 

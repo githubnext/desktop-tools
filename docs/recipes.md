@@ -6,7 +6,7 @@ The tool behavior described here comes from the code. How each app lays out its 
 
 Conventions:
 
-- **inspect** means `desktop_inspect` with the window's `pid` and `window_id` from `desktop_windows`. Each completed action returns a fresh observation, so use its `snapshot_id` and element IDs for the next action. Snapshots are single-use.
+- **inspect** means `desktop_inspect` with the `pid` and `window_id` of the window's `target` from `desktop_windows`. Each completed input action returns a fresh observation, so use its `snapshot_id` and element IDs for the next action. Snapshots are single-use.
 - **app target** means `{pid, process_start_identity_decimal}` from `desktop_apps`. **Window target** means the `target` object of a `desktop_windows` row.
 - After `refused` or `unknown`, observe again before acting. Never repeat input blindly.
 - Shell commands are fine for files: checking that a file exists, `cp`, `hdiutil`. They are no substitute for the desktop tools on UI steps.

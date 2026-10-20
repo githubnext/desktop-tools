@@ -11,6 +11,7 @@ import { CLIPBOARD_SAVE_EXTENSIONS, saveCapture, saveClipboardImage, validateSav
 import { DESKTOP_BUTTONS, DESKTOP_CLICKS, DESKTOP_DIRECTIONS, DESKTOP_ELEMENT_ACTIONS, DESKTOP_EXPECT_OPS, DESKTOP_MODIFIERS, DESKTOP_SYSTEM_KEYS, DESKTOP_SELECTIONS, isDesktopAction, isDesktopKey, isDesktopManagement, } from "./protocol.js";
 import { NOTIFICATIONS_MS, notificationAction, readNotifications, validateNotificationAction, } from "./notifications.js";
 import { setCell } from "./cell.js";
+import { compactResult } from "./compact.js";
 import { errorMessage, parseResult } from "./results.js";
 import { buildTable, TABLE_ROWS_MAX, TableError } from "./table.js";
 import { expectAfter, validateExpect, waitFor } from "./wait.js";
@@ -200,15 +201,19 @@ function scopeContainer(element) {
 export function boundedElements(data, limit = MAX_TEXT) {
     return bounded(data, "ui_elements", limit, scopeContainer);
 }
-/** Fits `field` within `limit` by dropping its last values, those `keep` accepts only after all others. */
+/**
+ * Fits `field` within `limit` by dropping its last values, those `keep` accepts only after all others. The limit
+ * applies to the compact result a model reads; the text returned stays whole for internal reads and verbose clients.
+ */
 function bounded(data, field, limit = MAX_TEXT, keep) {
     const source = data[field];
     if (!Array.isArray(source))
         throw new Error(`Native inspection returned no ${field} array.`);
     const values = [...source];
     const value = { ...data, [field]: values };
+    const size = (text) => Buffer.byteLength(compactResult(text, { allWindows: true }));
     let text = JSON.stringify(value);
-    while (Buffer.byteLength(text) > limit && values.length) {
+    while (size(text) > limit && values.length) {
         const index = keep ? values.findLastIndex((v) => !keep(v)) : -1;
         values.splice(index >= 0 ? index : values.length - 1, 1);
         text = JSON.stringify({
@@ -217,7 +222,7 @@ function bounded(data, field, limit = MAX_TEXT, keep) {
             omitted: source.length - values.length,
         });
     }
-    if (Buffer.byteLength(text) > limit) {
+    if (size(text) > limit) {
         throw new Error("Native inspection metadata exceeds the result limit.");
     }
     return text;
@@ -1443,7 +1448,7 @@ async function observeManagement(native, request, action, signal) {
             throw new Error("Native window inventory is unavailable.");
         data.window_inventory_completeness = windows.inventory_completeness;
         data.window_inventory_warnings = windows.inventory_warnings;
-        data.windows = windows.windows;
+        data.windows = windows.windows.map((row) => ({ ...row, availability: windowAvailability(row, windows) }));
         if (windows.windows.some((window) => window.process_start_identity_decimal !== receipt.process_start_identity_decimal)) {
             throw new Error("Later window inventory could not be bound to the original application generation.");
         }
@@ -1451,34 +1456,14 @@ async function observeManagement(native, request, action, signal) {
         if (applicationLevel || request.op === "close" || request.op === "dialog-answer") {
             return managementResult(data, action, outcome);
         }
-        if (!windows.windows.some((window) => window.window_id === receipt.window_id)) {
+        const row = data.windows.find((window) => window.window_id === receipt.window_id);
+        if (!row)
             throw new Error("The exact window was not returned by the later inventory.");
-        }
-        // Minimization intentionally removes the visible capture target; refreshed inventory owns its state.
-        if (request.op === "minimize")
-            return managementResult(data, action);
-        const observation = await inspect(native, {
-            op: "inspect",
-            pid: receipt.pid,
-            window: receipt.window_id,
-        }, signal);
-        const fresh = parseResult(observation);
-        if (observation.isError) {
-            data.observation_error = fresh;
-            data.message =
-                "The native action completed. Later inventory or inspection was unavailable; refresh the target before any further action, without repeating the completed action blindly.";
-            return managementResult(data, action);
-        }
-        const current = fresh.target_receipt;
-        if (current?.process_start_identity_decimal !== receipt.process_start_identity_decimal) {
-            throw new Error("The application changed process generation before the later inspection.");
-        }
-        return {
-            text: boundedElements({ ...data, ...fresh }),
-            image: observation.image,
-            outcome: "completed",
-            isError: false,
-        };
+        // A window action returns only that window's refreshed row, whose target the next call takes. Input needs a
+        // new snapshot, so the agent inspects next instead of paying for an inspection attached here.
+        delete data.windows;
+        data.window = row;
+        return managementResult(data, action);
     }
     catch (error) {
         data.observation_error = errorMessage(error);
@@ -1507,9 +1492,13 @@ function managementResult(data, action, outcome = "completed") {
 /** Creates a client bound to one host socket and signed client; calls are independent processes. */
 export function createDesktop(config) {
     const native = caller(config);
+    const verbose = config.verbose ?? process.env.DESKTOP_TOOLS_VERBOSE === "1";
     return async (request, signal) => {
         const result = await execute(native, request, signal);
-        return { ...result, data: JSON.parse(result.text) };
+        const text = verbose
+            ? result.text
+            : compactResult(result.text, { allWindows: request.op === "windows" && request.all === true });
+        return { ...result, text, data: JSON.parse(text) };
     };
 }
 async function execute(native, request, abort) {
@@ -1740,6 +1729,9 @@ async function execute(native, request, abort) {
                 throw new Error("Application query must contain non-whitespace text and at most 256 characters.");
             }
             query = request.query.trim();
+        }
+        if (request.op === "windows" && request.all !== undefined && typeof request.all !== "boolean") {
+            throw new Error("Choose all true or false.");
         }
         const args = request.op === "apps"
             ? ["apps"]

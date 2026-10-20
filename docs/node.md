@@ -20,4 +20,4 @@ Each result has:
 - `image`: a base64 JPEG or PNG, when the result has one.
 - `outcome`, for actions: `completed`, `refused`, or `unknown`.
 
-Before using an observation or receipt, check its `target_receipt` and the inventory completeness fields. Image bytes appear only in `image`.
+Results take the compact shape described in [Result shape](tools.md#result-shape); the client checks each receipt before it compacts one. Pass `verbose: true` in the config, or set `DESKTOP_TOOLS_VERBOSE=1`, for native results whole, with their `target_receipt`. Check the inventory completeness fields before relying on a listing. Image bytes appear only in `image`.

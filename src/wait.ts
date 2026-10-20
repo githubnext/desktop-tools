@@ -631,7 +631,7 @@ function note(request: DesktopWait, matched: boolean) {
 		return "inspection.snapshot_id and the listed element IDs come from one inspection taken after the match and work with click and the other action tools. When it is null, inspect before acting.";
 	}
 	if (request.until === "window_appears") {
-		return "Each window's target and window_id work as desktop_windows rows do; pass pid and window_id to desktop_inspect before input.";
+		return "Each window's target works as desktop_windows rows do; pass its pid and window_id to desktop_inspect before input.";
 	}
 	return "The condition held at the last poll and may change afterward; inspect before acting.";
 }
