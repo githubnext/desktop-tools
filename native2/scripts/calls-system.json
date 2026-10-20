@@ -1,0 +1,17 @@
+[
+  ["desktop_system_key", {}],
+  ["desktop_system_key", {"key": ""}],
+  ["desktop_system_key", {"key": "mute", "modifiers": []}],
+  ["desktop_system_key", {"key": "volume_up", "modifiers": ["command"]}],
+  ["desktop_system_key", {"key": "a", "modifiers": ["hyper"]}],
+  ["desktop_system_key", {"key": "a", "modifiers": ["command", "command"]}],
+  ["desktop_system_key", {"key": "w", "modifiers": ["command"]}],
+  ["desktop_system_key", {"key": "q", "modifiers": ["command", "option"]}],
+  ["desktop_system_key", {"key": "space", "modifiers": ["command"], "expect": {"until": "nonsense"}}],
+  ["desktop_input_source", {}],
+  ["desktop_input_source", {"select": ""}],
+  ["desktop_input_source", {"select": "has space"}],
+  ["desktop_input_source", {"select": "com.example.none"}],
+  ["desktop_input_source", {"select": "com.apple.keylayout.Canadian"}],
+  ["desktop_input_source", {"select": 5}]
+]
