@@ -309,7 +309,8 @@ class Session {
 
 	async windows(pid) {
 		const { data } = await this.mcp.call("desktop_windows", { pid });
-		return data.windows ?? [];
+		// Compact rows (#144) carry the title as title and the window number only in target.
+		return (data.windows ?? []).map((w) => ({ ...w, window_id: w.window_id ?? w.target?.window_id, window_title: w.window_title ?? w.title ?? "" }));
 	}
 
 	/** Opens a fixture in an app and returns its new window, tracked for cleanup. */

@@ -317,7 +317,12 @@ extension Mac {
 					clicked = true
 					try postModifierClick(events, source: source, clicks: clicks, modifiers: modifiers.count)
 					steps.record("global_events")
-					activity = initial.afterClick(clicks, modifiers: modifiers.count)
+					let expected = initial.afterClick(clicks, modifiers: modifiers.count)
+					// The combined session's counters can trail this source's by a millisecond or so; until they catch
+					// up, the restore checks would take the click for someone else's input.
+					let settle = Date().addingTimeInterval(0.1)
+					while InputActivity.current() != expected, Date() < settle { Thread.sleep(forTimeInterval: 0.002) }
+					activity = expected
 				} catch let error as Dispatched {
 					failure = error
 					cleanupAllowed = false
