@@ -359,14 +359,14 @@ extension Mac {
 
 		if !cleanup.isEmpty {
 			if let failure { cleanup.insert("Primary action: \(describe(failure))", at: 0) }
-			throw Dispatched(
+			return unfinished(steps, Dispatched(
 				message: "Modifier-click cleanup did not fully restore the shared desktop.",
 				hint: "Inspect the shared desktop state before taking another input action.", cause: cleanup.joined(separator: " ")
-			)
+			))
 		}
 		if let failure {
 			if !steps.dispatched, let refusal = failure as? Refusal { throw refusal }
-			throw Dispatched(message: "Modifier-click failed after foreground setup began.", cause: describe(failure))
+			return unfinished(steps, Dispatched(message: "Modifier-click failed after foreground setup began.", cause: describe(failure)))
 		}
 		var delivery = steps.outcome(.dispatchedUnverified, evidence: "delivery_accepted")
 		delivery.unverified = true
@@ -378,6 +378,15 @@ extension Mac {
 				("hint", "Inspect the window to see what the click did, such as which items are selected. Never repeat the click blindly."),
 			])),
 		]
+		return delivery
+	}
+
+	/// Input that went out before a failure: unknown, with the steps it dispatched and the failure as its error.
+	private static func unfinished(_ steps: Steps, _ failure: Dispatched) -> Delivery {
+		var delivery = steps.outcome(.indeterminate, evidence: "completion_unknown")
+		var error: [(String, JSON)] = [("code", "DESKTOP_ACTION_FAILED"), ("message", JSON(failure.message)), ("hint", JSON(failure.hint))]
+		if let cause = failure.cause { error.append(("cause", JSON(cause))) }
+		delivery.fields = [("error", .object(error))]
 		return delivery
 	}
 
