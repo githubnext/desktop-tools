@@ -46,6 +46,18 @@ if positional.count == 2, positional[1] == "status" || positional[1] == "repair"
 	FileHandle.standardOutput.write(output + Data([10]))
 	exit(failed ? 1 : 0)
 }
+// A Node MCP server or createDesktop from before 0.17.0 runs this client as native/'s, `<socket> <op> [args…]`, and
+// reads {"success", "error"}. Answer it in that shape, so the agent sees how to update instead of an unsupported reply.
+if positional.count >= 2, !positional[1].hasPrefix("desktop_") {
+	let app = HostApp.containing()
+	let server = app.map { $0.url.appendingPathComponent("Contents/MacOS/desktop-tools-mcp").path } ?? "the app's desktop-tools-mcp"
+	// The old server adds the code before the message and a period after it.
+	let message = "\(app?.name ?? "The desktop host app") runs a newer host than this MCP server or embedder speaks, "
+		+ "so nothing ran. Ask the user to set up the MCP server as \(server), or to update a pinned npx setup to v0.17.0 or later"
+	let failure = try! JSONEncoder().encode(HostFailure(error: .init(code: "CLIENT_OUTDATED", message: message)))
+	FileHandle.standardOutput.write(failure + Data([10]))
+	exit(1)
+}
 let serving = arguments.contains("--serve")
 guard positional.count == (serving ? 1 : 2) else {
 	refuse("USAGE", "Usage: desktop-tools-client <socket> <tool> [--verbose], with the tool's arguments as JSON on stdin, "
