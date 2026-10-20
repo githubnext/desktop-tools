@@ -1,0 +1,447 @@
+{
+	"inspection_mode": "accessibility",
+	"snapshot_id": "ps1_8f18d8aaf5ce13f5791bfeed23669c04",
+	"application_name": "TextEdit",
+	"element_count": 12,
+	"timings": {
+		"spans": [
+			{
+				"metadata": {},
+				"durationMS": 0.001208,
+				"name": "state.snapshot"
+			},
+			{
+				"metadata": {},
+				"durationMS": 0.208333,
+				"name": "target.resolve"
+			},
+			{
+				"metadata": {
+					"engine": "CGWindowList"
+				},
+				"durationMS": 149.947375,
+				"name": "capture.window"
+			},
+			{
+				"metadata": {},
+				"durationMS": 12.652875,
+				"name": "detection.ax"
+			},
+			{
+				"metadata": {},
+				"durationMS": 1.683375,
+				"name": "output.write"
+			},
+			{
+				"metadata": {},
+				"durationMS": 0.862708,
+				"name": "output.raw.write"
+			},
+			{
+				"metadata": {},
+				"durationMS": 0.817542,
+				"name": "snapshot.write"
+			},
+			{
+				"metadata": {},
+				"durationMS": 171.890541,
+				"name": "desktop.observe"
+			}
+		]
+	},
+	"ui_elements": [
+		{
+			"id": "elem_5",
+			"bounds": {
+				"width": 16,
+				"x": 160,
+				"y": 81,
+				"height": 16
+			},
+			"attributes": {
+				"axEnabledKnown": "true",
+				"isFocused": "false",
+				"depth": "1",
+				"isActionable": "true",
+				"role": "AXButton",
+				"roleDescription": "close button"
+			},
+			"label": "close button",
+			"is_enabled": true,
+			"role": "button"
+		},
+		{
+			"id": "elem_6",
+			"bounds": {
+				"width": 16,
+				"x": 206,
+				"y": 81,
+				"height": 16
+			},
+			"attributes": {
+				"axEnabledKnown": "true",
+				"depth": "1",
+				"isActionable": "true",
+				"actions": "AXShowMenu",
+				"help": "this button also has an action to zoom the window",
+				"role": "AXButton",
+				"roleDescription": "full screen button",
+				"isFocused": "false"
+			},
+			"label": "full screen button",
+			"is_enabled": true,
+			"role": "button"
+		},
+		{
+			"id": "elem_8",
+			"bounds": {
+				"width": 16,
+				"x": 183,
+				"y": 81,
+				"height": 16
+			},
+			"attributes": {
+				"axEnabledKnown": "true",
+				"isFocused": "false",
+				"role": "AXButton",
+				"isActionable": "true",
+				"depth": "1",
+				"roleDescription": "minimize button"
+			},
+			"label": "minimize button",
+			"is_enabled": true,
+			"role": "button"
+		},
+		{
+			"attributes": {
+				"axEnabledKnown": "false",
+				"depth": "2",
+				"isActionable": "true",
+				"actions": "AXShowMenu",
+				"selectedTextRangeLength": "0",
+				"role": "AXTextArea",
+				"selectedTextRangeLocation": "0",
+				"roleDescription": "text entry area",
+				"isValueSettable": "true",
+				"identifier": "First Text View",
+				"isFocused": "true"
+			},
+			"bounds": {
+				"width": 656,
+				"x": 152,
+				"y": 105,
+				"height": 384
+			},
+			"role": "textField",
+			"is_enabled": false,
+			"label": "A short note for measuring result sizes.",
+			"id": "elem_2",
+			"value": "A short note for measuring result sizes.\n"
+		},
+		{
+			"id": "elem_10",
+			"bounds": {
+				"width": 18,
+				"x": 233,
+				"y": 79,
+				"height": 18
+			},
+			"attributes": {
+				"axEnabledKnown": "true",
+				"isFocused": "false",
+				"title": "note.txt",
+				"role": "AXImage",
+				"depth": "1",
+				"roleDescription": "image"
+			},
+			"label": "note.txt",
+			"is_enabled": true,
+			"role": "image"
+		},
+		{
+			"id": "elem_7",
+			"bounds": {
+				"width": 14,
+				"x": 207,
+				"y": 82,
+				"height": 14
+			},
+			"attributes": {
+				"axEnabledKnown": "false",
+				"isFocused": "false",
+				"role": "AXGroup",
+				"depth": "2",
+				"roleDescription": "group"
+			},
+			"label": "group",
+			"is_enabled": false,
+			"role": "group"
+		},
+		{
+			"id": "elem_0",
+			"bounds": {
+				"width": 656,
+				"x": 152,
+				"y": 73,
+				"height": 422
+			},
+			"attributes": {
+				"axEnabledKnown": "false",
+				"depth": "0",
+				"title": "note.txt",
+				"actions": "AXRaise",
+				"role": "AXWindow",
+				"roleDescription": "standard window",
+				"identifier": "_NS:31",
+				"isFocused": "false"
+			},
+			"label": "note.txt",
+			"is_enabled": false,
+			"role": "other"
+		},
+		{
+			"id": "elem_1",
+			"bounds": {
+				"width": 656,
+				"x": 152,
+				"y": 105,
+				"height": 390
+			},
+			"attributes": {
+				"axEnabledKnown": "false",
+				"depth": "1",
+				"isFocused": "false",
+				"identifier": "_NS:8",
+				"role": "AXScrollArea",
+				"roleDescription": "scroll area"
+			},
+			"label": "scroll area",
+			"is_enabled": false,
+			"role": "other"
+		},
+		{
+			"attributes": {
+				"axEnabledKnown": "true",
+				"depth": "2",
+				"isActionable": "true",
+				"role": "AXScrollBar",
+				"roleDescription": "scroll bar",
+				"isValueSettable": "true",
+				"identifier": "_NS:24",
+				"isFocused": "false"
+			},
+			"bounds": {
+				"width": 643,
+				"x": 158.5,
+				"y": 477,
+				"height": 19
+			},
+			"role": "other",
+			"is_enabled": false,
+			"label": "0.1851851791143417",
+			"id": "elem_3",
+			"value": "0.1851851791143417"
+		},
+		{
+			"attributes": {
+				"axEnabledKnown": "true",
+				"depth": "2",
+				"isActionable": "true",
+				"role": "AXScrollBar",
+				"roleDescription": "scroll bar",
+				"isValueSettable": "true",
+				"isFocused": "false",
+				"identifier": "_NS:27"
+			},
+			"bounds": {
+				"width": 19,
+				"x": 790,
+				"y": 104,
+				"height": 384.5
+			},
+			"role": "other",
+			"is_enabled": false,
+			"label": "0.615384578704834",
+			"id": "elem_4",
+			"value": "0.615384578704834"
+		},
+		{
+			"id": "elem_9",
+			"bounds": {
+				"width": 12,
+				"x": 307,
+				"y": 80,
+				"height": 18
+			},
+			"attributes": {
+				"axEnabledKnown": "true",
+				"depth": "1",
+				"title": "",
+				"description": "document actions",
+				"actions": "AXShowMenu",
+				"role": "AXMenuButton",
+				"roleDescription": "menu button",
+				"isFocused": "false"
+			},
+			"label": "document actions",
+			"is_enabled": false,
+			"role": "other"
+		},
+		{
+			"attributes": {
+				"axEnabledKnown": "true",
+				"depth": "1",
+				"role": "AXStaticText",
+				"isFocused": "false",
+				"roleDescription": "text"
+			},
+			"bounds": {
+				"width": 56,
+				"x": 252,
+				"y": 81,
+				"height": 16
+			},
+			"role": "other",
+			"is_enabled": true,
+			"label": "note.txt",
+			"id": "elem_11",
+			"value": "note.txt"
+		}
+	],
+	"coordinate_context": {
+		"version": 1,
+		"delivered_image_size": [
+			656,
+			422
+		],
+		"origin": "top_left",
+		"requested_scale": {
+			"logical1x": {}
+		},
+		"native_scale": 2,
+		"output_scale": 1,
+		"logical_space": "global_display_points",
+		"display": {
+			"index": 0
+		},
+		"logical_bounds": [
+			[
+				152,
+				73
+			],
+			[
+				656,
+				422
+			]
+		],
+		"window": {
+			"index": 0,
+			"title": "note.txt",
+			"window_id": 2205
+		}
+	},
+	"detection_metadata": {
+		"elementCount": 12,
+		"windowContext": {
+			"requiresFreshAccessibilityTree": true,
+			"focusedElement": {
+				"identifier": "First Text View",
+				"windowID": 2205,
+				"processIdentifier": 41114,
+				"role": "AXTextArea",
+				"frame": [
+					[
+						152,
+						105
+					],
+					[
+						656,
+						384
+					]
+				]
+			},
+			"windowMutationIdentity": {
+				"capturedBounds": [
+					[
+						152,
+						73
+					],
+					[
+						656,
+						422
+					]
+				],
+				"windowID": 2205,
+				"ownerProcessIdentifier": 41114,
+				"isMinimized": false,
+				"ownerProcessStartIdentity": 1792461962814398
+			},
+			"applicationBundleId": "com.apple.TextEdit",
+			"windowID": 2205,
+			"applicationProcessId": 41114,
+			"traversalBudget": {
+				"maxElementCount": 200,
+				"maxChildrenPerNode": 100,
+				"maxDepth": 15
+			},
+			"accessibilityTimeoutSeconds": 15,
+			"includeMenuBarElements": false,
+			"shouldFocusWebContent": false,
+			"windowTitle": "note.txt",
+			"applicationName": "TextEdit",
+			"windowBounds": [
+				[
+					152,
+					73
+				],
+				[
+					656,
+					422
+				]
+			],
+			"applicationProcessStartIdentity": 1792461962814398
+		},
+		"detectionTime": 0,
+		"method": "AXorcist",
+		"warnings": [],
+		"isDialog": false
+	},
+	"diagnostics": {
+		"stateSnapshot": {
+			"runningApplicationCount": 0,
+			"capturedAt": 814154804,
+			"displayCount": 0,
+			"windowCount": 0
+		},
+		"warnings": [],
+		"target": {
+			"source": "window-id",
+			"openIfNeeded": false,
+			"requestedKind": "pid",
+			"resolvedKind": "window-id",
+			"hints": [],
+			"bounds": [
+				[
+					152,
+					73
+				],
+				[
+					656,
+					422
+				]
+			],
+			"windowID": 2205
+		}
+	},
+	"window_title": "note.txt",
+	"target_receipt": {
+		"process_start_identity_decimal": "1792461962814398",
+		"window_id": 2205,
+		"pid": 41114
+	},
+	"image": {
+		"width": 656,
+		"height": 422,
+		"note": "Screenshot, scaled down when large but never up; Accessibility bounds remain in their original coordinate system. Pointer points use fractions of this image: x from the left edge and y from the top, each >= 0 and < 1."
+	}
+}

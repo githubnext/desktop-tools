@@ -9,6 +9,11 @@ export type DesktopConfig = {
     name?: string;
     /** Agent named in the host's window label, such as "Claude"; read at each call, so it can be set later. */
     agent?: string;
+    /**
+     * Return native results whole, with detection metadata, timings, receipts and every window, instead of the compact
+     * shape written for models. Defaults to `DESKTOP_TOOLS_VERBOSE=1` in the environment.
+     */
+    verbose?: boolean;
 };
 /** `data` is the parsed final bounded `text`; image bytes stay only in `image`. */
 export type DesktopClientResult = DesktopResult & {
