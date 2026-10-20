@@ -35,6 +35,8 @@ Peekaboo is vendored in `native/vendor/Peekaboo`: version 4.8.0 with our changes
 
 Give each concurrent build its own `--scratch` directory, or run builds one at a time. The default scratch is `native/.build` inside the package, which is not suitable for an installed dependency.
 
+`--native2` builds the pure Swift host (#143) from `native2/` alone, with no Peekaboo and no other dependency, in `<scratch>/native2` (or `native2/.build`). `--out` then receives native2's `libDesktopTools.dylib`, `desktop-tools-client`, `desktop-tools-mcp` and `desktop-tools-app`, with notices for this package only; notices a `native/` build left in `<out>/Licenses` are removed. The dylib exports the same C ABI, but its client speaks a different wire, so an embedder switches by passing `--native2` and `createDesktop({ wire: 2 })` together (see [native2/CUTOVER.md](../native2/CUTOVER.md)). Until `native/` is removed, `native2/Sources/desktop-tools-app` is a copy of `native/sources/app`; a test keeps the two identical.
+
 Peekaboo's own tests take the real desktop operation locks in `~/.peekaboo` (`global.lock` and its turnstile) whenever a test uses the default coordination root. The path comes from the account database, so changing `HOME` doesn't isolate it. A hung or slow test run blocks every desktop operation for the same user, including the installed Desktop Tools app. A timed-out operation names the processes holding the lock open. Run Peekaboo tests with a narrow `--filter` and a time limit, and stop any run that hangs.
 
 The build does not sign or stage the Swift runtime. Embedding apps own both. If an app's deployment target needs bundled Swift libraries, stage them with `xcrun swift-stdlib-tool --copy` into `Contents/Frameworks`; binaries carry an `@loader_path/../Frameworks` rpath for that.
@@ -50,7 +52,7 @@ npm run dev-app            # build, sign, install and open
 npm run dev-app -- --stop  # quit it
 ```
 
-`npm run dev-app -- --native2` bundles the pure Swift host's `libDesktopTools.dylib` and `desktop-tools-client` from `native2/` in place of `native/`'s, keeping the same app, identity and state folder (see [native2/CUTOVER.md](../native2/CUTOVER.md)). Run the MCP server against it with `--wire 2`, or run the Swift MCP server it also bundles, `Desktop Tools Dev.app/Contents/MacOS/desktop-tools-mcp`, which finds the app's socket and opens the app in the background when nothing serves it. Building without the switch puts `native/`'s back.
+`npm run dev-app -- --native2` bundles the pure Swift host's app, `libDesktopTools.dylib` and `desktop-tools-client` from `native2/` in place of `native/`'s, keeping the same app, identity and state folder (see [native2/CUTOVER.md](../native2/CUTOVER.md)). Run the MCP server against it with `--wire 2`, or run the Swift MCP server it also bundles, `Desktop Tools Dev.app/Contents/MacOS/desktop-tools-mcp`, which finds the app's socket and opens the app in the background when nothing serves it. Building without the switch puts `native/`'s back.
 
 Every checkout and worktree installs the same `~/Library/Application Support/desktop-tools/dev/Desktop Tools Dev.app`. It has its own bundle identity, `dev.githubnext.desktop-tools.dev`, nested under the release app's, and the name **Desktop Tools Dev**. Building quits the running copy, replaces the bundle in place and opens it again through LaunchServices with `open`. Launching its executable directly can attribute permission checks to the launching terminal or agent instead of the app.
 

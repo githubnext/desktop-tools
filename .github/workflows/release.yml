@@ -6,6 +6,11 @@ on:
         description: Publish a GitHub Release for package.json's version
         type: boolean
         default: false
+      stack:
+        description: The host the app runs; native switches back to the Peekaboo stack
+        type: choice
+        options: [native2, native]
+        default: native2
 permissions:
   contents: read
 concurrency:
@@ -41,6 +46,7 @@ jobs:
           DT_CODESIGN_IDENTITY: ${{ vars.DT_CODESIGN_IDENTITY }}
           DT_NOTARY_KEY_ID: ${{ vars.DT_NOTARY_KEY_ID }}
           DT_NOTARY_ISSUER: ${{ vars.DT_NOTARY_ISSUER }}
+          DT_STACK: ${{ inputs.stack }}
         run: node scripts/release.ts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

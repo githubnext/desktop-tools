@@ -1,6 +1,10 @@
 // swift-tools-version: 6.2
 
+import Foundation
 import PackageDescription
+
+// The npm package ships Sources without Tests, and SwiftPM refuses a test target whose folder is missing.
+let tests = FileManager.default.fileExists(atPath: Context.packageDirectory + "/Tests")
 
 // The single-codebase spike from #143: no Peekaboo and no Node. Only DesktopMac touches macOS.
 let package = Package(
@@ -13,6 +17,8 @@ let package = Package(
 		.executable(name: "desktop-tools-client", targets: ["desktop-tools-client"]),
 		// The embedding runtime the menu bar app loads, with native/'s C ABI (docs/embed.md).
 		.library(name: "DesktopTools", type: .dynamic, targets: ["DesktopTools"]),
+		// The menu bar app that loads it, a copy of native/'s with the same callers module.
+		.executable(name: "desktop-tools-app", targets: ["desktop-tools-app"]),
 	],
 	targets: [
 		.target(name: "DesktopProtocol"),
@@ -25,8 +31,10 @@ let package = Package(
 		.target(name: "DesktopAppLink"),
 		.executableTarget(name: "desktop-tools-mcp", dependencies: ["DesktopProtocol", "DesktopAppLink"]),
 		.executableTarget(name: "desktop-tools-client", dependencies: ["DesktopProtocol", "DesktopAppLink"]),
+		.executableTarget(name: "desktop-tools-app", dependencies: ["DesktopCore"]),
+	] + (tests ? [
 		.testTarget(name: "CoreTests", dependencies: ["DesktopCore", "DesktopProtocol"]),
 		.testTarget(name: "RuntimeTests", dependencies: ["DesktopTools", "DesktopHost", "DesktopMac", "DesktopProtocol"]),
-	],
+	] : []),
 	swiftLanguageModes: [.v6]
 )

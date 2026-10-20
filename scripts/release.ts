@@ -45,6 +45,9 @@ const changes = spawnSync("git", ["status", "--porcelain"], { cwd: root, encodin
 if (changes.status !== 0 || changes.stdout) {
 	throw new Error("Commit the lane's changes before making a release");
 }
+// The app runs the pure Swift host (#143) unless DT_STACK=native switches the release back to Peekaboo's.
+const stack = process.env.DT_STACK ?? "native2";
+if (stack !== "native2" && stack !== "native") throw new Error("DT_STACK must be native2 or native");
 const identity = required("DT_CODESIGN_IDENTITY");
 const auth = [
 	"--key",
@@ -89,8 +92,8 @@ const output = join(root, "build", "release");
 mkdirSync(staging, { recursive: true });
 mkdirSync(output, { recursive: true });
 try {
-	log("==> Build");
-	const app = assemble(join(staging, "app"), join(root, ".build", "native"));
+	log(`==> Build (${stack})`);
+	const app = assemble(join(staging, "app"), join(root, ".build", "native"), false, stack === "native2");
 	log("==> App signing");
 	sign(app, identity, true);
 	const zip = join(staging, "notarize.zip");
