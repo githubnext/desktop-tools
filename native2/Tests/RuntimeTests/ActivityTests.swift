@@ -13,6 +13,9 @@ struct ActivityTests {
 		#expect(activityName("desktop_hover", arguments: .object([]), mutatesDesktop: true) == "Move pointer")
 		#expect(activityName("desktop_unhide", arguments: .object([]), mutatesDesktop: true) == "Activate")
 		#expect(activityName("desktop_switch_space", arguments: .object([]), mutatesDesktop: true) == "System key")
+		#expect(activityName("desktop_input_source", arguments: .object([]), mutatesDesktop: false) == nil)
+		#expect(activityName("desktop_input_source", arguments: .object([("select", "com.apple.keylayout.US")]),
+			mutatesDesktop: true) == "Select input source")
 	}
 
 	@Test
