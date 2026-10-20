@@ -11,7 +11,10 @@ private let clickUncertain = "The click may have opened the item's menu. Observe
 
 private func statusTarget(_ item: StatusItemRow) -> JSON? {
 	item.generation.map { generation in
-		.object([("pid", JSON(item.pid)), ("process_start_identity_decimal", JSON(String(generation))), ("index", JSON(item.index))])
+		.object([
+			"pid": JSON(item.pid), "process_start_identity_decimal": JSON(String(generation)), "window_id": item.windowID.map(JSON.init),
+			"index": JSON(item.index),
+		])
 	}
 }
 
@@ -39,7 +42,8 @@ extension Tools {
 				"identifier": item.identifier.map(JSON.string), "owner_name": item.ownerName.map(JSON.string),
 				"bundle_id": item.bundleID.map(JSON.string), "pid": JSON(item.pid),
 				"process_start_identity_decimal": item.generation.map { JSON(String($0)) },
-				"bounds": item.frame.isEmpty ? nil : Mac.boundsJSON(item.frame), "is_visible": JSON(item.isVisible), "source": "ax-extras",
+				"bounds": item.frame.isEmpty ? nil : Mac.boundsJSON(item.frame), "is_visible": JSON(item.isVisible),
+				"window_id": item.windowID.map(JSON.init), "source": JSON(item.source),
 				"target": statusTarget(item),
 			])
 		}
@@ -72,7 +76,9 @@ extension Tools {
 		func result(_ outcome: String, receipt: Bool = false, image: (String, String)? = nil, size: (Int, Int)? = nil) -> ToolResult {
 			action[0] = ("outcome", JSON(outcome))
 			if receipt {
-				action.append(("target_receipt", .object([("pid", target["pid"]!), ("process_start_identity_decimal", target["process_start_identity_decimal"]!)])))
+				action.append(("target_receipt", .object([
+					"pid": target["pid"], "process_start_identity_decimal": target["process_start_identity_decimal"], "window_id": window,
+				])))
 			}
 			var data: [(String, JSON)] = [("action", .object(action))]
 			if let size {
