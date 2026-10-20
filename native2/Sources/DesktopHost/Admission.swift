@@ -21,6 +21,9 @@ public final class Callers: @unchecked Sendable {
 	private var resolved: [String: Caller] = [:]
 
 	public var enforcing: Bool { lock.withLock { handler != nil } }
+	/// Whether the app was asked about a caller the user hasn't answered yet. Its prompt goes up asynchronously, so
+	/// this covers the moment before the prompt's window is on screen, where the window check can't see it.
+	var asking: Bool { lock.withLock { !asked.isEmpty } }
 
 	public func setHandler(_ handler: (@Sendable (Caller) -> Void)?) {
 		lock.withLock { self.handler = handler }
@@ -123,7 +126,8 @@ extension Tools {
 		// Clipboard writes can't reach a prompt or menu, so only the pause holds them.
 		if name != "desktop_clipboard_write", Callers.shared.enforcing {
 			let target = await targetProcess(arguments)
-			if let refusal = OwnUIGuard.refusal(input: true, targetIsOwn: target.map(OwnUI.isOwn) ?? false, ownUIOpen: OwnUI.promptOrMenuOpen()) {
+			let ownUIOpen = Callers.shared.asking || OwnUI.promptOrMenuOpen()
+			if let refusal = OwnUIGuard.refusal(input: true, targetIsOwn: target.map(OwnUI.isOwn) ?? false, ownUIOpen: ownUIOpen) {
 				return refusal
 			}
 		}
