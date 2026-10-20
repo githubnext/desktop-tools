@@ -40,12 +40,21 @@ extension Tools {
 		guard ["left", "right"].contains(button), arguments["button"] == nil || arguments["button"]?.string != nil else {
 			throw ToolError("Choose the left or right mouse button for a drag.")
 		}
-		let duration = arguments["duration_ms"]?.int ?? 500
+		// A foreground drag defaults to a slower 800 ms, which drops between windows need.
+		let foreground = toSnapshot != nil || !modifiers.isEmpty
+		let duration = arguments["duration_ms"]?.int ?? (foreground ? 800 : 500)
 		guard (1...10000).contains(duration), arguments["duration_ms"] == nil || arguments["duration_ms"]?.int != nil else {
 			throw ToolError("Drag duration must be 1 to 10000 milliseconds.")
 		}
-		if toSnapshot != nil || !modifiers.isEmpty {
-			throw ToolError("Foreground drags (to_snapshot or modifiers) aren't in the Swift spike yet.")
+		if foreground {
+			let send = {
+				await foregroundDrag(
+					snapshotID, to: toSnapshot?.string, from: from, through: waypoints, to: to,
+					button: button == "right" ? .right : .left, milliseconds: duration, modifiers: modifiers
+				)
+			}
+			if let expect = try expectation(arguments) { return try await expectAfter(expect, send) }
+			return await send()
 		}
 		let points = [from] + waypoints + [to]
 		let send = {
