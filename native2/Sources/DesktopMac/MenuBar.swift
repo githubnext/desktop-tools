@@ -5,9 +5,10 @@ import DesktopProtocol
 import Foundation
 import ScreenCaptureKit
 
-// Status items, ported from Peekaboo's MenuService+ExtrasMenuBar, its menu bar titles (UIAXHelpers,
-// MenuExtraSupport) and its by-index click (MIT). Only the AXExtrasMenuBar inventory is ported: it is the one
-// macOS uses where MenuBarAgent draws the whole bar. Older systems' WindowServer inventory is not.
+// Status items, ported from Peekaboo's MenuService+ExtrasMenuBar, MenuExtraWindows, MenuBarCGSBridge, its menu bar
+// titles (UIAXHelpers, MenuExtraSupport) and its by-index click (MIT). Where MenuBarAgent draws the whole bar, items
+// are Accessibility elements of their owners' AXExtrasMenuBar and are pressed. Elsewhere each item is a WindowServer
+// window on the status layers, found as Peekaboo finds them by default, and is clicked through that window.
 
 /// One status item, in the order desktop_menubar_items lists them.
 public struct StatusItemRow: Sendable {
@@ -22,11 +23,15 @@ public struct StatusItemRow: Sendable {
 	public let generation: UInt64?
 	public let frame: CGRect
 	public let isVisible: Bool
+	/// The item's own window, where WindowServer draws it and the window still belongs to its owner.
+	public let windowID: Int?
+	/// ax-extras, or cgs and cgwindow for the WindowServer inventory.
+	public let source: String
 	/// What a click compares, as Peekaboo's selected-leaf evidence does: the item's identity and the whole set's.
 	public let leaf: String
 }
 
-private struct Extra {
+struct Extra {
 	let pid: pid_t
 	let label: String?
 	let identifier: String?
@@ -36,7 +41,10 @@ private struct Extra {
 	let frame: CGRect
 	let isVisible: Bool
 	let actions: [String]
-	let element: AXUIElement
+	let element: AXUIElement?
+	var windowID: Int? = nil
+	var windowLayer: Int? = nil
+	var source = "ax-extras"
 }
 
 private func sanitized(_ value: String?) -> String? {
@@ -143,6 +151,149 @@ private func extrasItems(_ pid: pid_t) -> [(element: AXUIElement, title: String?
 	return items
 }
 
+// MARK: WindowServer inventory
+
+/// The private CGS calls Peekaboo mirrors from Ice; a missing symbol means no data, not a failure.
+private enum CGS {
+	typealias Connection = Int32
+	nonisolated(unsafe) private static let handle = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_NOW)
+		?? dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW)
+
+	static func symbol<T>(_ name: String, as _: T.Type) -> T? {
+		guard let handle, let found = dlsym(handle, name) else { return nil }
+		return unsafeBitCast(found, to: T.self)
+	}
+
+	static let main = symbol("CGSMainConnectionID", as: (@convention(c) () -> Connection).self)
+	static let activeSpace = symbol("CGSGetActiveSpace", as: (@convention(c) (Connection) -> UInt32).self)
+	static let spacesForWindows = symbol("CGSCopySpacesForWindows", as: (@convention(c) (Connection, UInt32, CFArray) -> Unmanaged<CFArray>?).self)
+
+	/// Whether the window is on the active Space; unknown counts as yes, as Peekaboo's does.
+	static func onActiveSpace(_ id: CGWindowID) -> Bool {
+		guard let main, let activeSpace, let spacesForWindows else { return true }
+		let connection = main()
+		guard let spaces = spacesForWindows(connection, 1, [id] as CFArray)?.takeRetainedValue() as? [UInt32] else { return true }
+		return spaces.contains(activeSpace(connection))
+	}
+
+	/// A count-then-list read, refused unless both calls succeed and the list fits the count.
+	static func list(count: (UnsafeMutablePointer<Int32>) -> Int32, list: (Int32, UnsafeMutablePointer<CGWindowID>, UnsafeMutablePointer<Int32>) -> Int32) -> [CGWindowID]? {
+		var capacity: Int32 = 0
+		guard count(&capacity) == 0, capacity >= 0 else { return nil }
+		guard capacity > 0 else { return [] }
+		var ids = [CGWindowID](repeating: 0, count: Int(capacity))
+		var actual: Int32 = 0
+		guard list(capacity, &ids, &actual) == 0, (0...capacity).contains(actual) else { return nil }
+		return Array(ids.prefix(Int(actual)))
+	}
+
+	/// Status item windows on screen on the active Space (CGSCopyWindowsWithOptions, menu bar items).
+	static func menuBarItemWindows() -> [CGWindowID] {
+		guard let main = symbol("CGSMainConnectionID", as: (@convention(c) () -> UInt32).self),
+		      let copy = symbol("CGSCopyWindowsWithOptions", as: (@convention(c) (UInt32, Int32, UInt32) -> CFArray?).self),
+		      let raw = copy(main(), 0, 1 << 0 | 1 << 1 | 1 << 2) as? [UInt32]
+		else { return [] }
+		return raw.map { CGWindowID($0) }.filter(onActiveSpace)
+	}
+
+	/// Every process's menu bar windows that are on screen, on the active Space.
+	static func processMenuBarWindows() -> [CGWindowID] {
+		typealias Count = @convention(c) (Connection, Connection, UnsafeMutablePointer<Int32>) -> Int32
+		typealias List = @convention(c) (Connection, Connection, Int32, UnsafeMutablePointer<CGWindowID>, UnsafeMutablePointer<Int32>) -> Int32
+		guard let main, let count = symbol("CGSGetWindowCount", as: Count.self), let menuBar = symbol("CGSGetProcessMenuBarWindowList", as: List.self),
+		      let onScreenCount = symbol("CGSGetOnScreenWindowCount", as: Count.self), let onScreen = symbol("CGSGetOnScreenWindowList", as: List.self),
+		      activeSpace != nil, spacesForWindows != nil
+		else { return [] }
+		let connection = main()
+		guard var ids = list(count: { count(connection, 0, $0) }, list: { menuBar(connection, 0, $0, $1, $2) }) else { return [] }
+		if let visible = list(count: { onScreenCount(connection, 0, $0) }, list: { onScreen(connection, 0, $0, $1, $2) }) {
+			let visible = Set(visible)
+			ids = ids.filter(visible.contains)
+		}
+		return ids.filter(onActiveSpace)
+	}
+}
+
+/// What Peekaboo names a WindowServer item: the system owners' placeholders get their product's name, a placeholder
+/// takes its identifier's words or its owner's name, and Control Center's camel-cased names are spaced.
+func windowItemName(rawTitle: String?, ownerName: String?, bundleID: String?) -> String {
+	var resolved = rawTitle?.isEmpty == false ? rawTitle! : (ownerName ?? "Unknown")
+	let named = [
+		"com.apple.controlcenter": "Control Center", "com.apple.Spotlight": "Spotlight", "com.apple.Siri": "Siri",
+		"com.apple.Passwords.MenuBarExtra": "Passwords",
+	]
+	if let name = bundleID.flatMap({ named[$0] }), isPlaceholder(resolved) { resolved = name }
+	if bundleID == "com.apple.systemuiserver", resolved.lowercased() == "menu extras" { resolved = "System Menu Extras" }
+	if isPlaceholder(resolved), let name = readableIdentifier(rawTitle) { return name }
+	if isPlaceholder(resolved), let ownerName, !ownerName.isEmpty { return ownerName }
+	if bundleID == "com.apple.controlcenter", resolved.rangeOfCharacter(from: .whitespacesAndNewlines) == nil, resolved.count > 4,
+	   resolved.range(of: #"[A-Z].*[a-z]|[a-z].*[A-Z]"#, options: .regularExpression) != nil
+	{
+		let spaced = camelCaseToWords(resolved)
+		if !spaced.isEmpty, !isPlaceholder(spaced) { return spaced }
+	}
+	return resolved
+}
+
+/// One window's item, or nil unless it is on the main menu (24) or status (25) layer and isn't the bar itself.
+func windowItem(_ info: [String: Any], id: CGWindowID, source: String, displays: [CGRect]) -> Extra? {
+	let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+	guard layer == 24 || layer == 25, let raw = info[kCGWindowBounds as String] as? NSDictionary,
+	      let frame = CGRect(dictionaryRepresentation: raw as CFDictionary),
+	      let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
+	else { return nil }
+	let owner = info[kCGWindowOwnerName as String] as? String ?? "Unknown"
+	let title = info[kCGWindowName as String] as? String ?? ""
+	if owner == "Window Server", title == "Menubar" { return nil }
+	let app = NSRunningApplication(processIdentifier: pid)
+	let bundleID = app?.bundleIdentifier
+	// An untitled window takes its app's name; Finder's untitled windows on these layers aren't items.
+	let ownerName = title.isEmpty ? app?.localizedName ?? owner : owner
+	if app?.localizedName == nil, bundleID == "com.apple.finder", title.isEmpty { return nil }
+	let rawTitle = title.isEmpty ? ownerName : title
+	let center = CGPoint(x: frame.midX, y: frame.midY)
+	return Extra(pid: pid, label: rawTitle, identifier: bundleID ?? (title.isEmpty ? nil : title),
+	             title: windowItemName(rawTitle: rawTitle, ownerName: ownerName, bundleID: bundleID), ownerName: ownerName, bundleID: bundleID,
+	             frame: frame, isVisible: frame.width > 0 && frame.height > 0 && displays.contains { $0.contains(center) }, actions: [], element: nil,
+	             windowID: Int(id), windowLayer: layer, source: source)
+}
+
+/// The status item windows WindowServer lists, as Peekaboo's default inventory finds them: the CGS menu bar lists
+/// first, then any other window on the status layers.
+func windowExtras() -> [Extra] {
+	let displays = activeDisplays().map(\.bounds)
+	var items: [Extra] = []
+	var seen = Set<CGWindowID>()
+	// Sorted, so the same windows always come in the same order.
+	for id in Set(CGS.menuBarItemWindows() + CGS.processMenuBarWindows()).sorted() {
+		guard let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]])?.first,
+		      let item = windowItem(info, id: id, source: "cgs", displays: displays)
+		else { continue }
+		items.append(item)
+		seen.insert(id)
+	}
+	for info in CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? [] {
+		guard let id = (info[kCGWindowNumber as String] as? NSNumber).map({ CGWindowID($0.uint32Value) }), !seen.contains(id),
+		      let item = windowItem(info, id: id, source: "cgwindow", displays: displays)
+		else { continue }
+		items.append(item)
+		seen.insert(id)
+	}
+	return windowItemsInOrder(items)
+}
+
+/// Top to bottom, then left to right, by each item's center, with ties broken so the order is always the same.
+func windowItemsInOrder(_ items: [Extra]) -> [Extra] {
+	items.sorted { lhs, rhs in
+		let (l, r) = (CGPoint(x: lhs.frame.midX, y: lhs.frame.midY), CGPoint(x: rhs.frame.midX, y: rhs.frame.midY))
+		if l.y != r.y { return l.y < r.y }
+		if l.x != r.x { return l.x < r.x }
+		if lhs.windowID != rhs.windowID { return (lhs.windowID ?? .max) < (rhs.windowID ?? .max) }
+		if lhs.pid != rhs.pid { return lhs.pid < rhs.pid }
+		return (lhs.identifier ?? lhs.title) < (rhs.identifier ?? rhs.title)
+	}
+}
+
 private final class Results: @unchecked Sendable {
 	let lock = NSLock()
 	var values: [[Extra]]
@@ -153,9 +304,7 @@ private final class Results: @unchecked Sendable {
 @MainActor
 private func extras() throws -> [Extra] {
 	let running = NSWorkspace.shared.runningApplications
-	guard running.contains(where: { $0.bundleIdentifier == "com.apple.MenuBarAgent" }) else {
-		throw ToolError("The Swift spike lists status items only where MenuBarAgent draws the menu bar; this system's WindowServer inventory isn't ported.")
-	}
+	guard running.contains(where: { $0.bundleIdentifier == "com.apple.MenuBarAgent" }) else { return windowExtras() }
 	let owners = running.filter { $0.processIdentifier > 0 && !$0.isTerminated }
 	let info = owners.map { ($0.processIdentifier, $0.localizedName, $0.bundleIdentifier) }
 	let displays = activeDisplays().map(\.bounds)
@@ -185,17 +334,23 @@ private func rows(_ extras: [Extra]) -> [StatusItemRow] {
 	let titles = extras.enumerated().map { resolvedTitle($1, index: $0) }
 	// The set's identity: any item added, removed, moved or renamed changes it.
 	let set = extras.enumerated().map { index, extra -> String in
-		let anchored = extra.identifier != nil
-		return [String(index), titles[index], String(extra.pid), anchored ? "" : extra.title, anchored ? "" : extra.label ?? "",
-		        extra.bundleID ?? "", extra.ownerName ?? "", extra.identifier ?? "", "ax-extras",
-		        "\(extra.frame.origin.x),\(extra.frame.origin.y)", String(extra.isVisible)].joined(separator: "\u{1f}")
+		let anchored = extra.identifier != nil || extra.windowID != nil
+		// Typed in parts: one literal of every field takes the release build's type checker too long.
+		let owner: [String] = [String(index), titles[index], String(extra.pid), extra.windowID.map(String.init) ?? "", extra.windowLayer.map(String.init) ?? ""]
+		let names: [String] = [anchored ? "" : extra.title, anchored ? "" : extra.label ?? "", extra.bundleID ?? "", extra.ownerName ?? "", extra.identifier ?? ""]
+		let place: [String] = [extra.source, "\(extra.frame.origin.x),\(extra.frame.origin.y)", String(extra.isVisible)]
+		return (owner + names + place).joined(separator: "\u{1f}")
 	}.joined(separator: "\u{1e}")
 	return extras.enumerated().map { index, extra in
 		let generation = startIdentity(extra.pid).value
-		let leaf = [String(extra.pid), generation.map(String.init) ?? "", String(index), extra.identifier == nil ? titles[index] : "",
-		            extra.identifier ?? "", "\(extra.frame)", set].joined(separator: "\u{1d}")
+		// A window item binds its window only while that window still belongs to the owner, as Peekaboo's evidence does.
+		let window = extra.windowID.flatMap { id in Mac.window(id).flatMap { $0.pid == extra.pid ? (id, $0.bounds) : nil } }
+		let frame = window?.1 ?? extra.frame
+		let leaf = [String(extra.pid), generation.map(String.init) ?? "", window.map { String($0.0) } ?? "", String(index),
+		            extra.identifier == nil ? titles[index] : "", extra.identifier ?? "", "\(frame)", set].joined(separator: "\u{1d}")
 		return StatusItemRow(index: index, title: titles[index], rawTitle: extra.label, identifier: extra.identifier, ownerName: extra.ownerName,
-		                     bundleID: extra.bundleID, pid: extra.pid, generation: generation, frame: extra.frame, isVisible: extra.isVisible, leaf: leaf)
+		                     bundleID: extra.bundleID, pid: extra.pid, generation: generation, frame: frame, isVisible: extra.isVisible,
+		                     windowID: window?.0, source: extra.source, leaf: leaf)
 	}
 }
 
@@ -270,6 +425,7 @@ extension Mac {
 			throw refusal("Menu bar item [\(index)] changed identity or order before dispatch.", hint: "Refresh menu bar items before retrying.")
 		}
 		let item = refreshed[index]
+		if item.source != "ax-extras" { return try clickWindowItem(item, index: index) }
 		let matches = extrasItems(item.pid).filter { $0.frame == item.frame && sanitized($0.identifier) == item.identifier }
 		guard matches.count == 1, startIdentity(item.pid).value == item.generation else {
 			throw refusal("Menu bar item [\(index)] no longer resolves to exactly one Accessibility element of its owner.",
@@ -299,6 +455,38 @@ extension Mac {
 				throw StatusItemUnconfirmed(delivery: unknown,
 				                            message: "Menu bar item [\(index)] returned AXError \(error.rawValue) without reliable \(action) dispatch evidence.")
 			}
+		}
+		return delivery
+	}
+
+	/// Clicks a WindowServer item at its window's center, routed to that window, after checking it is still the
+	/// owner's on a routable layer, on screen and visible. Peekaboo's shared-pointer fallback stays off.
+	private static func clickWindowItem(_ item: StatusItemRow, index: Int) throws -> Delivery {
+		let stale = refusal("Menu bar item has no stable PID/window generation route.", hint: "Refresh menu bar items before retrying.")
+		guard let windowID = item.windowID, let generation = item.generation, startIdentity(item.pid).value == generation else { throw stale }
+		let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(windowID)) as? [[String: Any]] ?? []
+		guard let info = list.first, (info[kCGWindowNumber as String] as? NSNumber)?.intValue == windowID,
+		      (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == item.pid,
+		      let raw = info[kCGWindowBounds as String] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary),
+		      bounds == item.frame
+		else { throw stale }
+		let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1
+		let routable = [CGWindowLevelKey.normalWindow, .mainMenuWindow, .statusWindow].map { Int(CGWindowLevelForKey($0)) }
+		guard routable.contains(layer), info[kCGWindowIsOnscreen as String] as? Bool == true,
+		      (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0 > 0
+		else {
+			throw refusal("Menu bar item cannot use the proven background window-routing transport.",
+			              hint: "Use the named Accessibility action path; shared-pointer fallback is disabled.", reason: "operation_unsupported")
+		}
+		let point = CGPoint(x: bounds.midX, y: bounds.midY)
+		guard activeDisplays().contains(where: { $0.bounds.contains(point) }) else {
+			throw refusal("Menu bar item '\(item.title)' is outside the active displays. It may be hidden by a menu bar manager.",
+			              hint: "Refresh menu bar items before retrying.")
+		}
+		var delivery = try routedClick(at: point, kind: .single, window: ClickWindow(pid: item.pid, generation: generation, windowID: windowID, bounds: bounds))
+		delivery.mode = "background"
+		guard delivery.state != .indeterminate else {
+			throw StatusItemUnconfirmed(delivery: delivery, message: "Menu bar item [\(index)]'s routed click was interrupted.")
 		}
 		return delivery
 	}

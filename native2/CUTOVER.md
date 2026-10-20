@@ -20,8 +20,8 @@ They share no socket, state folder or hotkey, and only one lock: Peekaboo's clip
 ### Tools that don't do everything yet
 
 - **desktop_fill_password** fills only inside the dylib, where the app's hook decides. The standalone host refuses.
-- **desktop_menubar_items** has no fallback when MenuBarAgent doesn't draw the menu bar.
-- **desktop_switch_space** is checked only up to its refusals, on a Mac with one Space.
+- **desktop_menubar_items** falls back, as Peekaboo does, to WindowServer's status item windows where MenuBarAgent doesn't draw the menu bar, and clicks such an item through its window. The fallback is unit-tested but not checked live, because MenuBarAgent draws the whole bar on the Mac it was built on.
+- **desktop_switch_space** is checked only up to its refusals, on a Mac with one Space. Switching across several Spaces ships as a known gap.
 
 ### Limits both stacks share
 
