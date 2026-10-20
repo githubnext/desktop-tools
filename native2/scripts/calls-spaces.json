@@ -1,0 +1,11 @@
+[
+	["desktop_switch_space", {}],
+	["desktop_switch_space", { "space_id": 0 }],
+	["desktop_switch_space", { "space_id": -3 }],
+	["desktop_switch_space", { "space_id": 1.5 }],
+	["desktop_switch_space", { "space_id": "1" }],
+	["desktop_switch_space", { "space_id": null }],
+	["desktop_switch_space", { "space_id": 9007199254740992 }],
+	["desktop_switch_space", { "space_id": 987654 }],
+	["desktop_switch_space", { "space_id": 987654, "display": 1 }]
+]

@@ -1,0 +1,21 @@
+[
+	["desktop_wait", {"until": "element_appears", "pid": 67745, "window": 2901, "element": {"role": "AXButton", "title": "Press me"}, "scope": "x"}],
+	["desktop_wait", {"until": "element_appears", "pid": 67745, "window": 2901, "element": {"role": "AXButton", "title": "Press me"}, "scope": {"snapshot": "a", "element": "b", "c": 1}}],
+	["desktop_wait", {"until": "element_appears", "pid": 67745, "window": 2901, "element": {"role": "AXButton", "title": "Press me"}, "scope": {"snapshot": "", "element": "b"}}],
+	["desktop_wait", {"until": "element_appears", "pid": 67745, "window": 2901, "element": {"role": "AXButton", "title": "Press me"}, "scope": {"snapshot": "ps1_00000000000000000000000000000000", "element": "elem_1"}, "timeout_ms": 300}],
+	["desktop_wait", {"until": "element_appears", "pid": 67745, "window": 2901, "element": {"role": "AXButton", "title": "Press me"}, "web_accessibility": "no"}],
+	["desktop_wait", {"until": "element_appears", "pid": 67745, "window": 2901, "element": {"role": "AXButton", "title": "Press me"}, "web_accessibility": false}],
+	["desktop_wait", {"until": "text_equals", "pid": 67745, "window": 2901, "element": {"role": "AXButton", "title": "Press me"}, "text": "Press me", "timeout_ms": 500}],
+	["desktop_wait", {"until": "text_contains", "pid": 67745, "window": 2901, "element": {"role": "AXButton", "title": "Press me"}, "text": "Press", "timeout_ms": 500}],
+	["desktop_wait", {"until": "text_contains", "pid": 67745, "window": 2901, "element": {"role": "AXButton", "title": "Nope"}, "text": "Press", "timeout_ms": 300}],
+	["desktop_wait", {"until": "text_changes", "pid": 67745, "window": 2901, "element": {"role": "AXButton", "title": "Press me"}, "timeout_ms": 600}],
+	["desktop_wait", {"until": "text_equals", "pid": 67745, "window": 2901, "element": {"role": "AXButton", "value": "x"}, "text": "a"}],
+	["desktop_wait", {"until": "text_equals", "pid": 67745, "window": 2901, "element": {"role": "AXScrollBar"}, "text": "a", "timeout_ms": 300}],
+	["desktop_wait", {"pid": 67745, "window": 2901, "timeout_ms": 300, "until": "text_contains", "text": "Press"}],
+	["desktop_wait", {"pid": 67745, "window": 2901, "timeout_ms": 300, "until": "text_equals", "text": "nothing like this"}],
+	["desktop_wait", {"pid": 67745, "window": 2901, "timeout_ms": 300, "until": "text_contains", "text": "x", "web_accessibility": false}],
+	["desktop_wait", {"until": "dialog_gone", "pid": 67745, "window": 2901, "timeout_ms": 2500}],
+	["desktop_wait", {"until": "dialog_appears", "pid": 67745, "window": 2901, "timeout_ms": 2500}],
+	["desktop_wait", {"until": "dialog_gone", "pid": 67745, "window": 999999, "timeout_ms": 2500}],
+	["desktop_wait", {"until": "dialog_appears", "timeout_ms": 300}]
+]

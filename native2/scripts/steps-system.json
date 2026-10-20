@@ -1,0 +1,9 @@
+[
+	["desktop_screen", {}],
+	["desktop_screen", {"ocr": true}],
+	["desktop_screen", {"display": 0, "save_path": "/tmp/dt2-swift-system/screen.png", "overwrite": true}],
+	["desktop_screen", {"save_path": "/tmp/dt2-swift-system/region.png", "overwrite": true, "region": {"x": 100, "y": 50, "width": 400, "height": 300}}],
+	["desktop_screen", {"save_path": "/tmp/dt2-swift-system/outside.png", "overwrite": true, "region": {"x": 1400, "y": 900, "width": 400, "height": 300}}],
+	["desktop_spaces", {}],
+	["desktop_notifications", {}]
+]
