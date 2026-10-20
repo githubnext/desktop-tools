@@ -851,22 +851,25 @@ check(92, "desktop_set_cell writes a focused web grid input and refuses an unfoc
 	);
 });
 
-check(88, "desktop_select selects a phrase in a Safari paragraph, and Command-C copies exactly it", async (s, m) => {
+check(88, "desktop_select selects a phrase in a Safari paragraph, and Edit > Copy in the activated Safari copies exactly it", async (s, m) => {
 	await s.clipboard();
 	const win = await s.web();
 	const { snap, els } = await s.inspect(win);
 	const prose = els.find((e) => /quick brown fox/.test(`${label(e)} ${e.value ?? ""}`)) ?? skip("paragraph text not in the inspection");
 	const result = await m.call("desktop_select", { snapshot: snap, element: prose.id, text: "brown fox jumps" });
 	if (result.outcome !== "completed") return expect(false, evidence(result, "selection"));
-	const fresh = await s.inspect(win);
-	const copy = await m.call("desktop_key", { snapshot: fresh.snap, key: "c", modifiers: ["command"] });
+	// Safari disables Copy in the background; selecting focused the page, so Copy doesn't take the address field.
+	const safari = (await m.call("desktop_apps", { query: "Safari" })).data.apps?.find((a) => a.target?.pid === win.pid)
+		?? skip("Safari not in desktop_apps");
+	await m.call("desktop_activate", { target: safari.target });
+	const copy = await m.call("desktop_menu", { target: safari.target, path: ["Edit", "Copy"] });
 	await sleep(300);
 	const clip = await m.call("desktop_clipboard_read", { format: "text" });
 	return expect(
 		clip.data.text === "brown fox jumps",
-		`${evidence(result, "selection")}; Command-C ${evidence(copy)}; clipboard ${brief(clip.data.text, 60)}`,
+		`${evidence(result, "selection")}; Edit > Copy ${evidence(copy)}; clipboard ${brief(clip.data.text, 60)}`,
 	);
-});
+}, "Brings Safari to the front for the copy.");
 
 check(88, "desktop_select selects a link's text", async (s, m) => {
 	const win = await s.web();

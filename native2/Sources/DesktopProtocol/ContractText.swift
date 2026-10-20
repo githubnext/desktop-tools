@@ -2120,7 +2120,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 	},
 	{
 		"name": "desktop_select",
-		"description": "Select literal text in one element from a fresh desktop_inspect snapshot, or place the caret before or after it (selection). The element is an editable field, web page text such as a paragraph or link, or the text of a PDF page in Preview. Background. Completed when the selection reads back as exactly that text. Missing or ambiguous text is refused; add prefix or suffix, the text immediately around it. To copy, press c with command through desktop_key; Preview copies only while active, so desktop_activate it and use desktop_menu Edit > Copy.",
+		"description": "Select literal text in one element from a fresh desktop_inspect snapshot, or place the caret before or after it (selection). The element is an editable field, web page text such as a paragraph or link, or the text of a PDF page in Preview. Background. Completed when the selection reads back as exactly that text. Missing or ambiguous text is refused; add prefix or suffix, the text immediately around it. To copy a field's selection, press c with command through desktop_key; Safari and Preview copy only while active, so desktop_activate the app and use desktop_menu Edit > Copy.",
 		"inputSchema": {
 			"type": "object",
 			"required": [

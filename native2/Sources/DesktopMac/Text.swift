@@ -446,6 +446,8 @@ extension Mac {
 		}
 		let selection = try resolveSelection(text, prefix: prefix, suffix: suffix, kind: kind, in: span.text)
 		let range = selection.selected
+		// Focus first, since focusing the page can move its selection.
+		_ = markers.focus()
 		if WebTextSelection.matches(range, in: span, markers: markers) {
 			return (Delivery(state: .confirmedNoChange, mechanism: nil, evidence: "verified_no_change", units: nil), selection)
 		}

@@ -17,6 +17,9 @@ protocol WebTextMarkerAccess {
 	func bounds(of range: CFTypeRef) -> (start: CFTypeRef, end: CFTypeRef)?
 	func selectedRange() -> CFTypeRef?
 	func select(_ range: CFTypeRef) -> Bool
+	/// Makes the web area its window's keyboard focus, as a click in the page does, so Copy and keys act on the page
+	/// instead of the address field Safari focuses when it opens a page in the background.
+	func focus() -> Bool
 }
 
 struct WebTextSpan {
@@ -171,6 +174,12 @@ struct AXWebTextMarkers: WebTextMarkerAccess {
 
 	func select(_ range: CFTypeRef) -> Bool {
 		AXUIElementSetAttributeValue(webArea, "AXSelectedTextMarkerRange" as CFString, range) == .success
+	}
+
+	func focus() -> Bool {
+		var value: CFTypeRef?
+		if AXUIElementCopyAttributeValue(webArea, kAXFocusedAttribute as CFString, &value) == .success, value as? Bool == true { return true }
+		return AXUIElementSetAttributeValue(webArea, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success
 	}
 
 	private func copy(_ attribute: String, _ parameter: CFTypeRef) -> CFTypeRef? {
