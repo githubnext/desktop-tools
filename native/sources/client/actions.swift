@@ -484,8 +484,9 @@ func nativeAction(_ client: PeekabooBridgeClient, handshake: PeekabooBridgeHands
 			guard let observed = detection.elements.findById(element) else {
 				throw ActionError("The element ID is not in this snapshot. Inspect the window again.")
 			}
-			// Disabled controls still show tooltips, so only hovering may target one.
-			guard request.op == .hover || observed.knownIsEnabled != false else {
+			// Disabled controls still show tooltips, so hovering may target one. Selecting changes no content, and
+			// read-only text, such as a PDF page in Preview, reports itself disabled.
+			guard [.hover, .select].contains(request.op) || observed.knownIsEnabled != false else {
 				throw ActionError("The observed element is disabled.")
 			}
 			try checkElementRequest(request, observed)

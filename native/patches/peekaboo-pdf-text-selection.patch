@@ -1,0 +1,122 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/TextSelectionRange.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/TextSelectionRange.swift
+index 7a3d1771d..1bf29b134 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/TextSelectionRange.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/TextSelectionRange.swift
+@@ -36,6 +36,16 @@ public struct TextSelectionRange: Codable, Equatable, Sendable {
+         self.init(location: range.location, length: range.length)
+     }
+ 
++    /// Whether a native range says the text has neither a selection nor a caret: read-only text, such as a PDF page in
++    /// Preview, reports location NSNotFound until something is selected.
++    static func isAbsent(nativeValue: CFTypeRef?) -> Bool {
++        guard let nativeValue, CFGetTypeID(nativeValue) == AXValueGetTypeID() else { return false }
++        let value = unsafeDowncast(nativeValue, to: AXValue.self)
++        var range = CFRange()
++        guard AXValueGetType(value) == .cfRange, AXValueGetValue(value, .cfRange, &range) else { return false }
++        return (range.location == NSNotFound || range.location == kCFNotFound) && range.length == 0
++    }
++
+     var nativeRange: CFRange {
+         CFRange(location: self.location, length: self.length)
+     }
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/TextSelectionRequest.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/TextSelectionRequest.swift
+index 3b7f2f22c..d3cc19d98 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/TextSelectionRequest.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/Core/Protocols/TextSelectionRequest.swift
+@@ -94,7 +94,8 @@ public struct TextSelectionResult: Codable, Equatable, Sendable {
+ 
+ struct TextSelectionState: Equatable {
+     let text: String
+-    let range: TextSelectionRange
++    /// nil when the text has neither a selection nor a caret, as on a PDF page in Preview before anything is selected.
++    let range: TextSelectionRange?
+ 
+     static func == (lhs: Self, rhs: Self) -> Bool {
+         lhs.text.utf16.elementsEqual(rhs.text.utf16) && lhs.range == rhs.range
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AXMutationObservation.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AXMutationObservation.swift
+index b835c09db..f360346af 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AXMutationObservation.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/AXMutationObservation.swift
+@@ -190,14 +190,22 @@ enum DetachedAXMutationReader {
+             }
+         case .textSelection:
+             if DetachedExactWindowFocusReader.allowsValueRead(before),
+-               let text = readAttribute(kAXValueAttribute, deadline) as? String,
+-               let range = TextSelectionRange(nativeValue: readAttribute(kAXSelectedTextRangeAttribute, deadline)),
+-               let afterText = readAttribute(kAXValueAttribute, deadline) as? String,
+-               text.utf16.elementsEqual(afterText.utf16),
+-               range.location + range.length <= text.utf16.count
++               let text = readAttribute(kAXValueAttribute, deadline) as? String
+             {
+-                value = .string(text)
+-                selectedTextRange = range
++                let nativeRange = readAttribute(kAXSelectedTextRangeAttribute, deadline)
++                if let afterText = readAttribute(kAXValueAttribute, deadline) as? String,
++                   text.utf16.elementsEqual(afterText.utf16)
++                {
++                    if let range = TextSelectionRange(nativeValue: nativeRange),
++                       range.location + range.length <= text.utf16.count
++                    {
++                        value = .string(text)
++                        selectedTextRange = range
++                    } else if TextSelectionRange.isAbsent(nativeValue: nativeRange) {
++                        // The text is readable but has nothing selected yet, so only the value is reported.
++                        value = .string(text)
++                    }
++                }
+             }
+         }
+ 
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ActionInputDriver.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ActionInputDriver.swift
+index c49854b8e..527b6a01f 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ActionInputDriver.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/ActionInputDriver.swift
+@@ -468,8 +468,9 @@ struct ActionInputDriver: ActionInputDriving {
+                 } catch {
+                     throw unavailable
+                 }
+-                guard case let .string(text)? = sample?.value, let range = sample?.selectedTextRange else { return nil }
+-                return TextSelectionState(text: text, range: range)
++                // A text sample without a range has nothing selected yet.
++                guard case let .string(text)? = sample?.value else { return nil }
++                return TextSelectionState(text: text, range: sample?.selectedTextRange)
+             }
+             guard let text = element.stringValue, let range = element.textSelectionRange,
+                   range.location + range.length <= text.utf16.count
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/AXMutationObservationReaderTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/AXMutationObservationReaderTests.swift
+index 07f0ccfc7..f4f0afc13 100644
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/AXMutationObservationReaderTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/AXMutationObservationReaderTests.swift
+@@ -78,7 +78,9 @@ struct AXMutationObservationReaderTests {
+         }
+     }
+ 
+-    @Test(arguments: ["stable", "changed", "canonical", "missingBefore", "missingAfter", "missingRange", "outOfBounds"])
++    @Test(arguments: [
++        "stable", "changed", "canonical", "missingBefore", "missingAfter", "missingRange", "outOfBounds", "absent",
++    ])
+     func `focused value completion requires one coherent UTF16 text and selection sample`(change: String) {
+         let reference = RetainedFocusElement(element: AXUIElementCreateApplication(4242))
+         var textReads = 0
+@@ -103,7 +105,10 @@ struct AXMutationObservationReaderTests {
+                 default:
+                     #expect(name == kAXSelectedTextRangeAttribute)
+                     guard change != "missingRange" else { return nil }
+-                    var range = CFRange(location: change == "outOfBounds" ? 2 : 1, length: 0)
++                    // Read-only text with nothing selected, such as a PDF page in Preview, reports NSNotFound.
++                    var range = CFRange(
++                        location: change == "absent" ? NSNotFound : change == "outOfBounds" ? 2 : 1,
++                        length: 0)
+                     return AXValueCreate(.cfRange, &range)
+                 }
+             })
+@@ -112,6 +117,9 @@ struct AXMutationObservationReaderTests {
+         if change == "stable" {
+             #expect(observed?.value == .string("\u{00E9}"))
+             #expect(observed?.selectedTextRange == TextSelectionRange(location: 1, length: 0))
++        } else if change == "absent" {
++            #expect(observed?.value == .string("\u{00E9}"))
++            #expect(observed?.selectedTextRange == nil)
+         } else {
+             #expect(observed?.value == nil)
+             #expect(observed?.selectedTextRange == nil)
