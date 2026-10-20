@@ -91,8 +91,30 @@ final class AgentWindow {
 			let shared = Self.flipped(screen.frame).intersection(bounds)
 			return shared.isNull ? 0 : shared.width * shared.height
 		}
-		overlay.follow(target, frame: Self.flipped(bounds.insetBy(dx: -Self.margin, dy: -Self.margin)),
-			screen: screen, level: info[kCGWindowLayer as String] as? Int ?? 0)
+		let frame = bounds.insetBy(dx: -Self.margin, dy: -Self.margin)
+		let covers = Self.group(above: target, owner: info[kCGWindowOwnerPID as String] as? Int)
+			.map { $0.offsetBy(dx: -frame.minX, dy: -frame.minY) }
+		overlay.follow(target, frame: Self.flipped(frame), screen: screen,
+			level: info[kCGWindowLayer as String] as? Int ?? 0, covers: covers)
+	}
+
+	/// The bounds of the window's own sheets and panels stacked directly above it, such as an Open panel on a
+	/// Save sheet. The window server keeps them with the window as one group, so the outline can't order between
+	/// them and is cut away under them instead (#149).
+	private static func group(above window: CGWindowID, owner: Int?) -> [CGRect] {
+		guard let owner, let above = CGWindowListCopyWindowInfo([.optionOnScreenAboveWindow], window) as? [[String: Any]]
+		else { return [] }
+		let own = Int(getpid())
+		var covers: [CGRect] = []
+		// Nearest first, past our own outline and cursor, up to the first other app's window.
+		for info in above.reversed() {
+			let pid = info[kCGWindowOwnerPID as String] as? Int
+			if pid == own { continue }
+			guard pid == owner else { break }
+			if let frame = info[kCGWindowBounds as String] as? NSDictionary,
+				let bounds = CGRect(dictionaryRepresentation: frame) { covers.append(bounds) }
+		}
+		return covers
 	}
 
 	/// Converts between Cocoa screen frames (bottom-left origin) and global Core Graphics ones; the flip is its own inverse.
@@ -119,6 +141,8 @@ final class AgentWindow {
 		private var shown = false
 		/// The Cocoa frame of the display the window is on.
 		private var screen = CGRect.null
+		/// The window's own sheets and panels above it, in the panel's flipped coordinates.
+		private var covers: [CGRect] = []
 
 		var label: String {
 			get { text.string as? String ?? "" }
@@ -186,10 +210,12 @@ final class AgentWindow {
 			root.add(fade, forKey: "fade")
 		}
 
-		/// Places the panel over `window`'s frame, plus the margin, directly above it in the window order.
-		func follow(_ window: CGWindowID, frame: CGRect, screen: CGRect, level: Int) {
-			if panel.frame != frame || self.screen != screen {
+		/// Places the panel over `window`'s frame, plus the margin, directly above it in the window order, and cuts
+		/// it away under `covers`.
+		func follow(_ window: CGWindowID, frame: CGRect, screen: CGRect, level: Int, covers: [CGRect]) {
+			if panel.frame != frame || self.screen != screen || self.covers != covers {
 				self.screen = screen
+				self.covers = covers
 				panel.setFrame(frame, display: false)
 				layout()
 			}
@@ -248,22 +274,36 @@ final class AgentWindow {
 			pill.frame = CGRect(x: window.midX - width / 2, y: top, width: width, height: 18)
 			text.frame = pill.bounds.insetBy(dx: 8, dy: 2)
 			text.contentsScale = panel.backingScaleFactor
+			if covers.isEmpty {
+				root.mask = nil
+			} else {
+				let cut = covers.reduce(CGPath(rect: .null, transform: nil)) { $0.union(CGPath(rect: $1, transform: nil)) }
+				let mask = root.mask as? CAShapeLayer ?? CAShapeLayer()
+				mask.frame = root.bounds
+				mask.path = CGPath(rect: root.bounds, transform: nil).subtracting(cut)
+				root.mask = mask
+			}
 			CATransaction.commit()
 		}
 	}
 }
 
-/// Whether `panel` is above `window` with only this process's windows between them, so no other app's window
-/// can sit between. The agent cursor and the window outline both order themselves above the same window.
+/// Whether `panel` is above `window` with only this process's windows, or the window's own sheets and panels,
+/// between them, so no other app's window can sit between. The agent cursor and the window outline both order
+/// themselves above the same window. The window server keeps a window's sheets with it, so ordering above the
+/// window puts the panel above them too, and reordering can't do better.
 @MainActor
 func isOrderedAbove(_ panel: Int, _ window: CGWindowID) -> Bool {
 	guard let above = CGWindowListCopyWindowInfo([.optionOnScreenAboveWindow], window) as? [[String: Any]]
 	else { return false }
+	let owner = (CGWindowListCopyWindowInfo([.optionIncludingWindow], window) as? [[String: Any]])?
+		.first?[kCGWindowOwnerPID as String] as? Int
 	let own = Int(getpid())
 	// Nearest first: the list runs from the front down to just above `window`.
 	for info in above.reversed() {
 		if info[kCGWindowNumber as String] as? Int == panel { return true }
-		guard info[kCGWindowOwnerPID as String] as? Int == own else { return false }
+		let pid = info[kCGWindowOwnerPID as String] as? Int
+		guard pid == own || pid == owner else { return false }
 	}
 	return false
 }

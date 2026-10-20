@@ -232,17 +232,32 @@ private func candidates(pid: pid_t, generation: UInt64, windowID: Int?, windows:
 		var found: [AXUIElement] = []
 		var legacyFound: [AXUIElement] = []
 		var visited: Set<Node> = []
+		var parents: [Node: AXUIElement] = [:]
 		var stack = [axWindow]
 		while let element = stack.popLast() {
 			try budget.check()
 			guard visited.insert(Node(element: element)).inserted else { continue }
 			let (evidence, children) = try hierarchyNode(element)
 			if evidence.isStructural { found.append(element) } else if evidence.isLegacyDialog { legacyFound.append(element) }
+			for child in children where parents[Node(element: child)] == nil && !CFEqual(child, axWindow) {
+				parents[Node(element: child)] = element
+			}
 			stack.append(contentsOf: children.reversed())
 		}
-		// A window that is itself a dialog while hosting a sheet: the sheet is the active dialog.
-		let descendants = found.filter { !CFEqual($0, axWindow) }
-		for dialog in descendants.isEmpty ? found : descendants where AX.pid(dialog) == pid {
+		// A window can itself be a dialog while hosting a sheet, and a sheet can host another, such as an Open panel
+		// opened from a sheet. Each blocks the dialog enclosing it, so only the innermost are active; siblings stay
+		// distinct candidates (Peekaboo's DialogTraversal, #148).
+		let members = Set(found.map { Node(element: $0) })
+		var enclosing: Set<Node> = []
+		for dialog in found {
+			var seen: Set<Node> = [Node(element: dialog)]
+			var next = parents[Node(element: dialog)]
+			while let current = next, seen.insert(Node(element: current)).inserted {
+				if members.contains(Node(element: current)) { enclosing.insert(Node(element: current)) }
+				next = parents[Node(element: current)]
+			}
+		}
+		for dialog in found where !enclosing.contains(Node(element: dialog)) && AX.pid(dialog) == pid {
 			structural.append(Candidate(window: window, axWindow: axWindow, dialog: dialog))
 		}
 		for dialog in legacyFound where AX.pid(dialog) == pid { legacy.append(Candidate(window: window, axWindow: axWindow, dialog: dialog)) }
