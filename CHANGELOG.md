@@ -4,6 +4,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-19
+
 ### Fixed
 
 - The window outline no longer draws over a sheet or Open panel that opens on top of its window, such as an Open panel on System Settings' Search Privacy sheet. The window server keeps a window's sheets with it, so the outline is cut away under them, and it follows them as they open and close. ([#149](https://github.com/githubnext/desktop-tools/issues/149))
@@ -251,7 +253,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The first release: a signed, notarized Desktop Tools menu bar app, and the desktop tools served over MCP. ([#28](https://github.com/githubnext/desktop-tools/pull/28), [#29](https://github.com/githubnext/desktop-tools/pull/29), [#12](https://github.com/githubnext/desktop-tools/pull/12))
 
-[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/githubnext/desktop-tools/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/githubnext/desktop-tools/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/githubnext/desktop-tools/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/githubnext/desktop-tools/compare/v0.14.0...v0.14.1
