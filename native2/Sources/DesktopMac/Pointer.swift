@@ -94,7 +94,7 @@ public struct Refusal: Error {
 		.object([
 			("state", "refused"), ("effect", "refused"), ("route", "local"), ("evidence", "request_refused"),
 			("dispatch_state", "none"), ("retry_safety", "safe"),
-			("escalation", JSON(["operation_unsupported", "invalid_request"].contains(reason) ? "correct_request" : "refresh_target")),
+			("escalation", JSON(["operation_unsupported", "invalid_request", "foreground_consent"].contains(reason) ? "correct_request" : reason == "permission_denied" ? "grant_permission" : "refresh_target")),
 			("refusal_reason", JSON(reason)),
 		])
 	}

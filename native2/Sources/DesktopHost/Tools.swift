@@ -5,7 +5,7 @@ import Foundation
 
 /// Runs one MCP tool call in the host, which is the process macOS's grants attach to.
 public enum Tools {
-	static let actionTools: Set = ["desktop_click", "desktop_key", "desktop_type", "desktop_scroll", "desktop_drag", "desktop_hover"]
+	static let actionTools: Set = ["desktop_click", "desktop_key", "desktop_type", "desktop_scroll", "desktop_drag", "desktop_hover", "desktop_set_value", "desktop_element_action", "desktop_select", "desktop_insert", "desktop_fill_password", "desktop_clipboard_write"]
 	static let expectTools: Set = ["desktop_click", "desktop_key", "desktop_system_key", "desktop_drag", "desktop_insert"]
 
 	/// `client` is the connected MCP binary's pid, which names the caller the user approves.
@@ -38,6 +38,15 @@ public enum Tools {
 			case "desktop_hover": return try await hover(arguments)
 			case "desktop_system_key": return try await systemKey(arguments)
 			case "desktop_input_source": return try await inputSource(arguments)
+			case "desktop_read": return try await readText(arguments)
+			case "desktop_set_value": return try await setValue(arguments)
+			case "desktop_set_cell": return try await setCell(arguments)
+			case "desktop_element_action": return try await elementAction(arguments)
+			case "desktop_select": return try await select(arguments)
+			case "desktop_insert": return try await insert(arguments)
+			case "desktop_fill_password": return try await fillPassword(arguments)
+			case "desktop_clipboard_read": return try await clipboardRead(arguments)
+			case "desktop_clipboard_write": return try await clipboardWrite(arguments)
 			default:
 				return ToolResult(text: "\(name) isn't in the Swift spike yet.", isError: true)
 			}
