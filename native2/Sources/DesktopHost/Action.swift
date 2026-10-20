@@ -6,9 +6,10 @@ import Foundation
 extension Tools {
 	/// One input action on a snapshot, with the checks, refusal shapes and follow-up observation every action
 	/// shares, as the native client and the Node server give them. `deliver` runs on its own thread after the
-	/// snapshot is spent; a Refusal it throws sends nothing and returns the snapshot.
+	/// snapshot is spent; a Refusal it throws sends nothing and returns the snapshot. Without `observe`, the result is
+	/// the native client's own action, as composed tools such as notifications read it: no availability, no observation.
 	static func act(
-		_ name: String, snapshotID: String, element id: String?, allowsDisabled: Bool = false, early: Refusal? = nil,
+		_ name: String, snapshotID: String, element id: String?, allowsDisabled: Bool = false, early: Refusal? = nil, observe: Bool = true,
 		precheck: (Snapshot, Element?) throws -> Void = { _, _ in },
 		deliver: @escaping @Sendable (Snapshot, Element?) throws -> Delivery
 	) async -> ToolResult {
@@ -22,7 +23,7 @@ extension Tools {
 			if let native { action.append(("native_outcome", native)) }
 			if let receipt { action.append(("target_receipt", receipt)) }
 			// A refusal from a window that is no longer available says why, as the Node server's explainRefusal does.
-			if let receipt, let pid = receipt["pid"]?.int.flatMap(Int32.init(exactly:)), let window = receipt["window_id"]?.int {
+			if observe, let receipt, let pid = receipt["pid"]?.int.flatMap(Int32.init(exactly:)), let window = receipt["window_id"]?.int {
 				let availability = await targetAvailability(pid: pid, windowID: window, message: message)
 				if availability["availability"]?["state"]?.string != "available" {
 					action.append(("target_availability", availability["availability"] ?? .null))
@@ -34,7 +35,12 @@ extension Tools {
 		// The native client refuses some requests before it looks the snapshot up.
 		if let early { return await refused(early.code, early.message, hint: early.hint, cause: early.cause, fresh: false) }
 		guard let observed = await Snapshots.shared.get(snapshotID) else {
-			return await refused("invalidRequest", "Invalid producer-bound snapshot reference", fresh: true)
+			// The native client asks the host whether it owns a well-formed reference, and refuses any other first.
+			let wellFormed = snapshotID.utf8.count == 36 && snapshotID.hasPrefix("ps1_")
+				&& snapshotID.utf8.dropFirst(4).allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+			return wellFormed
+				? await refused("DESKTOP_ACTION_FAILED", "This observation no longer belongs to the running desktop. Inspect the window again.", fresh: true)
+				: await refused("invalidRequest", "Invalid producer-bound snapshot reference", fresh: true)
 		}
 		receipt = .object([
 			("pid", JSON(observed.pid)), ("window_id", JSON(observed.windowID)),
@@ -84,8 +90,8 @@ extension Tools {
 		action[0] = ("outcome", JSON(delivery.outcome))
 		action += delivery.fields
 		action += [("native_outcome", delivery.json), ("requires_fresh_observation", JSON(dispatched)), ("target_receipt", receipt!)]
-		guard delivery.outcome == "completed" else {
-			return ToolResult(text: JSON.object([("action", .object(action))]).text, outcome: delivery.outcome, isError: true)
+		guard delivery.outcome == "completed", observe else {
+			return ToolResult(text: JSON.object([("action", .object(action))]).text, outcome: delivery.outcome, isError: delivery.outcome != "completed")
 		}
 		// Observation is separate from delivery: its failure must not turn completed input into a retry.
 		do {

@@ -208,6 +208,8 @@ private struct Walk {
 	var tree = ElementTree()
 	var visited: [AXUIElement] = []
 	var columnHeaders: [AXUIElement] = []
+	/// Only Notification Center's custom action names are listed; elsewhere they are arbitrary app text.
+	var listsCustomActions = false
 
 	func timeout() -> Float? {
 		let remaining = ContinuousClock.now.duration(to: deadline)
@@ -309,6 +311,7 @@ private struct Walk {
 		attributes["isValueSettable"] = settable.map { String($0) }
 		attributes["isFocused"] = descriptor.isFocused.map { String($0) }
 		attributes["actions"] = standardActions(actions)
+		if listsCustomActions { attributes["customActions"] = CustomActions.attribute(actions) }
 		if role == "axtable" {
 			// A web table names its header cells here; their role description no longer says so on macOS 27.
 			if let headers = AX.value(element, "AXColumnHeaderUIElements") as? [AXUIElement] {
@@ -364,6 +367,7 @@ extension Mac {
 			throw ToolError("internalError: Exact window \(windowID) returned no usable Accessibility elements. Warning: AX tree incomplete at incomplete accessibility read. Retry once after a short wait.")
 		}
 		var walk = Walk(deadline: deadline, budget: budget)
+		walk.listsCustomActions = CustomActions.isNotificationCenter(pid)
 		walk.tree.windowTitle = AX.string(window, kAXTitleAttribute)
 		walk.process(window, depth: 0)
 		if walk.tree.elements.isEmpty {

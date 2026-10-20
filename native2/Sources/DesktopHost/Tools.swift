@@ -58,6 +58,10 @@ public enum Tools {
 			case "desktop_menubar_items": return try await menubarItems(arguments)
 			case "desktop_menubar_click": return try await menubarClick(arguments)
 			case "desktop_dock": return try await dock(arguments)
+			case "desktop_screen": return try await screen(arguments)
+			case "desktop_spaces": return try await spaces(arguments)
+			case "desktop_notifications": return try await notifications(arguments)
+			case "desktop_notification_action": return await notificationAction(arguments)
 			default:
 				return ToolResult(text: "\(name) isn't in the Swift spike yet.", isError: true)
 			}

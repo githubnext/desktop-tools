@@ -200,7 +200,7 @@ private func rows(_ extras: [Extra]) -> [StatusItemRow] {
 }
 
 /// A window on screen, as the menu bar click compares before and after.
-public struct ScreenWindow: Sendable {
+public struct OnScreenWindow: Sendable {
 	public let pid: pid_t
 	public let id: Int
 	public let appName: String?
@@ -233,7 +233,7 @@ extension Mac {
 	}
 
 	/// Windows on screen of other processes, front to back.
-	public static func onScreenWindows() -> [ScreenWindow] {
+	public static func onScreenWindows() -> [OnScreenWindow] {
 		let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
 		let own = getpid()
 		return list.compactMap { info in
@@ -244,7 +244,7 @@ extension Mac {
 			      let raw = info[kCGWindowBounds as String] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary),
 			      bounds.width >= 8, bounds.height >= 8
 			else { return nil }
-			return ScreenWindow(pid: pid, id: id, appName: info[kCGWindowOwnerName as String] as? String, bounds: bounds, layer: layer)
+			return OnScreenWindow(pid: pid, id: id, appName: info[kCGWindowOwnerName as String] as? String, bounds: bounds, layer: layer)
 		}
 	}
 

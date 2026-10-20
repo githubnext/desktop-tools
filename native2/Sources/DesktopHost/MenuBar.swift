@@ -127,7 +127,7 @@ extension Tools {
 
 	/// The windows that appeared after the click and a capture of their area. Never sends input.
 	private static func observeOpened(before: Set<Int>) async -> (JSON, CGImage?) {
-		var found: [ScreenWindow] = []
+		var found: [OnScreenWindow] = []
 		// Menus and popovers animate in; wait for new windows, then let them settle.
 		for _ in 0 ..< 8 {
 			try? await Task.sleep(for: .milliseconds(125))
