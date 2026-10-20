@@ -10,7 +10,7 @@ import { type DesktopRequest, isDesktopAction } from "./protocol.js";
 import { type DesktopTool, desktopRequest, desktopToolRules, desktopTools } from "./tools.js";
 
 const { values } = parseArgs({
-	options: { client: { type: "string" }, socket: { type: "string" }, name: { type: "string" } },
+	options: { client: { type: "string" }, socket: { type: "string" }, name: { type: "string" }, wire: { type: "string" } },
 	strict: true,
 });
 // Desktop Tools.app links its client and serves its socket here; pass all three to use another host app.
@@ -20,7 +20,8 @@ const {
 	socket = join(state, "desktop.sock"),
 	name: host = "Desktop Tools",
 } = values;
-const config: DesktopConfig = { client, socket, name: host };
+if (values.wire !== undefined && values.wire !== "1" && values.wire !== "2") throw new Error("Choose --wire 1 or 2.");
+const config: DesktopConfig = { client, socket, name: host, wire: values.wire === "2" ? 2 : 1 };
 const desktop = createDesktop(config);
 const { version } = JSON.parse(
 	readFileSync(new URL("../package.json", import.meta.url), "utf8"),

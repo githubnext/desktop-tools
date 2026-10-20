@@ -6,7 +6,8 @@ native2 is merged beside the shipped stack, not in place of it. This page lists 
 
 | | Shipped | native2 |
 |---|---|---|
-| MCP server | `dist/mcp.js` (Node), set up through `npx` | `desktop-tools-mcp` (Swift, stdio) |
+| MCP server | `dist/mcp.js` (Node), set up through `npx` | `desktop-tools-mcp` (Swift, stdio), or `dist/mcp.js --wire 2` |
+| Embedders | `createDesktop` | `createDesktop({ wire: 2 })`, with native2's `desktop-tools-client` |
 | Per call | Node validates, then runs `desktop-tools-client` once per call | one long-lived socket to the host |
 | Host | `Desktop Tools.app`, loading `libDesktopTools.dylib` (Peekaboo's Bridge) | `desktop-tools-host` from a terminal, or native2's `libDesktopTools.dylib` |
 | Socket and state | `~/.local/state/desktop-tools` | `~/.local/state/desktop-tools2`, or `$DESKTOP_TOOLS2_STATE` |
@@ -26,8 +27,6 @@ They share no socket, state folder, lock or hotkey. native2 takes none of Peekab
 
 ### Runtime dylib
 
-- It has no socket lease.
-- `desktop_tools_stop` doesn't drain calls in flight.
 - It has been run only unsigned. Nothing has exercised the signed peer check (same team, expected identifier, CDHash read before and after) or the app's approval prompt end to end.
 
 ### Not yet checked live
@@ -49,7 +48,7 @@ A model shouldn't care about any of these, but they make Node's tests and the pa
 
 ### Keeping the two in step
 
-- Nothing in CI builds native2, runs its tests, or runs `node scripts/contract.mjs --check`. A change to a tool in `src/` or `native/` that isn't ported will go unnoticed until the next parity run.
+- CI builds native2, runs its tests, and runs `node scripts/contract.mjs --check`, so a tool whose description or schema changes in `src/` fails until native2's contract is regenerated. A change in behaviour that isn't ported still shows up only in the next parity run.
 - `ContractText.swift` is compiled from the Node server's instructions and tools/list, so Node stays the source of truth until the switch. The exception is text native2 owns, written in `scripts/contract.mjs` over Node's: desktop_launch and desktop_open's descriptions and `activate`, and the instructions' sentence on working in the background (#162). The shipped stack takes no fixes before the cutover, so these change in native2 only. The script stops if the Node text they replace changes.
 
 ### What must survive (ace)
@@ -61,19 +60,19 @@ A model shouldn't care about any of these, but they make Node's tests and the pa
 - `@githubnext/desktop-tools/protocol` and `/tools`, in `packages/channel/src/desktop.ts`;
 - `desktop-tools-client`, which `apps/desktop/scripts/helper.ts` copies as `ace-desktop-client`.
 
-native2's dylib exports the same 17 C functions as `native/`. The wire behind them is different, though, so today's `desktop-tools-client` and `createDesktop` can't talk to it. This is the main blocker. Dropping native2's dylib into the app breaks both the Node MCP server and ace.
+native2's dylib exports the same 17 C functions as `native/`, but the wire behind them is different, so `native/`'s `desktop-tools-client` can't talk to it. `createDesktop({ wire: 2 })` with native2's own `desktop-tools-client` can: it forwards each request whole as one tool call (`desktop_` plus its op). Through the same host, `dist/mcp.js --wire 2` matches native2's MCP server on every calls file. ace switches by changing that config and the client it copies.
 
 ## The road
 
 Each step ships on its own and can be reverted.
 
-1. **Keep it from rotting.** Add a CI job that builds native2, runs CoreTests and runs `contract.mjs --check`. Port each tool change to native2 in the same PR, with its calls entries.
+1. **Keep it from rotting.** Done: CI builds and tests native2 and checks the contract. Port each tool change to native2 in the same PR, with its calls entries.
 2. **Close the tool gaps** above. Run each fix through its calls and steps files.
 3. **Finish the live checks** with the user's go-ahead, since they take over the pointer and the front app: steps-pointer, steps-manage, the Dock step and the full `live-check --server`, then the bench on real apps.
-4. **Harden the runtime:** add the socket lease, drain calls in flight on stop, then sign the dylib, client and MCP binary with the team identity. Run the approval prompt, pause and SELF_TARGET checks through the app.
-5. **Bridge the wire.** Build a native2 `desktop-tools-client` with today's contract: `<client> <socket> <args…>`, input on stdin, JSON out, the same refusal codes and exit behaviour. It speaks native2's wire instead. `createDesktop`, `/protocol`, `/tools`, `dist/mcp.js` and ace then keep working unchanged against a native2 host. A `createDesktop` that speaks the wire directly could replace it later, behind the same API.
-6. **Dogfood in the app.** Add a build switch so `npm run dev-app` bundles native2's dylib and client instead of `native/`'s, and run the dev app daily.
+4. **Harden the runtime.** The socket lease (`<socket>.lock`, as Peekaboo's) and draining calls on stop are in. Still to do: sign the dylib, client and MCP binary with the team identity. Run the approval prompt, pause and SELF_TARGET checks through the app.
+5. **Bridge the wire.** Done: native2's one-shot `desktop-tools-client` (`<client> <socket> <tool> [--verbose]`, arguments on stdin, one JSON line out, opening its containing app in the background when no host serves) and `createDesktop({ wire: 2 })`. `createDesktop`, `/protocol`, `/tools`, `dist/mcp.js` and ace keep working against a native2 host by changing one option.
+6. **Dogfood in the app.** Add a build switch so `npm run dev-app` bundles native2's dylib and client instead of `native/`'s, and run the dev app daily with the MCP server on `--wire 2`.
 7. **Ship the Swift MCP server.** Bundle and sign `desktop-tools-mcp` in the app, and point the README's setup at it. Keep `dist/mcp.js` as a shim that runs the bundled binary, so existing `npx` configs keep working. Release it, and cut a release that can switch back.
 8. **Delete, after agreeing it with ace:** `native/vendor/Peekaboo`, `native/sources/client` and runtime, and the tool logic in `src/client.ts`, leaving a thin wrapper for the API ace imports. Make native2 the contract's source of truth, so `ContractText` stops being generated from Node. This step is the user's decision.
 
-Steps 1 to 4 can run in parallel. Step 5 is the hinge: once it lands, steps 6 to 8 don't break anyone.
+Steps 2 to 4 can run in parallel. Step 5 was the hinge: with it in, steps 6 to 8 don't break anyone.

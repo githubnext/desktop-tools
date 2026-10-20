@@ -12,6 +12,7 @@ A Swift MCP server and host with no Peekaboo and no Node. It runs beside the shi
 | `DesktopHost` | The tools, the snapshot store, the socket server, admission (`Admission.swift`: approved callers, pause, own-UI guard) and the runtime hooks |
 | `desktop-tools-host` | The host, run from a terminal for now; it holds the macOS grants |
 | `desktop-tools-mcp` | The stdio MCP server, which forwards each call to the host |
+| `desktop-tools-client` | One tool call per run, for `createDesktop({ wire: 2 })` and `dist/mcp.js --wire 2` (docs/node.md) |
 | `DesktopTools` | `libDesktopTools.dylib`, the menu bar app's embedding runtime with native/'s C ABI (docs/embed.md): it serves the host's `Server` and draws the agent cursor, window outline and activity list through `DesktopHost/Hooks.swift` |
 
 The host serves `~/.local/state/desktop-tools2/desktop.sock`, or `$DESKTOP_TOOLS2_STATE/desktop.sock`, so it runs beside the installed Desktop Tools. It accepts a connection only from the same user, and, when the host is signed, only from an MCP binary signed by the same team with the expected identifier (`DesktopMac/Peer.swift`: the socket's audit token, checked with Security and a CDHash read before and after).
@@ -90,7 +91,7 @@ Known gaps:
 - desktop_set_cell can't edit Finder's cells (CELL_NOT_EDITABLE), and the clipboard isn't reserved across calls.
 - desktop_dialog_answer doesn't type a path into an Open or Save panel, and desktop_menubar_items has no fallback when MenuBarAgent doesn't draw the menu bar.
 - desktop_switch_space is checked only up to its refusals, on a Mac with one Space.
-- The runtime dylib has no socket lease, its stop doesn't drain calls in flight, and it has been run only unsigned.
+- The runtime dylib has been run only unsigned.
 
 ## Speed
 

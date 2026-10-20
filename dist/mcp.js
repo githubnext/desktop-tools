@@ -8,13 +8,15 @@ import { createDesktop } from "./client.js";
 import { isDesktopAction } from "./protocol.js";
 import { desktopRequest, desktopToolRules, desktopTools } from "./tools.js";
 const { values } = parseArgs({
-    options: { client: { type: "string" }, socket: { type: "string" }, name: { type: "string" } },
+    options: { client: { type: "string" }, socket: { type: "string" }, name: { type: "string" }, wire: { type: "string" } },
     strict: true,
 });
 // Desktop Tools.app links its client and serves its socket here; pass all three to use another host app.
 const state = process.env.DESKTOP_TOOLS_STATE || join(homedir(), ".local", "state", "desktop-tools");
 const { client = join(state, "desktop-client"), socket = join(state, "desktop.sock"), name: host = "Desktop Tools", } = values;
-const config = { client, socket, name: host };
+if (values.wire !== undefined && values.wire !== "1" && values.wire !== "2")
+    throw new Error("Choose --wire 1 or 2.");
+const config = { client, socket, name: host, wire: values.wire === "2" ? 2 : 1 };
 const desktop = createDesktop(config);
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 // Newest first; an unsupported client version gets the newest, as the MCP lifecycle requires.

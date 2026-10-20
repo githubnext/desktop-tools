@@ -9,6 +9,8 @@ let package = Package(
 	products: [
 		.executable(name: "desktop-tools-host", targets: ["desktop-tools-host"]),
 		.executable(name: "desktop-tools-mcp", targets: ["desktop-tools-mcp"]),
+		// One call per run, for createDesktop's wire 2 and embedders that spawn a client per request.
+		.executable(name: "desktop-tools-client", targets: ["desktop-tools-client"]),
 		// The embedding runtime the menu bar app loads, with native/'s C ABI (docs/embed.md).
 		.library(name: "DesktopTools", type: .dynamic, targets: ["DesktopTools"]),
 	],
@@ -20,6 +22,7 @@ let package = Package(
 		.executableTarget(name: "desktop-tools-host", dependencies: ["DesktopHost"]),
 		.target(name: "DesktopTools", dependencies: ["DesktopProtocol", "DesktopCore", "DesktopMac", "DesktopHost"]),
 		.executableTarget(name: "desktop-tools-mcp", dependencies: ["DesktopProtocol"]),
+		.executableTarget(name: "desktop-tools-client", dependencies: ["DesktopProtocol"]),
 		.testTarget(name: "CoreTests", dependencies: ["DesktopCore", "DesktopProtocol"]),
 		.testTarget(name: "RuntimeTests", dependencies: ["DesktopTools", "DesktopHost", "DesktopProtocol"]),
 	],
