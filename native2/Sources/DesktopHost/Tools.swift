@@ -8,7 +8,9 @@ public enum Tools {
 	static let actionTools: Set = ["desktop_click", "desktop_key", "desktop_type", "desktop_scroll", "desktop_drag", "desktop_hover"]
 	static let expectTools: Set = ["desktop_click", "desktop_key", "desktop_system_key", "desktop_drag", "desktop_insert"]
 
-	public static func call(_ name: String, arguments: JSON) async -> ToolResult {
+	/// `client` is the connected MCP binary's pid, which names the caller the user approves.
+	public static func call(_ name: String, arguments: JSON, client: pid_t? = nil) async -> ToolResult {
+		if let refusal = await admission(name, arguments: arguments, client: client) { return refused(name, refusal) }
 		// Node checks expect before the action's own arguments.
 		if expectTools.contains(name), arguments["expect"] != nil {
 			do {

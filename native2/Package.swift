@@ -13,7 +13,7 @@ let package = Package(
 	targets: [
 		.target(name: "DesktopProtocol", resources: [.copy("contract")]),
 		.target(name: "DesktopCore", dependencies: ["DesktopProtocol"]),
-		.target(name: "DesktopMac", dependencies: ["DesktopProtocol"]),
+		.target(name: "DesktopMac", dependencies: ["DesktopProtocol"], linkerSettings: [.linkedLibrary("bsm")]),
 		.target(name: "DesktopHost", dependencies: ["DesktopProtocol", "DesktopCore", "DesktopMac"]),
 		.executableTarget(name: "desktop-tools-host", dependencies: ["DesktopHost"]),
 		.executableTarget(name: "desktop-tools-mcp", dependencies: ["DesktopProtocol"]),

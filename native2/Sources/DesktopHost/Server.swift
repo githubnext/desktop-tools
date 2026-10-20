@@ -1,4 +1,5 @@
 import DesktopCore
+import DesktopMac
 import DesktopProtocol
 import Foundation
 
@@ -7,7 +8,13 @@ public final class Server: @unchecked Sendable {
 	public let path: String
 	private var listener: Int32 = -1
 
-	public init(path: String) { self.path = path }
+	/// The signature a client must carry; nil serves any process of this user, as an unsigned dev host must.
+	public let client: ClientRequirement?
+
+	public init(path: String, client: ClientRequirement? = nil) {
+		self.path = path
+		self.client = client
+	}
 
 	public func start() throws {
 		try FileManager.default.createDirectory(
@@ -36,15 +43,13 @@ public final class Server: @unchecked Sendable {
 				if errno == EINTR { continue }
 				return
 			}
-			// TODO(#143): check the peer's signing identity as DesktopToolsCallers does; same-user only for now.
-			var uid: uid_t = 0
-			var gid: gid_t = 0
-			guard getpeereid(fd, &uid, &gid) == 0, uid == getuid() else {
+			// Only the exact signed client of this user, checked by the audit token so a reused pid can't pass.
+			guard let peer = try? Peer(socket: fd), peer.userID == geteuid(), client.map(peer.satisfies) ?? true else {
 				close(fd)
 				continue
 			}
 			let connection = Connection(fd: fd)
-			Thread.detachNewThread { Session(connection).serve() }
+			Thread.detachNewThread { Session(connection, client: peer.pid).serve() }
 		}
 	}
 }
@@ -52,10 +57,14 @@ public final class Server: @unchecked Sendable {
 /// One MCP binary's connection: requests run as tasks, and a cancel frame cancels its task.
 private final class Session: @unchecked Sendable {
 	let connection: Connection
+	let client: pid_t
 	private let lock = NSLock()
 	private var running: [Int: Task<Void, Never>] = [:]
 
-	init(_ connection: Connection) { self.connection = connection }
+	init(_ connection: Connection, client: pid_t) {
+		self.connection = connection
+		self.client = client
+	}
 
 	func serve() {
 		do {
@@ -69,7 +78,7 @@ private final class Session: @unchecked Sendable {
 				}
 				guard let id = frame["id"]?.int else { continue }
 				let task = Task { [self] in
-					let result = await Tools.call(frame["tool"]?.string ?? "", arguments: frame["arguments"] ?? .object([]))
+					let result = await Tools.call(frame["tool"]?.string ?? "", arguments: frame["arguments"] ?? .object([]), client: client)
 					lock.withLock { _ = running.removeValue(forKey: id) }
 					try? connection.send(.object([("id", JSON(id)), ("result", result.mcp)]))
 				}
