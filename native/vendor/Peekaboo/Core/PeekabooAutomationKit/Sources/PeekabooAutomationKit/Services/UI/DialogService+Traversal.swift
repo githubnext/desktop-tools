@@ -80,15 +80,26 @@ enum DialogTraversal {
         return ordered
     }
 
-    /// A window can itself expose a structural dialog role while hosting a transient sheet or alert.
-    /// In that shape the descendants are the active dialogs; retaining the parent as a second candidate
-    /// makes an exact parent-window selector permanently ambiguous.
+    /// A window can itself expose a structural dialog role while hosting a transient sheet or alert, and a
+    /// sheet can host another, such as an Open panel opened from a sheet. Each blocks the dialog enclosing it, so
+    /// the innermost dialogs are the active ones; retaining an enclosing dialog as another candidate makes an
+    /// exact parent-window selector permanently ambiguous. Sibling dialogs remain distinct candidates.
     static func preferredStructuralDialogs<Node: Hashable>(
         in root: Node,
-        candidates: [Node]) -> [Node]
+        candidates: [Node],
+        parent: (Node) -> Node?) -> [Node]
     {
-        let descendants = candidates.filter { $0 != root }
-        return descendants.isEmpty ? candidates : descendants
+        let members = Set(candidates)
+        var enclosing: Set<Node> = []
+        for candidate in candidates {
+            var visited: Set<Node> = [candidate]
+            var node = parent(candidate)
+            while let current = node, visited.insert(current).inserted {
+                if members.contains(current) { enclosing.insert(current) }
+                node = parent(current)
+            }
+        }
+        return candidates.filter { !enclosing.contains($0) }
     }
 }
 
