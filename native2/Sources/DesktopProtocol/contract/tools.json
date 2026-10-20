@@ -1,0 +1,2632 @@
+[
+	{
+		"name": "desktop_clipboard_read",
+		"description": "Read this Mac's clipboard as text (default), one image, or up to 32 file references (format files). Read-only; needs macOS clipboard read access. An image comes back as a preview of at most 1600 px; save_path writes its original bytes, with the extension of its type (.png, .jpg/.jpeg, .tif/.tiff), and a mismatch is refused with the type to use. present false means that form is absent; mixed, promised or oversized contents are refused.",
+		"inputSchema": {
+			"type": "object",
+			"properties": {
+				"format": {
+					"type": "string",
+					"enum": [
+						"text",
+						"image",
+						"files"
+					]
+				},
+				"save_path": {
+					"type": "string",
+					"minLength": 2,
+					"maxLength": 1024,
+					"pattern": "^/.*\\.([pP][nN][gG]|[jJ][pP][eE]?[gG]|[tT][iI][fF][fF]?)$"
+				},
+				"overwrite": {
+					"type": "boolean"
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": true
+		}
+	},
+	{
+		"name": "desktop_clipboard_write",
+		"description": "Replace this Mac's clipboard with text (up to 8192 UTF-16 units), one image file (format image with path: PNG, JPEG or TIFF up to 10 MiB), or 1–32 file references (format files with paths); supply exactly one form. Background: nothing is pasted, and the previous contents are not kept. Completed when the host wrote it; unknown when a failed write may have changed it, so read the clipboard before writing again. Refused while an unverified desktop_insert paste still reserves the clipboard.",
+		"inputSchema": {
+			"type": "object",
+			"properties": {
+				"text": {
+					"type": "string",
+					"maxLength": 8192
+				},
+				"format": {
+					"type": "string",
+					"enum": [
+						"image",
+						"files"
+					]
+				},
+				"path": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 4096
+				},
+				"paths": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 4096
+					},
+					"minItems": 1,
+					"maxItems": 32
+				}
+			},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_apps",
+		"description": "List running apps on this Mac, optionally filtered by query (name or bundle ID). Read-only. Rows carry the target for app tools and the pid for desktop_windows. system gives desktop-wide state: focus (the frontmost app, window and focused element, where keys and desktop_system_key land), appearance, session (locked, displays asleep, secure_keyboard_entry, which blocks typing), input (keyboard layout, pointer) and menu bar/Dock autohide. Activity and visibility are unknown unless is_active_known/is_hidden_known; see metadata_warnings.",
+		"inputSchema": {
+			"type": "object",
+			"properties": {
+				"query": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256,
+					"pattern": "\\S"
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": true
+		}
+	},
+	{
+		"name": "desktop_windows",
+		"description": "List one app's windows by pid, with the target that window tools take. Read-only. Each row's availability gives state (available, limited or unavailable), a reason (minimized, app_hidden, other_space, off_screen, session_locked, display_asleep, accessibility_unavailable…) and a hint naming the tool that recovers it; check it before acting, since nothing recovers automatically. Rows also carry space_ids and their display.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"pid"
+			],
+			"properties": {
+				"pid": {
+					"type": "integer",
+					"minimum": 1
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": true
+		}
+	},
+	{
+		"name": "desktop_screen",
+		"description": "Capture one whole display (index from displays; default 0, the main one) to see what is visible across apps. Read-only, and returns no snapshot: to act, pass a window's pid and window_id to desktop_inspect. Also lists the displays (bounds, visible_bounds, scale, in global top-left points) and the on-screen windows front to back with their targets. ocr true adds recognized_text, up to 300 lines read from pixels, which can misread. save_path, an absolute .png path in an existing folder, keeps the full-resolution capture; region, in global points, saves only part of it; an existing file needs overwrite true.",
+		"inputSchema": {
+			"type": "object",
+			"properties": {
+				"display": {
+					"type": "integer",
+					"minimum": 0,
+					"maximum": 63
+				},
+				"ocr": {
+					"type": "boolean"
+				},
+				"save_path": {
+					"type": "string",
+					"minLength": 2,
+					"maxLength": 1024,
+					"pattern": "^/.*\\.[pP][nN][gG]$"
+				},
+				"overwrite": {
+					"type": "boolean"
+				},
+				"region": {
+					"type": "object",
+					"required": [
+						"x",
+						"y",
+						"width",
+						"height"
+					],
+					"additionalProperties": false,
+					"properties": {
+						"x": {
+							"type": "number"
+						},
+						"y": {
+							"type": "number"
+						},
+						"width": {
+							"type": "number",
+							"exclusiveMinimum": 0
+						},
+						"height": {
+							"type": "number",
+							"exclusiveMinimum": 0
+						}
+					}
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": true
+		}
+	},
+	{
+		"name": "desktop_spaces",
+		"description": "List each display's Spaces left to right, with space_id, kind (desktop or fullscreen), which is current and the windows assigned to each, plus display geometry, focus (where desktop_switch_space acts) and whether its shortcuts are on. Read-only, with no capture. Moving a window to another Space is not supported.",
+		"inputSchema": {
+			"type": "object",
+			"properties": {},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": true
+		}
+	},
+	{
+		"name": "desktop_launch",
+		"description": "Launch or activate one app by absolute .app path or exact bundle ID. Foreground: it brings the app forward and may switch Spaces. Completed means it is running, not that a window is ready; created_windows lists windows that appeared (attribution exclusive, ambiguous or none). Opens no documents (use desktop_open), extra instances or relaunches. Timeout or interruption is unknown: the app may still open, so check desktop_apps before launching again.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"application"
+			],
+			"properties": {
+				"application": {
+					"anyOf": [
+						{
+							"type": "object",
+							"required": [
+								"path"
+							],
+							"properties": {
+								"path": {
+									"type": "string",
+									"minLength": 1,
+									"maxLength": 4096
+								}
+							},
+							"additionalProperties": false
+						},
+						{
+							"type": "object",
+							"required": [
+								"bundle_id"
+							],
+							"properties": {
+								"bundle_id": {
+									"type": "string",
+									"maxLength": 256,
+									"pattern": "^[A-Za-z0-9.-]+$"
+								}
+							},
+							"additionalProperties": false
+						}
+					]
+				}
+			},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_open",
+		"description": "Open one existing absolute path (file, folder or app) or one complete, already-encoded URL, in application (path or bundle ID) or the default handler. Foreground: the receiving app comes forward and may switch Spaces. Completed means macOS accepted it, not that it loaded; created_windows lists new windows as for desktop_launch. A file URL with a query or fragment is refused (serve it over http). After an unknown result, observe the receiving app before opening again.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"item"
+			],
+			"properties": {
+				"item": {
+					"anyOf": [
+						{
+							"type": "object",
+							"required": [
+								"path"
+							],
+							"properties": {
+								"path": {
+									"type": "string",
+									"minLength": 1,
+									"maxLength": 4096
+								}
+							},
+							"additionalProperties": false
+						},
+						{
+							"type": "object",
+							"required": [
+								"url"
+							],
+							"properties": {
+								"url": {
+									"type": "string",
+									"minLength": 1,
+									"maxLength": 4096
+								}
+							},
+							"additionalProperties": false
+						}
+					]
+				},
+				"application": {
+					"anyOf": [
+						{
+							"type": "object",
+							"required": [
+								"path"
+							],
+							"properties": {
+								"path": {
+									"type": "string",
+									"minLength": 1,
+									"maxLength": 4096
+								}
+							},
+							"additionalProperties": false
+						},
+						{
+							"type": "object",
+							"required": [
+								"bundle_id"
+							],
+							"properties": {
+								"bundle_id": {
+									"type": "string",
+									"maxLength": 256,
+									"pattern": "^[A-Za-z0-9.-]+$"
+								}
+							},
+							"additionalProperties": false
+						}
+					]
+				}
+			},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_menus",
+		"description": "Read one app's menu bar structure by its desktop_apps target, optionally only under path (1–8 exact titles). Read-only: no menu opens and the app isn't activated, though reading can fill lazy menus. Missing or ambiguous paths are refused. Pass the titles to desktop_menu. Results may be up to 2 s old, and enabled/checked state isn't reported.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"description": "A target from desktop_apps, unchanged.",
+					"required": [
+						"pid",
+						"process_start_identity_decimal"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer"
+						},
+						"process_start_identity_decimal": {
+							"type": "string"
+						}
+					},
+					"additionalProperties": false
+				},
+				"path": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 512
+					},
+					"minItems": 1,
+					"maxItems": 8
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": true
+		}
+	},
+	{
+		"name": "desktop_dialog",
+		"description": "Read the one open dialog, alert or sheet of an app target (desktop_apps) or window target (desktop_windows): its title, buttons (enabled, default), text fields (index, label, value), static texts, whether it is an Open/Save panel, and the window target for desktop_dialog_answer. Read-only. No dialog, or one in each of several windows, is refused; pass a window target to choose.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target"
+			],
+			"properties": {
+				"target": {
+					"anyOf": [
+						{
+							"type": "object",
+							"description": "A target from desktop_apps, unchanged.",
+							"required": [
+								"pid",
+								"process_start_identity_decimal"
+							],
+							"properties": {
+								"pid": {
+									"type": "integer"
+								},
+								"process_start_identity_decimal": {
+									"type": "string"
+								}
+							},
+							"additionalProperties": false
+						},
+						{
+							"type": "object",
+							"description": "A target from desktop_windows, unchanged.",
+							"required": [
+								"pid",
+								"process_start_identity_decimal",
+								"window_id",
+								"bounds",
+								"is_minimized"
+							],
+							"properties": {
+								"pid": {
+									"type": "integer"
+								},
+								"process_start_identity_decimal": {
+									"type": "string"
+								},
+								"window_id": {
+									"type": "integer"
+								},
+								"bounds": {
+									"type": "object"
+								},
+								"is_minimized": {
+									"type": "boolean"
+								}
+							},
+							"additionalProperties": false
+						}
+					]
+				}
+			},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": true
+		}
+	},
+	{
+		"name": "desktop_menu",
+		"description": "Run one menu command in an app by its desktop_apps target and exact title path from desktop_menus, punctuation included ('Save…'). Background: one Accessibility press of the final item, without opening menus or activating the app, though the app may come forward itself. Completed means the press was accepted, not that the command finished; a modal command can be unknown while its dialog is open. created_windows lists new windows. Missing titles are refused with the titles found at that level; disabled items are refused. Desktop Tools itself can't be targeted. A Paste command (Command-V) is refused with SECURE_FIELD_REQUIRES_FILL while a password field has keyboard focus.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target",
+				"path"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"description": "A target from desktop_apps, unchanged.",
+					"required": [
+						"pid",
+						"process_start_identity_decimal"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer"
+						},
+						"process_start_identity_decimal": {
+							"type": "string"
+						}
+					},
+					"additionalProperties": false
+				},
+				"path": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 512
+					},
+					"minItems": 1,
+					"maxItems": 8
+				}
+			},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_dialog_answer",
+		"description": "Answer the dialog desktop_dialog listed, with the same target and exactly one of: button (an exact, enabled title), field (an index) with text, which replaces its value (secure fields are refused), or path, in an Open or Save panel. button and field are background, and completed when the host reads the press or value back. path is foreground: it activates the app and types into the panel's path field or Go to Folder, and is completed only when the panel reads back the folder and, in a Save panel, the name; an Open panel's file choice is unknown, so list the dialog before pressing its default button. Choose buttons such as Delete or Don't Save only deliberately.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target"
+			],
+			"properties": {
+				"target": {
+					"anyOf": [
+						{
+							"type": "object",
+							"description": "A target from desktop_apps, unchanged.",
+							"required": [
+								"pid",
+								"process_start_identity_decimal"
+							],
+							"properties": {
+								"pid": {
+									"type": "integer"
+								},
+								"process_start_identity_decimal": {
+									"type": "string"
+								}
+							},
+							"additionalProperties": false
+						},
+						{
+							"type": "object",
+							"description": "A target from desktop_windows, unchanged.",
+							"required": [
+								"pid",
+								"process_start_identity_decimal",
+								"window_id",
+								"bounds",
+								"is_minimized"
+							],
+							"properties": {
+								"pid": {
+									"type": "integer"
+								},
+								"process_start_identity_decimal": {
+									"type": "string"
+								},
+								"window_id": {
+									"type": "integer"
+								},
+								"bounds": {
+									"type": "object"
+								},
+								"is_minimized": {
+									"type": "boolean"
+								}
+							},
+							"additionalProperties": false
+						}
+					]
+				},
+				"button": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 512
+				},
+				"field": {
+					"type": "integer",
+					"minimum": 0,
+					"maximum": 1000
+				},
+				"text": {
+					"type": "string",
+					"maxLength": 8192
+				},
+				"path": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 4096
+				}
+			},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_notifications",
+		"description": "List notification banners and alerts on screen, and Notification Center's entries when it is open (click the clock with desktop_menubar_click): id, app, title, subtitle, body, time and actions (open, plus the custom actions listed). Read-only. system_alerts lists permission prompts and other system dialogs; read and answer those with desktop_dialog. Built for macOS 11–15.",
+		"inputSchema": {
+			"type": "object",
+			"properties": {},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": true
+		}
+	},
+	{
+		"name": "desktop_notification_action",
+		"description": "Act on one notification from the latest desktop_notifications: open (its default click; expands a stack), close, or one listed custom action by exact name, through Accessibility. Pass the id unchanged; each id is good for one action. Completed when the notification is gone on reading again; unknown while it still shows. A gone or changed notification is refused (\"Notification gone; read again\"). Actions can open the app or send a reply, so choose only what was asked.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"id",
+				"action"
+			],
+			"properties": {
+				"id": {
+					"type": "string",
+					"minLength": 3,
+					"maxLength": 600
+				},
+				"action": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 64
+				}
+			},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_menubar_items",
+		"description": "List the menu bar's status items left to right (Wi-Fi, Control Center, the clock, third-party items): index, title, identifier, owner app and pid, bounds and visibility, with the target for desktop_menubar_click. Read-only. Titles can be generic, localized, dynamic or missing; tell items apart by owner, identifier and position.",
+		"inputSchema": {
+			"type": "object",
+			"properties": {}
+		},
+		"annotations": {
+			"readOnlyHint": true
+		}
+	},
+	{
+		"name": "desktop_menubar_click",
+		"description": "Press one status item by its target from a fresh desktop_menubar_items. Background: an Accessibility press in the owner process, without moving the pointer. Completed means the press was delivered, not that a menu opened; the result lists and captures the windows that appeared, and those marked inspectable can go to desktop_inspect. Refused when the item changed since listing: list again. A second click usually closes what the first opened; close with desktop_key escape or the same item.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"required": [
+						"pid",
+						"process_start_identity_decimal",
+						"index"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 2147483647
+						},
+						"process_start_identity_decimal": {
+							"type": "string",
+							"pattern": "^[1-9][0-9]{0,19}$"
+						},
+						"index": {
+							"type": "integer",
+							"minimum": 0,
+							"maximum": 1000
+						},
+						"window_id": {
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 4294967295
+						}
+					},
+					"additionalProperties": false
+				}
+			},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_dock",
+		"description": "List the Dock (no arguments), press one item by exact title (launch or activate an app, open a stack, restore a window), or with menu_item right-click it and choose that context-menu item (no submenus). Listing is read-only; a press may bring an app forward; the right-click is foreground and moves the real pointer. Completed means the Dock accepted the press; observe desktop_apps or desktop_windows next. Missing or repeated titles are refused. If menu_item isn't found, the menu may stay open: dismiss it.",
+		"inputSchema": {
+			"type": "object",
+			"properties": {
+				"title": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 512
+				},
+				"menu_item": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 512
+				}
+			},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_activate",
+		"description": "Bring one running app to the front by its desktop_apps target. Foreground: it changes the active app and may switch Spaces; it launches nothing and chooses no window. The result refreshes the inventory; inspect before input.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"description": "A target from desktop_apps, unchanged.",
+					"required": [
+						"pid",
+						"process_start_identity_decimal"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer"
+						},
+						"process_start_identity_decimal": {
+							"type": "string"
+						}
+					},
+					"additionalProperties": false
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_hide",
+		"description": "Hide one app by its desktop_apps target, as Command-H does; it keeps running. Background, activating nothing. Completed when it reads back hidden, or already was. Hidden windows can't be inspected or take input; use desktop_unhide.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"description": "A target from desktop_apps, unchanged.",
+					"required": [
+						"pid",
+						"process_start_identity_decimal"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer"
+						},
+						"process_start_identity_decimal": {
+							"type": "string"
+						}
+					},
+					"additionalProperties": false
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_unhide",
+		"description": "Show one hidden app by its desktop_apps target. Foreground: macOS has no background unhide, so this activates the app as desktop_activate does. Check is_hidden in the refreshed inventory and inspect before input.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"description": "A target from desktop_apps, unchanged.",
+					"required": [
+						"pid",
+						"process_start_identity_decimal"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer"
+						},
+						"process_start_identity_decimal": {
+							"type": "string"
+						}
+					},
+					"additionalProperties": false
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_quit",
+		"description": "Quit one app by its desktop_apps target. Background. Completed when the process has ended. If it is still running, often behind an unsaved-changes dialog, the result is unknown: read it with desktop_dialog and answer deliberately. force true terminates the process at once and LOSES ALL UNSAVED WORK; use it only when the user asked or the app is unresponsive, never to get past a save dialog. Nothing retries or escalates to force.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"description": "A target from desktop_apps, unchanged.",
+					"required": [
+						"pid",
+						"process_start_identity_decimal"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer"
+						},
+						"process_start_identity_decimal": {
+							"type": "string"
+						}
+					},
+					"additionalProperties": false
+				},
+				"force": {
+					"type": "boolean"
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_close",
+		"description": "Close one window by its desktop_windows target, with one background Accessibility action. Completed when the window is gone; unknown while it remains, as when an unsaved-changes dialog opens: inspect it and answer deliberately. Restore a minimized window first. Nothing force-closes or answers dialogs.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"description": "A target from desktop_windows, unchanged.",
+					"required": [
+						"pid",
+						"process_start_identity_decimal",
+						"window_id",
+						"bounds",
+						"is_minimized"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer"
+						},
+						"process_start_identity_decimal": {
+							"type": "string"
+						},
+						"window_id": {
+							"type": "integer"
+						},
+						"bounds": {
+							"type": "object"
+						},
+						"is_minimized": {
+							"type": "boolean"
+						}
+					},
+					"additionalProperties": false
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_focus",
+		"description": "Bring one window to the front by its desktop_windows target, activating its app and switching Spaces if needed. Foreground; never use it as an automatic inspection fallback. Restore a minimized window first, and inspect again before input.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"description": "A target from desktop_windows, unchanged.",
+					"required": [
+						"pid",
+						"process_start_identity_decimal",
+						"window_id",
+						"bounds",
+						"is_minimized"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer"
+						},
+						"process_start_identity_decimal": {
+							"type": "string"
+						},
+						"window_id": {
+							"type": "integer"
+						},
+						"bounds": {
+							"type": "object"
+						},
+						"is_minimized": {
+							"type": "boolean"
+						}
+					},
+					"additionalProperties": false
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_minimize",
+		"description": "Minimize one window by its desktop_windows target. Background. Completed when it reads back minimized, or already was; otherwise unknown. Restore it with desktop_restore before inspecting or acting on it.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"description": "A target from desktop_windows, unchanged.",
+					"required": [
+						"pid",
+						"process_start_identity_decimal",
+						"window_id",
+						"bounds",
+						"is_minimized"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer"
+						},
+						"process_start_identity_decimal": {
+							"type": "string"
+						},
+						"window_id": {
+							"type": "integer"
+						},
+						"bounds": {
+							"type": "object"
+						},
+						"is_minimized": {
+							"type": "boolean"
+						}
+					},
+					"additionalProperties": false
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_restore",
+		"description": "Unminimize one window by its desktop_windows target. Background; it doesn't promise focus. Inspect again with the refreshed target before input.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"description": "A target from desktop_windows, unchanged.",
+					"required": [
+						"pid",
+						"process_start_identity_decimal",
+						"window_id",
+						"bounds",
+						"is_minimized"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer"
+						},
+						"process_start_identity_decimal": {
+							"type": "string"
+						},
+						"window_id": {
+							"type": "integer"
+						},
+						"bounds": {
+							"type": "object"
+						},
+						"is_minimized": {
+							"type": "boolean"
+						}
+					},
+					"additionalProperties": false
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_maximize",
+		"description": "Make one window fill its display's visible area, leaving the menu bar and Dock uncovered, by its desktop_windows target. Background; it is neither full screen nor the green button's zoom. Completed when the geometry reads back; a window already filling it completes with no change. An app may constrain its size, so read the actual bounds. Restore a minimized window first.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"description": "A target from desktop_windows, unchanged.",
+					"required": [
+						"pid",
+						"process_start_identity_decimal",
+						"window_id",
+						"bounds",
+						"is_minimized"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer"
+						},
+						"process_start_identity_decimal": {
+							"type": "string"
+						},
+						"window_id": {
+							"type": "integer"
+						},
+						"bounds": {
+							"type": "object"
+						},
+						"is_minimized": {
+							"type": "boolean"
+						}
+					},
+					"additionalProperties": false
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_fullscreen",
+		"description": "Enter (enabled true) or exit native full screen for one window by its desktop_windows target, as its green button does. No input is sent, but macOS switches the display to the window's own Space, and back on exit. Completed only when the window reads back in the requested state; the result names its space_id. Apps without full screen are refused; restore a minimized window first. Its bounds change, so use the refreshed target. The green button toggles: don't repeat an unknown change.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target",
+				"enabled"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"description": "A target from desktop_windows, unchanged.",
+					"required": [
+						"pid",
+						"process_start_identity_decimal",
+						"window_id",
+						"bounds",
+						"is_minimized"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer"
+						},
+						"process_start_identity_decimal": {
+							"type": "string"
+						},
+						"window_id": {
+							"type": "integer"
+						},
+						"bounds": {
+							"type": "object"
+						},
+						"is_minimized": {
+							"type": "boolean"
+						}
+					},
+					"additionalProperties": false
+				},
+				"enabled": {
+					"type": "boolean"
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_move",
+		"description": "Move one window's top-left corner to position, in global desktop points (negative allowed), by its desktop_windows target. Background. Completed when the new geometry reads back; an app may constrain it, so read the actual bounds. Use the refreshed target afterward.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target",
+				"position"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"description": "A target from desktop_windows, unchanged.",
+					"required": [
+						"pid",
+						"process_start_identity_decimal",
+						"window_id",
+						"bounds",
+						"is_minimized"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer"
+						},
+						"process_start_identity_decimal": {
+							"type": "string"
+						},
+						"window_id": {
+							"type": "integer"
+						},
+						"bounds": {
+							"type": "object"
+						},
+						"is_minimized": {
+							"type": "boolean"
+						}
+					},
+					"additionalProperties": false
+				},
+				"position": {
+					"type": "object",
+					"required": [
+						"x",
+						"y"
+					],
+					"properties": {
+						"x": {
+							"type": "number"
+						},
+						"y": {
+							"type": "number"
+						}
+					},
+					"additionalProperties": false
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_resize",
+		"description": "Resize one window to size, in desktop points, by its desktop_windows target. Background. Completed when the new geometry reads back; an app may constrain it, so read the actual bounds. Use the refreshed target afterward.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"target",
+				"size"
+			],
+			"properties": {
+				"target": {
+					"type": "object",
+					"description": "A target from desktop_windows, unchanged.",
+					"required": [
+						"pid",
+						"process_start_identity_decimal",
+						"window_id",
+						"bounds",
+						"is_minimized"
+					],
+					"properties": {
+						"pid": {
+							"type": "integer"
+						},
+						"process_start_identity_decimal": {
+							"type": "string"
+						},
+						"window_id": {
+							"type": "integer"
+						},
+						"bounds": {
+							"type": "object"
+						},
+						"is_minimized": {
+							"type": "boolean"
+						}
+					},
+					"additionalProperties": false
+				},
+				"size": {
+					"type": "object",
+					"required": [
+						"width",
+						"height"
+					],
+					"properties": {
+						"width": {
+							"type": "number",
+							"exclusiveMinimum": 0
+						},
+						"height": {
+							"type": "number",
+							"exclusiveMinimum": 0
+						}
+					},
+					"additionalProperties": false
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_inspect",
+		"description": "Read one window's Accessibility elements and a screenshot by pid and window, returning the single-use snapshot_id that input tools take. Read-only and never activates or focuses, except that in a Chromium or Electron app, or a window whose web area is nearly empty, it first turns on the app's web accessibility so web content appears, once per app launch, and reports web_accessibility; it stays on until the app quits. Pass web_accessibility false to leave the app as it is. mode pixels, for windows Accessibility can't read, gives a snapshot for point clicks, scrolls and drags only. A large window lists its first 200 elements and reports truncated: pass scope (a container's snapshot and element from an earlier inspection) to list its subtree with a much larger budget. ocr true adds recognized_text, whose box centers are points for this snapshot. save_path, an absolute .png path in an existing folder, keeps the full-resolution capture; region, in global points, saves only part of it; an existing file needs overwrite true.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"pid",
+				"window"
+			],
+			"properties": {
+				"pid": {
+					"type": "integer",
+					"minimum": 1
+				},
+				"window": {
+					"type": "integer",
+					"minimum": 1
+				},
+				"mode": {
+					"type": "string",
+					"enum": [
+						"accessibility",
+						"pixels"
+					]
+				},
+				"ocr": {
+					"type": "boolean"
+				},
+				"scope": {
+					"type": "object",
+					"required": [
+						"snapshot",
+						"element"
+					],
+					"properties": {
+						"snapshot": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 256
+						},
+						"element": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 256
+						}
+					},
+					"additionalProperties": false
+				},
+				"web_accessibility": {
+					"type": "boolean",
+					"description": "false leaves a Chromium or Electron app's web accessibility as it is, so its web content may be missing."
+				},
+				"save_path": {
+					"type": "string",
+					"minLength": 2,
+					"maxLength": 1024,
+					"pattern": "^/.*\\.[pP][nN][gG]$"
+				},
+				"overwrite": {
+					"type": "boolean"
+				},
+				"region": {
+					"type": "object",
+					"required": [
+						"x",
+						"y",
+						"width",
+						"height"
+					],
+					"additionalProperties": false,
+					"properties": {
+						"x": {
+							"type": "number"
+						},
+						"y": {
+							"type": "number"
+						},
+						"width": {
+							"type": "number",
+							"exclusiveMinimum": 0
+						},
+						"height": {
+							"type": "number",
+							"exclusiveMinimum": 0
+						}
+					}
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": true
+		}
+	},
+	{
+		"name": "desktop_read",
+		"description": "Read one window's text by pid and window through Accessibility, up to 96 KB, including content scrolled out of view; scope reads one inspected element's subtree. Read-only, with no snapshot, except that it turns on web accessibility as desktop_inspect does. Windows without Accessibility text, such as canvases, return empty text: use desktop_inspect with ocr. With table true and a scope, it reads the first table there instead: columns, rows with their cells, row element IDs for desktop_click, selected, and depth/expanded for outlines; page with row_offset and max_rows (default 100, at most 500).",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"pid",
+				"window"
+			],
+			"properties": {
+				"pid": {
+					"type": "integer",
+					"minimum": 1
+				},
+				"window": {
+					"type": "integer",
+					"minimum": 1
+				},
+				"scope": {
+					"type": "object",
+					"required": [
+						"snapshot",
+						"element"
+					],
+					"properties": {
+						"snapshot": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 256
+						},
+						"element": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 256
+						}
+					},
+					"additionalProperties": false
+				},
+				"web_accessibility": {
+					"type": "boolean",
+					"description": "false leaves a Chromium or Electron app's web accessibility as it is, so its web content may be missing."
+				},
+				"table": {
+					"type": "boolean",
+					"const": true
+				},
+				"row_offset": {
+					"type": "integer",
+					"minimum": 0,
+					"maximum": 100000
+				},
+				"max_rows": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 500
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": true
+		}
+	},
+	{
+		"name": "desktop_wait",
+		"description": "Wait until one condition holds and return what matched, or timed_out with the last observation; use it instead of polling after a launch, page load, export or dialog. Read-only; it polls every 200 ms to 2 s for timeout_ms (default 10000, at most 45000). until is window_appears (bundle_id or pid, optional title or title_contains) or window_gone (pid, window); dialog_appears or dialog_gone (pid, optional window); element_appears or element_gone (pid, window, element: a role and a title, value or identifier); text_changes, text_equals or text_contains (pid, window, optional scope or element, text); app_running, app_frontmost or app_quit (bundle_id or pid). A matched element comes with inspection.snapshot_id and its IDs for action tools; if that is null, inspect first. Element and text polls read as desktop_inspect does: in a Chromium or Electron app, or a window whose web area is nearly empty, it first turns on the app's web accessibility so web content appears, once per app launch, and reports web_accessibility; it stays on until the app quits. Pass web_accessibility false to leave the app as it is. Uncertain absence never counts as gone.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"until"
+			],
+			"properties": {
+				"until": {
+					"type": "string",
+					"enum": [
+						"window_appears",
+						"window_gone",
+						"dialog_appears",
+						"dialog_gone",
+						"element_appears",
+						"element_gone",
+						"text_changes",
+						"text_equals",
+						"text_contains",
+						"app_running",
+						"app_frontmost",
+						"app_quit"
+					]
+				},
+				"bundle_id": {
+					"type": "string"
+				},
+				"pid": {
+					"type": "integer"
+				},
+				"window": {
+					"type": "integer"
+				},
+				"title": {
+					"type": "string"
+				},
+				"title_contains": {
+					"type": "string"
+				},
+				"element": {
+					"type": "object",
+					"required": [
+						"role"
+					],
+					"properties": {
+						"role": {
+							"type": "string"
+						},
+						"title": {
+							"type": "string"
+						},
+						"value": {
+							"type": "string"
+						},
+						"identifier": {
+							"type": "string"
+						}
+					},
+					"additionalProperties": false
+				},
+				"scope": {
+					"type": "object",
+					"required": [
+						"snapshot",
+						"element"
+					],
+					"properties": {
+						"snapshot": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 256
+						},
+						"element": {
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 256
+						}
+					},
+					"additionalProperties": false
+				},
+				"text": {
+					"type": "string"
+				},
+				"web_accessibility": {
+					"type": "boolean",
+					"description": "false leaves a Chromium or Electron app's web accessibility as it is, so its web content may be missing."
+				},
+				"timeout_ms": {
+					"type": "integer",
+					"minimum": 100,
+					"maximum": 45000
+				}
+			},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": true
+		}
+	},
+	{
+		"name": "desktop_click",
+		"description": "Click an element or point from a fresh desktop_inspect snapshot: kind single (default), double, right, middle or triple. Background, without moving the pointer; completed means delivered to that window, and a single click on a text field also reports whether it got focus. With modifiers (command, option, shift) it is foreground: the host activates the app and clicks with the real pointer and keys, then restores them, and the result is unknown, so inspect to check. A Control-click is kind right. Stale or unsupported targets are refused before input. Optional expect is one desktop_wait condition this input should make true. It must not hold beforehand, or nothing is sent; if the outcome is unknown and it holds within timeout_ms (default 3000, at most 10000), the outcome becomes completed.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"snapshot"
+			],
+			"properties": {
+				"snapshot": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"element": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"point": {
+					"type": "object",
+					"description": "Fractions of the screenshot from its top-left corner.",
+					"required": [
+						"x",
+						"y"
+					],
+					"properties": {
+						"x": {
+							"type": "number",
+							"minimum": 0,
+							"exclusiveMaximum": 1
+						},
+						"y": {
+							"type": "number",
+							"minimum": 0,
+							"exclusiveMaximum": 1
+						}
+					}
+				},
+				"kind": {
+					"type": "string",
+					"enum": [
+						"single",
+						"double",
+						"right",
+						"middle",
+						"triple"
+					]
+				},
+				"modifiers": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"enum": [
+							"command",
+							"option",
+							"shift"
+						]
+					},
+					"minItems": 1,
+					"maxItems": 3,
+					"uniqueItems": true
+				},
+				"expect": {
+					"type": "object",
+					"description": "until and its arguments, as desktop_wait takes them, and an optional timeout_ms.",
+					"required": [
+						"until"
+					],
+					"properties": {
+						"until": {
+							"type": "string",
+							"enum": [
+								"window_appears",
+								"window_gone",
+								"dialog_appears",
+								"dialog_gone",
+								"element_appears",
+								"element_gone",
+								"text_changes",
+								"text_equals",
+								"text_contains",
+								"app_running",
+								"app_frontmost",
+								"app_quit"
+							]
+						},
+						"timeout_ms": {
+							"type": "integer",
+							"minimum": 100,
+							"maximum": 10000
+						}
+					}
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_scroll",
+		"description": "Scroll an element or point from a fresh desktop_inspect snapshot up, down, left or right by amount (1–20 native units, not pixels). Background, without moving the pointer; completed means delivered. Unsupported targets are refused. Inspect the new position before scrolling again.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"snapshot",
+				"direction",
+				"amount"
+			],
+			"properties": {
+				"snapshot": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"element": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"point": {
+					"type": "object",
+					"description": "Fractions of the screenshot from its top-left corner.",
+					"required": [
+						"x",
+						"y"
+					],
+					"properties": {
+						"x": {
+							"type": "number",
+							"minimum": 0,
+							"exclusiveMaximum": 1
+						},
+						"y": {
+							"type": "number",
+							"minimum": 0,
+							"exclusiveMaximum": 1
+						}
+					}
+				},
+				"direction": {
+					"type": "string",
+					"enum": [
+						"up",
+						"down",
+						"left",
+						"right"
+					]
+				},
+				"amount": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 20
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_drag",
+		"description": "Press at from, move straight or along path (up to 16 points), and release at to, in the window of a fresh desktop_inspect snapshot; button left (default) or right, over duration_ms (default 500). Background within one window; completed means delivered, not dropped, so inspect to check, and an inactive view may ignore it. Foreground with to_snapshot (a second window's snapshot, for dragging between windows or apps) or with modifiers held (such as Option to copy in Finder): the real pointer and keys are used, both points must be uncovered, duration defaults to 800, and the result is unknown. A path can't be combined with to_snapshot. Use desktop_move or desktop_resize, not a title-bar drag. Optional expect is one desktop_wait condition this input should make true. It must not hold beforehand, or nothing is sent; if the outcome is unknown and it holds within timeout_ms (default 3000, at most 10000), the outcome becomes completed.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"snapshot",
+				"from",
+				"to"
+			],
+			"properties": {
+				"snapshot": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"from": {
+					"type": "object",
+					"description": "Fractions of the screenshot from its top-left corner.",
+					"required": [
+						"x",
+						"y"
+					],
+					"properties": {
+						"x": {
+							"type": "number",
+							"minimum": 0,
+							"exclusiveMaximum": 1
+						},
+						"y": {
+							"type": "number",
+							"minimum": 0,
+							"exclusiveMaximum": 1
+						}
+					}
+				},
+				"to": {
+					"type": "object",
+					"description": "Fractions of the screenshot from its top-left corner.",
+					"required": [
+						"x",
+						"y"
+					],
+					"properties": {
+						"x": {
+							"type": "number",
+							"minimum": 0,
+							"exclusiveMaximum": 1
+						},
+						"y": {
+							"type": "number",
+							"minimum": 0,
+							"exclusiveMaximum": 1
+						}
+					}
+				},
+				"to_snapshot": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"path": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"description": "Fractions of the screenshot from its top-left corner.",
+						"required": [
+							"x",
+							"y"
+						],
+						"properties": {
+							"x": {
+								"type": "number",
+								"minimum": 0,
+								"exclusiveMaximum": 1
+							},
+							"y": {
+								"type": "number",
+								"minimum": 0,
+								"exclusiveMaximum": 1
+							}
+						}
+					},
+					"minItems": 1,
+					"maxItems": 16
+				},
+				"modifiers": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"enum": [
+							"command",
+							"control",
+							"option",
+							"shift"
+						]
+					},
+					"maxItems": 4,
+					"uniqueItems": true
+				},
+				"expect": {
+					"type": "object",
+					"description": "until and its arguments, as desktop_wait takes them, and an optional timeout_ms.",
+					"required": [
+						"until"
+					],
+					"properties": {
+						"until": {
+							"type": "string",
+							"enum": [
+								"window_appears",
+								"window_gone",
+								"dialog_appears",
+								"dialog_gone",
+								"element_appears",
+								"element_gone",
+								"text_changes",
+								"text_equals",
+								"text_contains",
+								"app_running",
+								"app_frontmost",
+								"app_quit"
+							]
+						},
+						"timeout_ms": {
+							"type": "integer",
+							"minimum": 100,
+							"maximum": 10000
+						}
+					}
+				},
+				"button": {
+					"type": "string",
+					"enum": [
+						"left",
+						"right"
+					]
+				},
+				"duration_ms": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 10000
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_hover",
+		"description": "Move the real pointer over an element or point from a fresh desktop_inspect snapshot and leave it there, to show tooltips, hover menus or hover states. Foreground, without clicking. Refused when another window covers the point or the window moved; unknown when the pointer can't be confirmed over the window afterward. Tooltips can take a second; inspect again if one is missing.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"snapshot"
+			],
+			"properties": {
+				"snapshot": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"element": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"point": {
+					"type": "object",
+					"description": "Fractions of the screenshot from its top-left corner.",
+					"required": [
+						"x",
+						"y"
+					],
+					"properties": {
+						"x": {
+							"type": "number",
+							"minimum": 0,
+							"exclusiveMaximum": 1
+						},
+						"y": {
+							"type": "number",
+							"minimum": 0,
+							"exclusiveMaximum": 1
+						}
+					}
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_press",
+		"description": "Press and hold an element or point from a fresh desktop_inspect snapshot for duration_ms (default 1000, at most 10000), then release in place, for held menus, press-and-hold accents or hold-to-confirm controls. Background, without moving the pointer; the button is always released, even on interruption. Completed means delivered; unknown if the hold ended early, as when the window changed.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"snapshot"
+			],
+			"properties": {
+				"snapshot": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"element": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"point": {
+					"type": "object",
+					"description": "Fractions of the screenshot from its top-left corner.",
+					"required": [
+						"x",
+						"y"
+					],
+					"properties": {
+						"x": {
+							"type": "number",
+							"minimum": 0,
+							"exclusiveMaximum": 1
+						},
+						"y": {
+							"type": "number",
+							"minimum": 0,
+							"exclusiveMaximum": 1
+						}
+					}
+				},
+				"button": {
+					"type": "string",
+					"enum": [
+						"left",
+						"right"
+					]
+				},
+				"duration_ms": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 10000
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_type",
+		"description": "Replace the whole value of one editable text field from a fresh desktop_inspect snapshot; it never appends. Background. A native field is set through Accessibility. A web field (browser or Electron) is typed into with key events so the page sees input, up to 1000 UTF-16 units with no newlines or tabs, and must be the snapshot's keyboard focus, or it is refused: click it, inspect, and try again. Completed when the text reads back. For longer text or inserting at the caret, use desktop_insert.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"snapshot",
+				"element",
+				"text"
+			],
+			"properties": {
+				"snapshot": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"element": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"text": {
+					"type": "string",
+					"maxLength": 8192
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_fill_password",
+		"description": "Fill the password field that has keyboard focus in a fresh desktop_inspect snapshot; element is that field (subrole AXSecureTextField). Click it and inspect first if focus is elsewhere. Prefer a Keychain item: service names a generic password, server an internet password (filled only into a web page on that server), with account when several match. macOS asks the user before Desktop Tools reads the item, and you never see the password. Or pass text, and the user approves each fill in a Desktop Tools prompt, unless they turned on Always Allow Agent-Supplied Passwords. Background; it replaces the field's contents and can wait up to a minute for the user. Completed when the field shows the expected number of characters; nothing returns the password or its length. Refused for system password prompts, such as administrator authentication. Never type passwords with desktop_key or desktop_insert, which are refused in password fields.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"snapshot",
+				"element"
+			],
+			"properties": {
+				"snapshot": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"element": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"service": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 1024
+				},
+				"server": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 1024
+				},
+				"account": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 1024
+				},
+				"text": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 1024
+				}
+			},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_set_value",
+		"description": "Set one non-text control from a fresh desktop_inspect snapshot and read it back: a number for a slider, stepper or level indicator; true/false for a checkbox, switch or disclosure triangle; or an ISO 8601 date for a date or time picker (2026-10-17 is local midnight; add Z or an offset to name a zone). Background. Completed only when it reads back exactly; a control that rounds, clamps or drops the time is unknown. Mixed toggles are refused. Text fields take desktop_type; pop-up buttons have no value: click, then pick from the next observation; a Chromium browser's <select> menu closes between calls, so pick there with one desktop_key call: keys down, down × n, enter. desktop_element_action steps controls without a settable value.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"snapshot",
+				"element",
+				"value"
+			],
+			"properties": {
+				"snapshot": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"element": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"value": {
+					"anyOf": [
+						{
+							"type": "number"
+						},
+						{
+							"type": "boolean"
+						},
+						{
+							"type": "string",
+							"maxLength": 64
+						}
+					]
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_set_cell",
+		"description": "Write one cell of a table read with desktop_read table true, then read the table again to confirm it. Pass that read's pid, window, scope snapshot as snapshot and scope element as table, the row's element ID, and column as an exact title or 0-based index. The cell's first control is written through desktop_type or desktop_set_value, with their rules. Completed only when the control reads back the value and the row's other cells are unchanged; otherwise unknown, with cell.readback differs, row_changed or unreadable. Cells with only text, as in Numbers and Excel, are refused: click the cell, desktop_insert, then desktop_key enter. Finder file names are refused with CELL_NOT_EDITABLE, since Finder would show the name without renaming the file; rename with a shell mv.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"pid",
+				"window",
+				"snapshot",
+				"table",
+				"row",
+				"column",
+				"value"
+			],
+			"properties": {
+				"pid": {
+					"type": "integer",
+					"minimum": 1
+				},
+				"window": {
+					"type": "integer",
+					"minimum": 1
+				},
+				"snapshot": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"table": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"row": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"column": {
+					"anyOf": [
+						{
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 256
+						},
+						{
+							"type": "integer",
+							"minimum": 0,
+							"maximum": 63
+						}
+					]
+				},
+				"value": {
+					"anyOf": [
+						{
+							"type": "string",
+							"maxLength": 8192
+						},
+						{
+							"type": "number"
+						},
+						{
+							"type": "boolean"
+						}
+					]
+				}
+			},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_element_action",
+		"description": "Perform one Accessibility action that an element from a fresh desktop_inspect snapshot lists in attributes.actions, with no pointer or keys: AXShowMenu (context menu), AXIncrement/AXDecrement (step), AXConfirm/AXCancel, AXPick (choose an open menu's item; a Chromium browser's <select> menu closes between calls, so use one desktop_key call there), AXRaise, AXScrollToVisible. Background. Unlisted actions are refused before input. Completed means delivered, not the effect; each repeat can step, toggle or open again. Press buttons with desktop_click.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"snapshot",
+				"element",
+				"action"
+			],
+			"properties": {
+				"snapshot": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"element": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"action": {
+					"type": "string",
+					"enum": [
+						"AXShowMenu",
+						"AXIncrement",
+						"AXDecrement",
+						"AXConfirm",
+						"AXCancel",
+						"AXPick",
+						"AXRaise",
+						"AXScrollToVisible"
+					]
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_select",
+		"description": "Select literal text in one element from a fresh desktop_inspect snapshot, or place the caret before or after it (selection). The element is an editable field, web page text such as a paragraph or link, or the text of a PDF page in Preview. Background. Completed when the selection reads back as exactly that text. Missing or ambiguous text is refused; add prefix or suffix, the text immediately around it. To copy, press c with command through desktop_key; Preview copies only while active, so desktop_activate it and use desktop_menu Edit > Copy.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"snapshot",
+				"element",
+				"text"
+			],
+			"properties": {
+				"snapshot": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"element": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"text": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 4096
+				},
+				"prefix": {
+					"type": "string",
+					"maxLength": 2048
+				},
+				"suffix": {
+					"type": "string",
+					"maxLength": 2048
+				},
+				"selection": {
+					"type": "string",
+					"enum": [
+						"text",
+						"cursor_before",
+						"cursor_after"
+					]
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_insert",
+		"description": "Insert text at the caret, or over the selection, in the window of a fresh desktop_inspect snapshot, keeping the text around it. Background, without activating the app. When the snapshot shows a focused control, it pastes the whole string, newlines included, through a temporary clipboard and restores it once it reads the edit back (route paste; needs clipboard read access). Otherwise, as in terminals, canvases and web editors, it types into the window's keyboard focus (route type): up to 1000 UTF-16 units, no newlines or tabs (press those with desktop_key), refused under secure keyboard entry, and unknown unless the host reads an observed control back. route forces either one. Instead of text, format image with one absolute path (PNG, JPEG or TIFF up to 10 MiB) or format files with 1–32 absolute paths pastes attachments into a native text area such as TextEdit rich text, Mail or Notes: completed when one U+FFFC per item reads back in place of the selection, then the clipboard is restored. format files into a Finder window's file list copies them into its folder: completed with copy started once every name is in the folder, and refused with PASTE_NAME_EXISTS if one already is. Any other receiver, including web fields, is refused with PASTE_UNVERIFIABLE_RECEIVER before input; clipboard replace pastes there anyway, leaving the item on the clipboard (left_replaced), and is unknown unless the attachment is seen. Every route is refused with SECURE_FIELD_REQUIRES_FILL while a password field has keyboard focus: use desktop_fill_password. Optional expect is one desktop_wait condition this input should make true. It must not hold beforehand, or nothing is sent; if the outcome is unknown and it holds within timeout_ms (default 3000, at most 10000), the outcome becomes completed.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"snapshot"
+			],
+			"properties": {
+				"snapshot": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"text": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 8192
+				},
+				"route": {
+					"type": "string",
+					"enum": [
+						"paste",
+						"type"
+					]
+				},
+				"format": {
+					"type": "string",
+					"enum": [
+						"image",
+						"files"
+					]
+				},
+				"path": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 4096
+				},
+				"paths": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 4096
+					},
+					"minItems": 1,
+					"maxItems": 32
+				},
+				"clipboard": {
+					"type": "string",
+					"enum": [
+						"restore",
+						"replace"
+					]
+				},
+				"expect": {
+					"type": "object",
+					"description": "until and its arguments, as desktop_wait takes them, and an optional timeout_ms.",
+					"required": [
+						"until"
+					],
+					"properties": {
+						"until": {
+							"type": "string",
+							"enum": [
+								"window_appears",
+								"window_gone",
+								"dialog_appears",
+								"dialog_gone",
+								"element_appears",
+								"element_gone",
+								"text_changes",
+								"text_equals",
+								"text_contains",
+								"app_running",
+								"app_frontmost",
+								"app_quit"
+							]
+						},
+						"timeout_ms": {
+							"type": "integer",
+							"minimum": 100,
+							"maximum": 10000
+						}
+					}
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_key",
+		"description": "Press one key or shortcut in the window of a fresh desktop_inspect snapshot: key is a named key or the character its key types (, / [ a), with modifiers command, control, option or shift. Background: it goes to the snapshot's focused control, or else to the window's keyboard focus, which must still be in that window before each key. A character that needs Shift or Option, such as ? or A, is refused with the key and modifier to send. keys sends up to 16 chords in order; repeat presses key up to 32 times; a sequence stops at the first refused key and is then unknown (keys_sent). Command-W, Q, H and M are refused: use desktop_close, desktop_quit, desktop_hide or desktop_minimize. While a password field has keyboard focus, keys that type characters and Command-V are refused with SECURE_FIELD_REQUIRES_FILL; Return, Tab, Escape, arrows, Delete and other shortcuts still work. Optional expect is one desktop_wait condition this input should make true. It must not hold beforehand, or nothing is sent; if the outcome is unknown and it holds within timeout_ms (default 3000, at most 10000), the outcome becomes completed.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"snapshot"
+			],
+			"properties": {
+				"snapshot": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				},
+				"key": {
+					"anyOf": [
+						{
+							"type": "string",
+							"enum": [
+								"enter",
+								"tab",
+								"escape",
+								"backspace",
+								"delete",
+								"up",
+								"down",
+								"left",
+								"right",
+								"space",
+								"home",
+								"end",
+								"pageup",
+								"pagedown",
+								"help",
+								"f1",
+								"f2",
+								"f3",
+								"f4",
+								"f5",
+								"f6",
+								"f7",
+								"f8",
+								"f9",
+								"f10",
+								"f11",
+								"f12",
+								"f13",
+								"f14",
+								"f15",
+								"f16",
+								"f17",
+								"f18",
+								"f19",
+								"f20",
+								"keypad0",
+								"keypad1",
+								"keypad2",
+								"keypad3",
+								"keypad4",
+								"keypad5",
+								"keypad6",
+								"keypad7",
+								"keypad8",
+								"keypad9",
+								"keypaddecimal",
+								"keypadmultiply",
+								"keypadplus",
+								"keypadminus",
+								"keypaddivide",
+								"keypadequals",
+								"keypadenter",
+								"keypadclear"
+							]
+						},
+						{
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 2,
+							"description": "The character a key types without Shift or Option."
+						}
+					]
+				},
+				"modifiers": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"enum": [
+							"command",
+							"control",
+							"option",
+							"shift"
+						]
+					},
+					"maxItems": 4,
+					"uniqueItems": true
+				},
+				"keys": {
+					"type": "array",
+					"minItems": 1,
+					"maxItems": 16,
+					"items": {
+						"type": "object",
+						"required": [
+							"key"
+						],
+						"properties": {
+							"key": {
+								"anyOf": [
+									{
+										"type": "string",
+										"enum": [
+											"enter",
+											"tab",
+											"escape",
+											"backspace",
+											"delete",
+											"up",
+											"down",
+											"left",
+											"right",
+											"space",
+											"home",
+											"end",
+											"pageup",
+											"pagedown",
+											"help",
+											"f1",
+											"f2",
+											"f3",
+											"f4",
+											"f5",
+											"f6",
+											"f7",
+											"f8",
+											"f9",
+											"f10",
+											"f11",
+											"f12",
+											"f13",
+											"f14",
+											"f15",
+											"f16",
+											"f17",
+											"f18",
+											"f19",
+											"f20",
+											"keypad0",
+											"keypad1",
+											"keypad2",
+											"keypad3",
+											"keypad4",
+											"keypad5",
+											"keypad6",
+											"keypad7",
+											"keypad8",
+											"keypad9",
+											"keypaddecimal",
+											"keypadmultiply",
+											"keypadplus",
+											"keypadminus",
+											"keypaddivide",
+											"keypadequals",
+											"keypadenter",
+											"keypadclear"
+										]
+									},
+									{
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 2,
+										"description": "The character a key types without Shift or Option."
+									}
+								]
+							},
+							"modifiers": {
+								"type": "array",
+								"items": {
+									"type": "string",
+									"enum": [
+										"command",
+										"control",
+										"option",
+										"shift"
+									]
+								},
+								"maxItems": 4,
+								"uniqueItems": true
+							}
+						},
+						"additionalProperties": false
+					}
+				},
+				"repeat": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 32
+				},
+				"expect": {
+					"type": "object",
+					"description": "until and its arguments, as desktop_wait takes them, and an optional timeout_ms.",
+					"required": [
+						"until"
+					],
+					"properties": {
+						"until": {
+							"type": "string",
+							"enum": [
+								"window_appears",
+								"window_gone",
+								"dialog_appears",
+								"dialog_gone",
+								"element_appears",
+								"element_gone",
+								"text_changes",
+								"text_equals",
+								"text_contains",
+								"app_running",
+								"app_frontmost",
+								"app_quit"
+							]
+						},
+						"timeout_ms": {
+							"type": "integer",
+							"minimum": 100,
+							"maximum": 10000
+						}
+					}
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_system_key",
+		"description": "Press one system-wide shortcut, such as Command-Space (Spotlight), Command-Tab, Control-Up (Mission Control) or Command-Shift-5, or one media key: play_pause, next_track, previous_track, volume_up/down, mute, brightness_up/down or keyboard_brightness_up/down (no modifiers). Foreground: no snapshot or target, so it reaches whatever is frontmost, as if typed. The result is unknown even after delivery: observe with desktop_screen, desktop_apps or desktop_windows, and don't repeat toggles. Command with W, Q, H or M is refused. For keys meant for a window, use desktop_key. Optional expect is one desktop_wait condition this input should make true. It must not hold beforehand, or nothing is sent; if the outcome is unknown and it holds within timeout_ms (default 3000, at most 10000), the outcome becomes completed.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"key"
+			],
+			"properties": {
+				"key": {
+					"anyOf": [
+						{
+							"type": "string",
+							"enum": [
+								"enter",
+								"tab",
+								"escape",
+								"backspace",
+								"delete",
+								"up",
+								"down",
+								"left",
+								"right",
+								"space",
+								"home",
+								"end",
+								"pageup",
+								"pagedown",
+								"help",
+								"f1",
+								"f2",
+								"f3",
+								"f4",
+								"f5",
+								"f6",
+								"f7",
+								"f8",
+								"f9",
+								"f10",
+								"f11",
+								"f12",
+								"f13",
+								"f14",
+								"f15",
+								"f16",
+								"f17",
+								"f18",
+								"f19",
+								"f20",
+								"keypad0",
+								"keypad1",
+								"keypad2",
+								"keypad3",
+								"keypad4",
+								"keypad5",
+								"keypad6",
+								"keypad7",
+								"keypad8",
+								"keypad9",
+								"keypaddecimal",
+								"keypadmultiply",
+								"keypadplus",
+								"keypadminus",
+								"keypaddivide",
+								"keypadequals",
+								"keypadenter",
+								"keypadclear",
+								"play_pause",
+								"next_track",
+								"previous_track",
+								"volume_up",
+								"volume_down",
+								"mute",
+								"brightness_up",
+								"brightness_down",
+								"keyboard_brightness_up",
+								"keyboard_brightness_down"
+							]
+						},
+						{
+							"type": "string",
+							"minLength": 1,
+							"maxLength": 2,
+							"description": "The character a key types without Shift or Option."
+						}
+					]
+				},
+				"modifiers": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"enum": [
+							"command",
+							"control",
+							"option",
+							"shift"
+						]
+					},
+					"maxItems": 4,
+					"uniqueItems": true
+				},
+				"expect": {
+					"type": "object",
+					"description": "until and its arguments, as desktop_wait takes them, and an optional timeout_ms.",
+					"required": [
+						"until"
+					],
+					"properties": {
+						"until": {
+							"type": "string",
+							"enum": [
+								"window_appears",
+								"window_gone",
+								"dialog_appears",
+								"dialog_gone",
+								"element_appears",
+								"element_gone",
+								"text_changes",
+								"text_equals",
+								"text_contains",
+								"app_running",
+								"app_frontmost",
+								"app_quit"
+							]
+						},
+						"timeout_ms": {
+							"type": "integer",
+							"minimum": 100,
+							"maximum": 10000
+						}
+					}
+				}
+			}
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_input_source",
+		"description": "List the enabled keyboard input sources (id, name, kind, languages, selected, current, keyboard_layout), or with select set to a listed id, switch to it for every app, with no keys pressed, and read it back. Listing is read-only. Completed when the source reads back as selected (changed false if it already was); unknown when it doesn't within a second, so list again before typing. Sources that aren't enabled are refused: add them in System Settings > Keyboard. An input method's mode may reach the app only after a focus change. Switch back when done.",
+		"inputSchema": {
+			"type": "object",
+			"properties": {
+				"select": {
+					"type": "string",
+					"minLength": 1,
+					"maxLength": 256
+				}
+			},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	},
+	{
+		"name": "desktop_switch_space",
+		"description": "Switch one display to the Space with space_id from a fresh desktop_spaces. Foreground: it presses Mission Control's Control-Left or Control-Right once per step, changing the visible desktop and frontmost app. Completed when WindowServer reports that Space current; otherwise unknown, with space_after, so list again rather than repeating. Refused unless the pointer and frontmost window are on that display (desktop_hover, desktop_focus), the shortcut is on, and the Space is at most 16 steps away.",
+		"inputSchema": {
+			"type": "object",
+			"required": [
+				"space_id"
+			],
+			"properties": {
+				"space_id": {
+					"type": "integer",
+					"minimum": 1,
+					"maximum": 9007199254740991
+				}
+			},
+			"additionalProperties": false
+		},
+		"annotations": {
+			"readOnlyHint": false
+		}
+	}
+]
