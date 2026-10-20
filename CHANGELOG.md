@@ -4,6 +4,19 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-20
+
+### Changed
+
+- The app runs a pure Swift host in place of the Peekaboo Bridge runtime, and bundles its own MCP server, `Desktop Tools.app/Contents/MacOS/desktop-tools-mcp`. Set agents up with that path; Node is no longer needed. Calls are faster, for example `desktop_windows` at a p50 of 6 ms instead of 115 ms and an inspection of a Ghostty window at 42 ms instead of 551 ms, and results have the same text. The app's binaries are about 6 MB in place of 84 MB. ([#143](https://github.com/githubnext/desktop-tools/issues/143))
+- An `npx` setup of `desktop-tools-mcp` at v0.17.0 or later hands over to the app's server. A setup pinned to an earlier tag no longer works with this app: its calls are refused with `CLIENT_OUTDATED`, naming the app's server to set up instead. ([#143](https://github.com/githubnext/desktop-tools/issues/143))
+- `desktop-tools-build --native2` builds the Swift host, client, MCP server and app without Peekaboo; embedders switch with it and `createDesktop({ wire: 2 })`. The default build is unchanged. ([#171](https://github.com/githubnext/desktop-tools/issues/171))
+
+### Known gaps
+
+- `desktop_switch_space` is checked only on a Mac with one Space.
+- Where MenuBarAgent doesn't draw the menu bar, `desktop_menubar_items` lists and clicks status items through their WindowServer windows. This path is unit-tested but not yet checked live.
+
 ## [0.16.1] - 2026-10-19
 
 ### Fixed
@@ -253,7 +266,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The first release: a signed, notarized Desktop Tools menu bar app, and the desktop tools served over MCP. ([#28](https://github.com/githubnext/desktop-tools/pull/28), [#29](https://github.com/githubnext/desktop-tools/pull/29), [#12](https://github.com/githubnext/desktop-tools/pull/12))
 
-[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/githubnext/desktop-tools/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/githubnext/desktop-tools/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/githubnext/desktop-tools/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/githubnext/desktop-tools/compare/v0.14.1...v0.15.0

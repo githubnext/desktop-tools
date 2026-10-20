@@ -9,7 +9,7 @@ Agents find the app only through `desktop.sock`, so the app and its client both 
 - When the app can't start serving, such as while a copy that is quitting still holds the socket, its menu's status line shows why and it retries after 1, 2, 4… seconds, up to 30.
 - While serving, the app watches the socket. If it is removed or replaced, the app publishes it again at once and notes it in its status line and its [log](#approved-agents).
 - Opening the app while it runs makes it check its socket at once, and retry a failed start without waiting.
-- When a call finds no app serving the socket, the client opens the app in the background, which starts it or makes it check its socket, and waits up to 10 seconds for it to serve. Nothing reached the app the first time, so the call then runs once. Only when that fails does the call fail, with `HOST_NOT_RUNNING` or `HOST_NOT_SERVING` and what the client found. Reconnecting the MCP server never helps: each call starts its own client.
+- When a call finds no app serving the socket, the client opens the app in the background, which starts it or makes it check its socket, and waits up to 10 seconds for it to serve. Nothing reached the app the first time, so the call then runs once. Only when that fails does the call fail, with `HOST_NOT_RUNNING` or `HOST_NOT_SERVING` and what the client found. Reconnecting the MCP server never helps: the app's `desktop-tools-mcp` reconnects on the next call after the app restarts.
 
 The client does the same from a shell. Both commands default to the socket beside the `desktop-client` link they are run through:
 
