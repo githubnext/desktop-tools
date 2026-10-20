@@ -106,9 +106,6 @@ struct WaitCondition: Sendable {
 		}
 		let extra = (request.keys ?? []).filter { !allowed.contains($0) && request[$0] != nil }
 		if !extra.isEmpty { throw ToolError("\(until) doesn't use \(extra.joined(separator: ", ")).") }
-		if until.hasPrefix("dialog_") {
-			throw ToolError("desktop_wait's \(until) isn't in the Swift spike yet.")
-		}
 		self.until = until
 		self.request = request
 		timeout = request["timeout_ms"]?.int ?? defaultTimeout
@@ -169,6 +166,82 @@ struct WaitCondition: Sendable {
 		}
 		if let row = listed.rows.first(where: { $0["window_id"]?.int == window }) { return (row, nil) }
 		return (nil, listed.complete ? "window_closed" : nil)
+	}
+
+	/// Whether Accessibility found every window: no row or warning says its enumeration was cut short.
+	static func accessible(_ data: JSON) -> Bool {
+		!(data["windows"]?.array ?? []).contains { $0["observation_reason"]?.string == "accessibility_enumeration_incomplete" }
+			&& !(data["inventory_warnings"]?.array ?? []).contains { warning in
+				let text = warning.string?.lowercased() ?? ""
+				return text.contains("accessibility") || text.contains("timed out")
+			}
+	}
+
+	/// dialog_appears or dialog_gone: desktop_dialog's read of the app, or of the window's sheet.
+	private func checkDialog() async throws -> Check {
+		let appears = until == "dialog_appears"
+		let pid = pid!
+		let target: JSON
+		let accessible: Bool
+		if let window {
+			let data: JSON
+			do { data = try await Mac.windows(pid: pid) } catch {
+				try Task.checkCancellation()
+				if Mac.generation(pid) == nil {
+					// A sheet goes with its window; a dialog can't appear in a window that is gone.
+					return Check(holds: !appears, observation: .object([("pid", JSON(pid)), ("window_id", JSON(window)), ("reason", "app_not_running")]))
+				}
+				throw error
+			}
+			guard let row = data["windows"]?.array?.first(where: { $0["window_id"]?.int == window }) else {
+				if data["inventory_completeness"]?.string == "complete" {
+					return Check(holds: !appears, observation: .object([("pid", JSON(pid)), ("window_id", JSON(window)), ("reason", "window_closed")]))
+				}
+				return Check(holds: false, observation: .object([("pid", JSON(pid)), ("window_id", JSON(window)), ("error", "The window has no exact target in desktop_windows now.")]))
+			}
+			guard let found = row["target"] else {
+				return Check(holds: false, observation: .object([("pid", JSON(pid)), ("window_id", JSON(window)), ("error", "The window has no exact target in desktop_windows now.")]))
+			}
+			target = found
+			accessible = Self.accessible(data)
+		} else {
+			let (rows, complete) = try await findApps()
+			guard let row = rows.first else {
+				return Check(holds: !appears && complete, observation: .object([("pid", JSON(pid)), ("reason", JSON(complete ? "app_not_running" : "app_not_listed"))]))
+			}
+			guard let found = row["target"] else {
+				return Check(holds: false, observation: .object([("pid", JSON(pid)), ("error", "The app has no exact target in desktop_apps now.")]))
+			}
+			target = found
+			accessible = Self.accessible(try await Mac.windows(pid: pid))
+		}
+		let text: String
+		do {
+			let result = try await Tools.dialog(.object([("target", target)]))
+			if !result.isError, let dialog = try? JSON(parsing: Data(result.text.utf8)) {
+				return Check(holds: appears, observation: .object([("dialog", dialog)]))
+			}
+			text = result.text
+		} catch {
+			try Task.checkCancellation()
+			text = (error as? ToolError)?.message ?? String(describing: error)
+		}
+		let lowered = text.lowercased()
+		if !lowered.contains("incomplete") {
+			if lowered.contains("no dialog matched the selected target") || lowered.contains("no active dialog") {
+				// The dialog read skips windows Accessibility can't reach, so it proves absence only when all were reached.
+				if accessible { return Check(holds: !appears, observation: .object([("pid", JSON(pid)), ("dialog", .null)])) }
+				return Check(holds: false, observation: .object([
+					("pid", JSON(pid)), ("dialog", .null),
+					("error", "Accessibility could not reach every window of the app, so no dialog found doesn't prove none is open."),
+				]))
+			}
+			// Several open dialogs are present, though desktop_dialog needs a window to read one.
+			if lowered.contains("dialog target is ambiguous") {
+				return Check(holds: appears, observation: .object([("pid", JSON(pid)), ("dialogs", "several"), ("error", JSON(text))]))
+			}
+		}
+		return Check(holds: false, observation: .object([("pid", JSON(pid)), ("error", JSON(text))]))
 	}
 
 	/// Matching elements of one window, read through Accessibility alone with the wide budget.
@@ -308,6 +381,7 @@ struct WaitCondition: Sendable {
 			}
 			return Check(holds: false, observation: .object([("pid", JSON(pid!)), ("window_id", JSON(window!)), ("inventory_completeness", "partial")]))
 		}
+		if until.hasPrefix("dialog_") { return try await checkDialog() }
 		return memory.rememberTurnOn(textConditions.contains(until) ? try await checkText() : try await checkElement())
 	}
 

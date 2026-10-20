@@ -13,5 +13,9 @@
 	["desktop_wait", {"until": "text_equals", "pid": 67745, "window": 2901, "element": {"role": "AXScrollBar"}, "text": "a", "timeout_ms": 300}],
 	["desktop_wait", {"pid": 67745, "window": 2901, "timeout_ms": 300, "until": "text_contains", "text": "Press"}],
 	["desktop_wait", {"pid": 67745, "window": 2901, "timeout_ms": 300, "until": "text_equals", "text": "nothing like this"}],
-	["desktop_wait", {"pid": 67745, "window": 2901, "timeout_ms": 300, "until": "text_contains", "text": "x", "web_accessibility": false}]
+	["desktop_wait", {"pid": 67745, "window": 2901, "timeout_ms": 300, "until": "text_contains", "text": "x", "web_accessibility": false}],
+	["desktop_wait", {"until": "dialog_gone", "pid": 67745, "window": 2901, "timeout_ms": 2500}],
+	["desktop_wait", {"until": "dialog_appears", "pid": 67745, "window": 2901, "timeout_ms": 2500}],
+	["desktop_wait", {"until": "dialog_gone", "pid": 67745, "window": 999999, "timeout_ms": 2500}],
+	["desktop_wait", {"until": "dialog_appears", "timeout_ms": 300}]
 ]
