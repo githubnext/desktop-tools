@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { constants as osConstants, homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 import { createDesktop } from "./client.js";
@@ -13,6 +14,28 @@ const { values } = parseArgs({
 });
 // Desktop Tools.app links its client and serves its socket here; pass all three to use another host app.
 const state = process.env.DESKTOP_TOOLS_STATE || join(homedir(), ".local", "state", "desktop-tools");
+// An app running the Swift host (#143) bundles its own MCP server beside the client it links, so existing npx configs
+// hand over to it. Any option keeps this server, as does an app without one.
+const bundled = (() => {
+    try {
+        return join(dirname(realpathSync(join(state, "desktop-client"))), "desktop-tools-mcp");
+    }
+    catch {
+        return undefined;
+    }
+})();
+if (Object.keys(values).length === 0 && bundled && existsSync(bundled)) {
+    const server = spawn(bundled, [], { stdio: "inherit" });
+    for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"])
+        process.on(signal, () => server.kill(signal));
+    server.on("error", (error) => {
+        process.stderr.write(`Cannot run ${bundled}: ${error.message}\n`);
+        process.exit(1);
+    });
+    server.on("exit", (code, signal) => process.exit(code ?? (signal ? 128 + osConstants.signals[signal] : 1)));
+    // The bundled server owns stdin and stdout from here.
+    await new Promise(() => { });
+}
 const { client = join(state, "desktop-client"), socket = join(state, "desktop.sock"), name: host = "Desktop Tools", } = values;
 if (values.wire !== undefined && values.wire !== "1" && values.wire !== "2")
     throw new Error("Choose --wire 1 or 2.");

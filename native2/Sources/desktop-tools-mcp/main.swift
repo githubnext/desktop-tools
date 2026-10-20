@@ -10,7 +10,8 @@ let arguments = CommandLine.arguments.dropFirst()
 let app = HostApp.containing()
 let socketPath = arguments.firstIndex(of: "--socket").flatMap { arguments.dropFirst($0 - arguments.startIndex + 1).first }
 	?? ((app?.stateFolder ?? defaultStateFolder()) as NSString).appendingPathComponent("desktop.sock")
-let serverVersion = "0.0.0-spike"
+// The package version the app was built from; a server outside an app has none.
+let serverVersion = app.flatMap { Bundle(url: $0.url)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String } ?? "0.0.0"
 
 // Newest first; an unsupported client version gets the newest, as the MCP lifecycle requires.
 let versions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
