@@ -1,6 +1,6 @@
 # native2: the single-codebase Swift spike (#143)
 
-A Swift MCP server and host with no Peekaboo and no Node. Each tool is ported from what the Node server and the native client send today, and returns the same result, field for field, so a model can't tell them apart except by speed.
+A Swift MCP server and host with no Peekaboo and no Node. It runs beside the shipped stack; [CUTOVER.md](CUTOVER.md) lists what's left before it can replace it. Each tool is ported from what the Node server and the native client send today, and returns the same result, field for field, so a model can't tell them apart except by speed.
 
 ## Layout
 
