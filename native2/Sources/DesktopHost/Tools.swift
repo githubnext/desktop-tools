@@ -13,6 +13,8 @@ public enum Tools {
 			case "desktop_inspect": return try await inspect(arguments)
 			case "desktop_click": return try await click(arguments)
 			case "desktop_wait": return try await wait(arguments)
+			case "desktop_key": return try await key(arguments)
+			case "desktop_type": return try await type(arguments)
 			default:
 				return ToolResult(text: "\(name) isn't in the Swift spike yet.", isError: true)
 			}

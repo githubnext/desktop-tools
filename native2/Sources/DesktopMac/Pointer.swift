@@ -22,14 +22,26 @@ public struct Delivery: Sendable {
 	public let mechanism: String?
 	public let evidence: String
 	public let units: Int?
+	/// Fields the action result adds, such as which receiver got keys.
+	public var fields: [(String, JSON)] = []
 
-	static func accepted(_ mechanism: String, units: Int = 1) -> Delivery {
+	public init(state: State, mechanism: String?, evidence: String, units: Int?) {
+		self.state = state
+		self.mechanism = mechanism
+		self.evidence = evidence
+		self.units = units
+	}
+
+	public static func accepted(_ mechanism: String, units: Int = 1) -> Delivery {
 		Delivery(state: .dispatchedUnverified, mechanism: mechanism, evidence: "delivery_accepted", units: units)
 	}
 
+	/// Set when a tool demands more than delivery, as web typing demands a read-back.
+	public var unverified = false
+
 	/// completed, or unknown when the input may not have finished.
 	public var outcome: String {
-		state == .indeterminate || evidence == "operation_still_running" ? "unknown" : "completed"
+		unverified || state == .indeterminate || evidence == "operation_still_running" ? "unknown" : "completed"
 	}
 
 	public var json: JSON {
@@ -223,7 +235,7 @@ extension Mac {
 		return Delivery(state: .indeterminate, mechanism: "accessibility_value", evidence: "completion_unknown", units: 1)
 	}
 
-	private static func settable(_ element: AXUIElement, _ attribute: String) -> Bool {
+	static func settable(_ element: AXUIElement, _ attribute: String) -> Bool {
 		var value = DarwinBoolean(false)
 		return AXUIElementIsAttributeSettable(element, attribute as CFString, &value) == .success && value.boolValue
 	}
