@@ -213,8 +213,27 @@ extension Tools {
 				refusal.reason = "operation_unsupported"
 				return await failed(refusal)
 			}
-			// Peekaboo's foreground Go to Folder flow isn't ported to the spike.
-			return await plain("DESKTOP_ACTION_FAILED", "The Swift spike does not enter file-dialog paths yet. No path was sent.")
+			// The host activates the panel's app and uses Go to Folder or the panel's path field, then reads the result back.
+			do {
+				let path = path!.string!
+				let answer = try await run { try Mac.chooseDialogPath(pid: pid, windowID: windowID, windows: windows, path: path) }
+				action += [("native_outcome", answer.delivery.json), ("details", .object(answer.details.map { ($0, JSON($1)) }))]
+				receipt = target.receipt(answer.windowID)
+				guard answer.delivery.state == .confirmedChange else {
+					let named = answer.details.contains { $0.0 == "filename" } ? " and name" : ""
+					return await finish("unknown", requires: true, error: errorJSON(
+						"DESKTOP_ACTION_UNVERIFIED", "The path was entered, but the panel didn't read back the chosen folder\(named).",
+						hint: "List the dialog to check its folder and name before pressing its default button; do not blindly repeat the path."))
+				}
+				return await finish("completed", requires: true)
+			} catch let refusal as Refusal {
+				return await failed(refusal)
+			} catch let refusal as DialogRefusal {
+				return await failed(refusal.refusal, windowID: refusal.windowID)
+			} catch let failure as DialogUnconfirmed {
+				action.append(("details", .object(failure.details.map { ($0, JSON($1)) })))
+				return await unconfirmed(failure)
+			}
 		}
 		let index = field!.int!, value = text!.string!
 		let fields = read.fields.filter { $0.index == index }

@@ -20,11 +20,17 @@ They share no socket, state folder, lock or hotkey. native2 takes none of Peekab
 ### Tools that don't do everything yet
 
 - **desktop_fill_password** fills only inside the dylib, where the app's hook decides. The standalone host refuses.
-- **desktop_insert format files into Finder** sends Command-V but Finder doesn't paste, so it ends unknown and leaves the files on the clipboard (live-check #114). Peekaboo first prepares a background window that isn't active: it makes it key through SkyLight and clicks its title bar with a window-routed event (`BackgroundWindowKeyboardPreparation`, `BackgroundWindowActivationDriver`, `BackgroundWindowChromeReader`). native2 has the routed click but not the rest.
 - The clipboard isn't reserved across calls, as Peekaboo's `ClipboardPasteTransactionGate` does while a paste is pending.
-- **desktop_dialog_answer** doesn't type a path into an Open or Save panel.
 - **desktop_menubar_items** has no fallback when MenuBarAgent doesn't draw the menu bar.
 - **desktop_switch_space** is checked only up to its refusals, on a Mac with one Space.
+
+### Limits both stacks share
+
+Found while porting desktop_dialog_answer's path entry, which now follows Peekaboo's (focus the panel, expand it, set its path field or use Go to Folder, set a Save panel's name, read both back):
+
+- A Save sheet on this macOS has no `PathTextField`, so its folder can't be read back and a path answer ends unknown even when Go to Folder took it. The name is read back.
+- A standalone Open panel (TextEdit's File > Open…) is an `AXStandardWindow`, which path entry and button presses don't treat as a dialog, so both refuse it; desktop_dialog still lists it.
+- desktop_key refuses a window while a sheet holds its keyboard focus, so a stray sheet such as Go to Folder can only be closed with a foreground desktop_system_key.
 
 ### Runtime dylib
 
@@ -41,6 +47,7 @@ They share no socket, state folder, lock or hotkey. native2 takes none of Peekab
 A model shouldn't care about any of these, but they make Node's tests and the parity files differ:
 
 - The route is `local`, not `bridge`, and Peekaboo's `diagnostics` aren't sent.
+- A paste into an app that isn't active first makes its window key, as Peekaboo does: a SkyLight activation record, then a window-routed click on blank title-bar chrome. A window with no blank chrome in its title row, such as Finder's with its toolbar, is refused before input, as on Node, with a hint to bring it forward. live-check #114 therefore focuses Finder first, which Node's foreground desktop_open did implicitly.
 - A key refused because focus isn't in the window says refused, since nothing was sent; Node says unknown.
 - desktop_wait reads the app's full inventory. Node's size-bounded apps list can report a running app as `app_not_listed`.
 - An unknown but well-formed `ps1_` snapshot says the observation no longer belongs to the running desktop.
@@ -70,7 +77,7 @@ Each step ships on its own and can be reverted.
 
 1. **Keep it from rotting.** Done: CI builds and tests native2 and checks the contract. Port each tool change to native2 in the same PR, with its calls entries.
 2. **Close the tool gaps** above. Run each fix through its calls and steps files.
-3. **Finish the live checks** with the user's go-ahead, since they take over the pointer and the front app. Done: steps-pointer, steps-manage, the Dock step, and live-check #70, #77, #79, #81, #82, #86, #88, #89, #92, #99, #107, #110, #111 and #114 through `--server`, where Swift and Node now differ only on #114 above. Still to run: the Safari checks with Safari closed, the bench on real apps, and #162.
+3. **Finish the live checks** with the user's go-ahead, since they take over the pointer and the front app. Done: steps-pointer, steps-manage, the Dock step, and live-check #70, #77, #79, #81, #82, #86, #88, #89, #92, #99, #107, #110, #111 and #114 through `--server`, where Swift and Node now pass the same checks. Still to run: the Safari checks with Safari closed, the bench on real apps, and #162.
 4. **Harden the runtime.** The socket lease (`<socket>.lock`, as Peekaboo's) and draining calls on stop are in. Still to do: sign the dylib, client and MCP binary with the team identity. Run the approval prompt, pause and SELF_TARGET checks through the app.
 5. **Bridge the wire.** Done: native2's one-shot `desktop-tools-client` (`<client> <socket> <tool> [--verbose]`, arguments on stdin, one JSON line out, opening its containing app in the background when no host serves) and `createDesktop({ wire: 2 })`. `createDesktop`, `/protocol`, `/tools`, `dist/mcp.js` and ace keep working against a native2 host by changing one option.
 6. **Dogfood in the app.** The switch is in: `npm run dev-app -- --native2` bundles native2's dylib and client in place of `native/`'s, and native2's client answers `desktop-client status` and `repair` with `native/`'s output. The bundled dylib is 4.3 MB and the client 0.3 MB, against 40 MB and 43 MB for `native/`'s. In the dev app, with its own grants, `live-check` through `dist/mcp.js --wire 2` passes the same 26 checks as the standalone host, failing only #114's Finder files paste (see the tool gaps). Remaining: run the dev app daily with `DESKTOP_TOOLS_STATE=~/.local/state/desktop-tools-dev node dist/mcp.js --wire 2`.

@@ -573,3 +573,274 @@ extension Mac {
 		return DialogAnswer(delivery: accepted, details: details, windowID: candidate.window.id)
 	}
 }
+
+// MARK: File-dialog paths, ported from Peekaboo's DialogService+FileDialogPath and ensureFileDialogExpandedIfNeeded (MIT).
+
+/// An existing directory is chosen as the panel's directory; anything else names a file in an existing one.
+struct FileDialogPathChoice: Equatable {
+	let path: String
+	let directory: String
+	let fileName: String?
+
+	init(_ path: String) throws {
+		let canonical = Self.canonical(path)
+		var isDirectory: ObjCBool = false
+		if FileManager.default.fileExists(atPath: canonical, isDirectory: &isDirectory), isDirectory.boolValue {
+			(self.path, directory, fileName) = (canonical, canonical, nil)
+			return
+		}
+		// A missing file's symlinks don't resolve, so resolve its folder on its own.
+		let url = URL(fileURLWithPath: path).standardizedFileURL
+		let parent = Self.canonical(url.deletingLastPathComponent().path)
+		let name = url.lastPathComponent
+		guard !name.isEmpty, name != "/", FileManager.default.fileExists(atPath: parent, isDirectory: &isDirectory), isDirectory.boolValue else {
+			throw refusal("The path's folder \(parent) doesn't exist; no path was entered.", hint: "Choose a path inside an existing folder.",
+			              reason: "invalid_request")
+		}
+		(self.path, directory, fileName) = ((parent as NSString).appendingPathComponent(name), parent, name)
+	}
+
+	static func canonical(_ path: String) -> String {
+		URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+	}
+}
+
+private let pathEntryFailed = "File-dialog path entry stopped after foreground input was sent."
+private let pathEntryHint = "List the dialog to check its folder and name before pressing its default button; do not blindly repeat the path."
+
+/// Posts one chord to whatever is frontmost, holding it for `hold` seconds as HotkeyService does.
+private func postChord(_ code: CGKeyCode, _ flags: CGEventFlags, hold: TimeInterval = 0.05) throws {
+	let source = CGEventSource(stateID: .hidSystemState)
+	guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
+	      let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false)
+	else { throw ToolFailure("Failed to create keyboard events") }
+	down.flags = flags
+	up.flags = flags
+	down.post(tap: .cghidEventTap)
+	Thread.sleep(forTimeInterval: hold)
+	up.post(tap: .cghidEventTap)
+}
+
+/// Types text to whatever is frontmost, one character at a time with `delay` between them.
+private func postText(_ value: String, delay: TimeInterval) throws {
+	let source = CGEventSource(stateID: .hidSystemState)
+	for character in value {
+		let units = Array(String(character).utf16)
+		guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+		      let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+		else { throw ToolFailure("Failed to create keyboard events") }
+		down.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+		up.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+		down.post(tap: .cghidEventTap)
+		up.post(tap: .cghidEventTap)
+		Thread.sleep(forTimeInterval: delay)
+	}
+}
+
+private func identified(_ fields: [AXUIElement], _ identifier: String) -> AXUIElement? {
+	fields.first { text($0, kAXIdentifierAttribute) == identifier }
+}
+
+/// The disclosure button of a collapsed Save panel, which hides its path controls.
+private func collapsedDisclosure(_ dialog: AXUIElement, budget: Budget) throws -> AXUIElement? {
+	var visited: Set<Node> = []
+	var stack = [dialog]
+	var found: AXUIElement?
+	while let element = stack.popLast() {
+		try budget.check()
+		guard visited.insert(Node(element: element)).inserted else { continue }
+		let identifier = text(element, kAXIdentifierAttribute) ?? ""
+		let title = (text(element, kAXTitleAttribute) ?? "").lowercased()
+		let description = (text(element, kAXDescriptionAttribute) ?? "").lowercased()
+		if text(element, kAXRoleAttribute) == "AXDisclosureTriangle"
+			|| ["DISCLOSURE", "ShowDetails", "HideDetails"].contains(where: { identifier.localizedCaseInsensitiveContains($0) })
+			|| ["show details", "hide details"].contains(where: { title.contains($0) || description.contains($0) }) {
+			found = element
+			break
+		}
+		stack.append(contentsOf: children(element, strict: false).reversed())
+	}
+	guard let found else { return nil }
+	let title = (text(found, kAXTitleAttribute) ?? "").lowercased()
+	let description = (text(found, kAXDescriptionAttribute) ?? "").lowercased()
+	// Click it only when it looks collapsed, or when its state can't be read.
+	return title.contains("show details") || description.contains("show details") || (title.isEmpty && description.isEmpty) ? found : nil
+}
+
+extension Mac {
+	/// Enters a path into the one Open or Save panel the target selects, as Peekaboo does in the foreground: brings
+	/// the panel's window forward, expands a collapsed Save panel, sets its path field or uses Go to Folder, sets a
+	/// Save panel's name, and reads the folder and name back. Throws Refusal before any input and DialogUnconfirmed after.
+	public static func chooseDialogPath(pid: pid_t, windowID: Int?, windows: [DialogWindow], path: String) throws -> DialogAnswer {
+		let choice = try FileDialogPathChoice(path)
+		let (candidate, generation) = try onlyCandidate(pid: pid, windowID: windowID, windows: windows, structuralOnly: true)
+		let dialog = candidate.dialog
+		let budget = Budget()
+		guard try isFileDialog(dialog, budget: budget) else {
+			throw DialogRefusal(refusal: refusal("The dialog is not an Open or Save panel; no path was entered.",
+			                                     hint: "Answer it with a button or field instead.", reason: "operation_unsupported"),
+			                    windowID: candidate.window.id)
+		}
+		var steps = Steps()
+		var details = targetDetails(pid, generation, candidate.window.id)
+		func stopped(_ cause: String) -> DialogUnconfirmed {
+			var failure = DialogUnconfirmed(delivery: steps.outcome(.indeterminate, evidence: "completion_unknown"),
+			                                message: pathEntryFailed, details: details + [("cause", cause)])
+			failure.windowID = candidate.window.id
+			return failure
+		}
+		/// What has focus instead, for the failure's cause.
+		func focusDescription() -> String {
+			let front = Mac.frontmost()?.pid
+			let app = AXUIElementCreateApplication(pid)
+			AXUIElementSetMessagingTimeout(app, 0.5)
+			let focused = AX.element(AX.value(app, kAXFocusedWindowAttribute))
+			return "frontmost pid \(front.map(String.init) ?? "none"), focused window "
+				+ (focused.map { "\(text($0, kAXRoleAttribute) ?? "?") \(AX.windowID($0).map(String.init) ?? "?")" } ?? "none")
+		}
+		/// Whether the app is frontmost with focus in the panel. A sheet takes the focus itself, as Go to Folder's does
+		/// inside the panel, so the focused window can be a sheet within the window rather than the window.
+		func dialogFocused() -> Bool {
+			guard Mac.frontmost()?.pid == pid else { return false }
+			let app = AXUIElementCreateApplication(pid)
+			AXUIElementSetMessagingTimeout(app, 0.5)
+			guard let focused = AX.element(AX.value(app, kAXFocusedWindowAttribute)) else { return false }
+			return CFEqual(focused, candidate.axWindow) || CFEqual(focused, dialog) || AX.windowID(focused) == candidate.window.id
+				|| presence(dialog, in: focused) == true || presence(focused, in: candidate.axWindow) == true
+		}
+		/// Brings the panel forward as FocusManagementService does: activate its app, then make its window main and raise it.
+		func focusDialog() throws {
+			if dialogFocused() { return }
+			if Mac.frontmost()?.pid != pid, let app = NSRunningApplication(processIdentifier: pid) {
+				if Mac.activate(app) { steps.record("native_framework") }
+				for _ in 0..<30 where !dialogFocused() { Thread.sleep(forTimeInterval: 0.1) }
+				if dialogFocused() { return }
+			}
+			if AXUIElementSetAttributeValue(candidate.axWindow, kAXMainAttribute as CFString, kCFBooleanTrue) == .success {
+				steps.record("accessibility_value")
+			}
+			if AXUIElementPerformAction(candidate.axWindow, kAXRaiseAction as CFString) == .success { steps.record("accessibility_action") }
+			for _ in 0..<20 where !dialogFocused() { Thread.sleep(forTimeInterval: 0.1) }
+			guard dialogFocused() else {
+				throw Dispatched(message: "The exact dialog did not have verified foreground focus before keyboard input.",
+				                 hint: "Focus the exact dialog or enable automatic focus before retrying.", cause: "Focus verification timed out for window \(candidate.window.id): \(focusDescription()).")
+			}
+		}
+		/// Keys go to whatever is frontmost, so each needs the panel focused first.
+		func requireFocus() throws {
+			guard dialogFocused() else {
+				let cause = "The panel's window lost keyboard focus: \(focusDescription())."
+				if steps.dispatched { throw stopped(cause) }
+				throw DialogRefusal(refusal: refusal("The exact dialog did not have verified foreground focus before keyboard input.",
+				                                     hint: "Focus the exact dialog or enable automatic focus before retrying."),
+				                    windowID: candidate.window.id)
+			}
+		}
+		func setField(_ field: AXUIElement, to value: String) throws {
+			if Mac.settable(field, kAXValueAttribute),
+			   AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, value as CFString) == .success {
+				steps.record("accessibility_value")
+				return
+			}
+			try requireFocus()
+			try postChord(0, .maskCommand)
+			steps.record("global_events")
+			Thread.sleep(forTimeInterval: 0.075)
+			try postText(value, delay: 0.005)
+			steps.record("global_events", units: value.count)
+		}
+		func focusField(_ field: AXUIElement) {
+			guard flag(field, kAXFocusedAttribute) != true else { return }
+			if Mac.settable(field, kAXFocusedAttribute),
+			   AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success {
+				steps.record("accessibility_value")
+			}
+		}
+		func currentFields() throws -> [AXUIElement] { try textFields(dialog, budget: Budget()) }
+		func directory() throws -> String? {
+			guard let value = text(identified(try currentFields(), "PathTextField") ?? dialog, kAXValueAttribute), value.hasPrefix("/") else { return nil }
+			return FileDialogPathChoice.canonical(value)
+		}
+		func goToFolder(_ destination: String) throws {
+			let before = try currentFields()
+			try requireFocus()
+			try postChord(5, [.maskCommand, .maskShift])  // Command-Shift-G
+			steps.record("global_events")
+			Thread.sleep(forTimeInterval: 0.3)
+			let added = try currentFields().filter { field in !before.contains { CFEqual($0, field) } }
+			if added.count == 1, Mac.settable(added[0], kAXValueAttribute) {
+				try setField(added[0], to: destination)
+			} else {
+				try requireFocus()
+				try postChord(0, .maskCommand)
+				steps.record("global_events")
+				Thread.sleep(forTimeInterval: 0.075)
+				try postText(destination, delay: 0.005)
+				steps.record("global_events", units: destination.count)
+			}
+			try requireFocus()
+			try postChord(36, [])  // Return
+			steps.record("global_events")
+			Thread.sleep(forTimeInterval: 0.45)
+		}
+
+		do {
+			try focusDialog()
+			if let disclosure = try collapsedDisclosure(dialog, budget: budget) {
+				if AXUIElementPerformAction(disclosure, kAXPressAction as CFString) == .success { steps.record("accessibility_action") }
+				Thread.sleep(forTimeInterval: 0.25)
+			}
+			let isSavePanel = identified(try currentFields(), "saveAsNameTextField") != nil
+			// A Save panel takes the name in its own field; an Open panel selects the file Go to Folder reveals.
+			let destination = isSavePanel ? choice.directory : choice.path
+			var method: String
+			if destination == choice.directory, let pathField = identified(try currentFields(), "PathTextField") {
+				method = "path_textfield"
+				focusField(pathField)
+				try setField(pathField, to: destination)
+				try requireFocus()
+				try postChord(36, [])
+				steps.record("global_events")
+				Thread.sleep(forTimeInterval: 0.25)
+				if try directory() != choice.directory {
+					method += "+go_to_folder"
+					try goToFolder(destination)
+				}
+			} else {
+				method = "go_to_folder"
+				try goToFolder(destination)
+			}
+			// Navigation can rebuild the panel's fields, so find the name field again.
+			let nameField = isSavePanel ? identified(try currentFields(), "saveAsNameTextField") : nil
+			if let fileName = choice.fileName, let nameField {
+				focusField(nameField)
+				try setField(nameField, to: fileName)
+				Thread.sleep(forTimeInterval: 0.15)
+			}
+			let readback = try directory()
+			let name = nameField.flatMap { text($0, kAXValueAttribute) }
+			let directoryVerified = readback == choice.directory
+			let nameVerified = choice.fileName.map { name == $0 } ?? true
+			// An Open panel's selection has no readback here, so choosing a file in one stays unverified.
+			let verified = directoryVerified && nameVerified && (choice.fileName == nil || nameField != nil)
+			details += [("path", choice.path), ("directory", choice.directory), ("path_navigation_method", method),
+			            ("panel", isSavePanel ? "save" : "open"), ("directory_readback", readback ?? ""),
+			            ("directory_verified", String(directoryVerified))]
+			if let fileName = choice.fileName {
+				details += [("filename", fileName), ("filename_readback", name ?? ""),
+				            ("filename_verified", String(nameField != nil && nameVerified))]
+			}
+			let delivery = steps.outcome(verified ? .confirmedChange : .dispatchedUnverified,
+			                             evidence: verified ? "verified_change" : "delivery_accepted")
+			return DialogAnswer(delivery: delivery, details: details, windowID: candidate.window.id)
+		} catch let failure as Dispatched {
+			guard steps.dispatched else {
+				throw DialogRefusal(refusal: refusal(failure.message, hint: failure.hint), windowID: candidate.window.id)
+			}
+			throw stopped(failure.cause ?? failure.message)
+		} catch let failure as ToolFailure {
+			guard steps.dispatched else { throw DialogRefusal(refusal: refusal(failure.description), windowID: candidate.window.id) }
+			throw stopped(failure.description)
+		}
+	}
+}

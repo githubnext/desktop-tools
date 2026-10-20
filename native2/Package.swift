@@ -24,7 +24,7 @@ let package = Package(
 		.executableTarget(name: "desktop-tools-mcp", dependencies: ["DesktopProtocol"]),
 		.executableTarget(name: "desktop-tools-client", dependencies: ["DesktopProtocol"]),
 		.testTarget(name: "CoreTests", dependencies: ["DesktopCore", "DesktopProtocol"]),
-		.testTarget(name: "RuntimeTests", dependencies: ["DesktopTools", "DesktopHost", "DesktopProtocol"]),
+		.testTarget(name: "RuntimeTests", dependencies: ["DesktopTools", "DesktopHost", "DesktopMac", "DesktopProtocol"]),
 	],
 	swiftLanguageModes: [.v6]
 )
