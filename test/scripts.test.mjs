@@ -15,3 +15,13 @@ test("every name a script imports from dist/ is exported", async () => {
 		}
 	}
 });
+
+// native2 builds the menu bar app from its own copy until native/ is removed (#143), so the two mustn't drift.
+test("native/ and native2 build the same menu bar app", () => {
+	const copies = ["../native/sources/app/", "../native2/Sources/desktop-tools-app/"].map((path) => new URL(path, import.meta.url));
+	const [names, others] = copies.map((dir) => readdirSync(dir).sort());
+	assert.deepEqual(others, names);
+	for (const name of names) {
+		assert.equal(readFileSync(new URL(name, copies[1]), "utf8"), readFileSync(new URL(name, copies[0]), "utf8"), `${name} differs`);
+	}
+});

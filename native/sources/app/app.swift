@@ -1,6 +1,11 @@
 import AppKit
 import Darwin
+// native2 builds this same shell from its own copy (#143); the two stay identical until native/ is removed.
+#if canImport(DesktopCore)
+import DesktopCore
+#else
 import DesktopToolsCallers
+#endif
 
 // The runtime is loaded, not linked, so the app stays a thin host for the same library embedding apps ship.
 private struct Runtime {

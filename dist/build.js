@@ -32,6 +32,50 @@ const version = /Swift version (\d+)\.(\d+)/.exec(swift.stdout ?? "");
 if (swift.status !== 0 || !version
     || Number(version[1]) * 100 + Number(version[2]) < 602)
     throw new Error("Native desktop tools require Xcode with Swift 6.2 or newer");
+const release = [
+    "--configuration",
+    "release",
+    "--force-resolved-versions",
+    // App bundles keep any needed Swift runtime libraries in Contents/Frameworks.
+    "-Xlinker",
+    "-rpath",
+    "-Xlinker",
+    "@loader_path/../Frameworks",
+];
+mkdirSync(out, { recursive: true });
+const licenses = join(out, "Licenses");
+// Every artifact carries the notices of what it links; other files in <out>/Licenses stay.
+const notices = (source, identity) => {
+    const files = readdirSync(source).filter((name) => /^(LICENSE|LICENCE|NOTICE)([.-].*)?$/i.test(name));
+    if (!files.length)
+        throw new Error(`The native dependency ${identity} has no license file`);
+    mkdirSync(join(licenses, identity), { recursive: true });
+    for (const name of files) {
+        // Checked-out notices are read-only and copies keep that mode, so replace each one.
+        rmSync(join(licenses, identity, name), { force: true });
+        copyFileSync(join(source, name), join(licenses, identity, name));
+    }
+};
+// The pure Swift host (#143) exports native/'s C ABI and has no dependencies, so it builds without Peekaboo.
+if (values.native2) {
+    // A scratch folder shared with native/'s build gets its own subfolder, since two packages can't share one.
+    const native2Scratch = values.scratch ? join(scratch, "native2") : join(root, "native2", ".build");
+    const native2 = ["xcrun", "swift", "build", "--package-path", join(root, "native2"), "--scratch-path", native2Scratch, ...release];
+    run(native2);
+    const located = spawn([...native2, "--show-bin-path"]);
+    if (located.status !== 0)
+        throw new Error("Cannot locate the native2 build products");
+    for (const name of ["libDesktopTools.dylib", "desktop-tools-client", "desktop-tools-mcp", "desktop-tools-app"]) {
+        copyFileSync(join(located.stdout.trim(), name), join(out, name));
+    }
+    // Notices left by a native/ build name code this build doesn't ship.
+    const resolved = JSON.parse(readFileSync(join(native, "Package.resolved"), "utf8"));
+    for (const identity of ["peekaboo", ...resolved.pins.map((pin) => pin.identity)]) {
+        rmSync(join(licenses, identity), { recursive: true, force: true });
+    }
+    notices(root, "desktop-tools");
+    process.exit(0);
+}
 const package_ = ["--package-path", native, "--scratch-path", scratch];
 run(["xcrun", "swift", "package", ...package_, "--force-resolved-versions", "resolve"]);
 const resolved = JSON.parse(readFileSync(join(native, "Package.resolved"), "utf8"));
@@ -54,54 +98,17 @@ const dropped = [...requested].filter((name) => !remote.has(name) || excluded.ha
 if (dropped.length) {
     throw new Error(`The embedded host would drop these allowed operations: ${dropped.join(", ")}`);
 }
-const release = [
-    "--configuration",
-    "release",
-    "--force-resolved-versions",
-    // App bundles keep any needed Swift runtime libraries in Contents/Frameworks.
-    "-Xlinker",
-    "-rpath",
-    "-Xlinker",
-    "@loader_path/../Frameworks",
-];
 const build = ["xcrun", "swift", "build", ...package_, ...release];
 run(build);
 const location = spawn([...build, "--show-bin-path"]);
 if (location.status !== 0)
     throw new Error("Cannot locate the native build products");
 const products = location.stdout.trim();
-mkdirSync(out, { recursive: true });
 for (const name of ["libDesktopTools.dylib", "desktop-tools-client", "desktop-tools-app"]) {
     copyFileSync(join(products, name), join(out, name));
 }
-// The pure Swift host (#143) exports the same C ABI, so the app runs it in place of native/'s runtime and client.
-if (values.native2) {
-    const native2 = ["xcrun", "swift", "build", "--package-path", join(root, "native2"), ...release];
-    run(native2);
-    const located = spawn([...native2, "--show-bin-path"]);
-    if (located.status !== 0)
-        throw new Error("Cannot locate the native2 build products");
-    for (const name of ["libDesktopTools.dylib", "desktop-tools-client", "desktop-tools-mcp"]) {
-        copyFileSync(join(located.stdout.trim(), name), join(out, name));
-    }
-}
-else {
-    // native/ has no MCP binary, so one left by a native2 build would be bundled with the wrong host.
-    rmSync(join(out, "desktop-tools-mcp"), { force: true });
-}
-// Every artifact carries the notices of what it links; other files in <out>/Licenses stay.
-const licenses = join(out, "Licenses");
-const notices = (source, identity) => {
-    const files = readdirSync(source).filter((name) => /^(LICENSE|LICENCE|NOTICE)([.-].*)?$/i.test(name));
-    if (!files.length)
-        throw new Error(`The native dependency ${identity} has no license file`);
-    mkdirSync(join(licenses, identity), { recursive: true });
-    for (const name of files) {
-        // Checked-out notices are read-only and copies keep that mode, so replace each one.
-        rmSync(join(licenses, identity, name), { force: true });
-        copyFileSync(join(source, name), join(licenses, identity, name));
-    }
-};
+// native/ has no MCP binary, so one left by a native2 build would be bundled with the wrong host.
+rmSync(join(out, "desktop-tools-mcp"), { force: true });
 notices(root, "desktop-tools");
 notices(peekaboo, "peekaboo");
 for (const { identity } of resolved.pins) {

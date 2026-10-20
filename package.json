@@ -13,7 +13,7 @@
 		"./package.json": "./package.json"
 	},
 	"bin": { "desktop-tools-build": "dist/build.js", "desktop-tools-app": "dist/app.js", "desktop-tools-mcp": "dist/mcp.js" },
-	"files": ["dist", "native/Package.swift", "native/Package.resolved", "native/sources", "native/resources", "native/vendor/Peekaboo/Package.swift", "native/vendor/Peekaboo/LICENSE", "native/vendor/Peekaboo/Core/PeekabooFoundation/Sources", "native/vendor/Peekaboo/Core/PeekabooProtocols/Sources", "native/vendor/Peekaboo/Core/PeekabooAutomationKit/Sources", "native/vendor/Peekaboo/Core/PeekabooCore/Sources/PeekabooBridge", "LICENSE", "README.md"],
+	"files": ["dist", "native/Package.swift", "native/Package.resolved", "native/sources", "native/resources", "native/vendor/Peekaboo/Package.swift", "native/vendor/Peekaboo/LICENSE", "native/vendor/Peekaboo/Core/PeekabooFoundation/Sources", "native/vendor/Peekaboo/Core/PeekabooProtocols/Sources", "native/vendor/Peekaboo/Core/PeekabooAutomationKit/Sources", "native/vendor/Peekaboo/Core/PeekabooCore/Sources/PeekabooBridge", "native2/Package.swift", "native2/Sources", "LICENSE", "README.md"],
 	"scripts": {
 		"build:js": "tsc",
 		"test": "node --test 'test/*.test.mjs'",
