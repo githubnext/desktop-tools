@@ -15,7 +15,7 @@ final class AgentWindow {
 	private static let tint = NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1).cgColor
 	/// The tint darkened, to edge the label.
 	private static let rim = NSColor(srgbRed: 0.55, green: 0.27, blue: 0.18, alpha: 1).cgColor
-	private static let labelFont = NSFont.systemFont(ofSize: 10, weight: .semibold)
+	private static let labelFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
 	private static let idle: Duration = .seconds(4)
 	/// Room around the window for the outline and the label that straddles its bottom edge.
 	private static let margin: CGFloat = 16
