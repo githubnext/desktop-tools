@@ -141,13 +141,17 @@ const modifiers: JsonSchema = {
 
 /**
  * Rules every desktop tool shares, which the tool descriptions don't repeat; a host's agent guidance should include them.
- * `app` names the signed app that holds the macOS permissions, whose menu pauses input.
+ * `app` names the signed app that holds the macOS permissions, whose menu pauses input. `wire` 2 gives native2's rules (#143),
+ * where launching and opening stay in the background unless asked to activate (#162).
  */
-export function desktopToolRules(app: string): string[] {
+export function desktopToolRules(app: string, wire: 1 | 2 = 1): string[] {
 	return [
 		"Find targets with desktop_apps and desktop_windows, and pass them back unchanged; a stale target is refused, never redirected. Check a window's availability before acting: its hint names the tool that recovers it.",
 		"Input acts on a desktop_inspect snapshot: pass its snapshot_id, with element IDs from it or points as fractions of its screenshot from the top-left. Each snapshot is single-use; inspect again after every action.",
 		"Input is background unless its tool says foreground: background input reaches the exact window without moving the pointer or changing the frontmost app, while foreground input uses the real pointer or keys, or brings an app forward.",
+		...(wire === 2
+			? ["Work in the background so the user's typing isn't taken: launch and open apps without activate, and bring an app forward only for a step whose tool says foreground or when the user asks to see it."]
+			: []),
 		"completed means the host delivered the input to the exact target, or read the change back where the tool says so; unknown means it may or may not have taken effect; refused means nothing was sent.",
 		`If a refusal says input is paused, the user paused agent input in ${app}: tell them, and wait for them to resume it from its menu. Observing still works; don't retry or work around the pause.`,
 		`CALLER_NOT_APPROVED means the user hasn't allowed this agent in ${app}, which asks them once per agent: tell them to choose Allow in its prompt or under Approved Agents in its menu, then retry. SELF_TARGET_REFUSED means the input would reach ${app}'s own menu, prompt or window, which only the user may answer: ask them, and don't work around it.`,
@@ -183,10 +187,14 @@ const webAccessibility: JsonSchema = {
 };
 const webAccessibilityNote =
 	"in a Chromium or Electron app, or a window whose web area is nearly empty, it first turns on the app's web accessibility so web content appears, once per app launch, and reports web_accessibility; it stays on until the app quits. Pass web_accessibility false to leave the app as it is.";
+// native2 launches and opens in the background unless asked to activate (#162).
+const backgroundNote =
+	"Background unless activate is true: macOS starts the app or hands it the item without bringing it forward, so the user keeps typing where they are. Pass activate only when a later step is foreground or the user asks to see the app; activate brings the app forward and may switch Spaces.";
 const saveNote =
 	"save_path, an absolute .png path in an existing folder, keeps the full-resolution capture; region, in global points, saves only part of it; an existing file needs overwrite true.";
 
-export function desktopTools({ place, app }: { place: string; app: string }): DesktopTool[] {
+export function desktopTools({ place, app, wire = 1 }: { place: string; app: string; wire?: 1 | 2 }): DesktopTool[] {
+	const activate: Record<string, JsonSchema> = wire === 2 ? { activate: { type: "boolean" } } : {};
 	return [
 		{
 			name: "desktop_clipboard_read",
@@ -274,11 +282,11 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 			name: "desktop_launch",
 			op: "launch",
 			description:
-				`Launch or activate one app by absolute .app path or exact bundle ID. Foreground: it brings the app forward and may switch Spaces. Completed means it is running, not that a window is ready; created_windows lists windows that appeared (attribution exclusive, ambiguous or none). Opens no documents (use desktop_open), extra instances or relaunches. Timeout or interruption is unknown: the app may still open, so check desktop_apps before launching again.`,
+				`${wire === 2 ? "Launch one app" : "Launch or activate one app"} by absolute .app path or exact bundle ID. ${wire === 2 ? backgroundNote : "Foreground: it brings the app forward and may switch Spaces."} Completed means it is running, not that a window is ready; created_windows lists windows that appeared (attribution exclusive, ambiguous or none). Opens no documents (use desktop_open), extra instances or relaunches. Timeout or interruption is unknown: the app may still open, so check desktop_apps before launching again.`,
 			parameters: {
 				type: "object",
 				required: ["application"],
-				properties: { application: application },
+				properties: { application: application, ...activate },
 				additionalProperties: false,
 			},
 		},
@@ -286,7 +294,7 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 			name: "desktop_open",
 			op: "open",
 			description:
-				`Open one existing absolute path (file, folder or app) or one complete, already-encoded URL, in application (path or bundle ID) or the default handler. Foreground: the receiving app comes forward and may switch Spaces. Completed means macOS accepted it, not that it loaded; created_windows lists new windows as for desktop_launch. A file URL with a query or fragment is refused (serve it over http). After an unknown result, observe the receiving app before opening again.`,
+				`Open one existing absolute path (file, folder or app) or one complete, already-encoded URL, in application (path or bundle ID) or the default handler. ${wire === 2 ? backgroundNote : "Foreground: the receiving app comes forward and may switch Spaces."} Completed means macOS accepted it, not that it loaded; created_windows lists new windows as for desktop_launch. A file URL with a query or fragment is refused (serve it over http). After an unknown result, observe the receiving app before opening again.`,
 			parameters: {
 				type: "object",
 				required: ["item"],
@@ -312,6 +320,7 @@ export function desktopTools({ place, app }: { place: string; app: string }): De
 						],
 					},
 					application: application,
+					...activate,
 				},
 				additionalProperties: false,
 			},

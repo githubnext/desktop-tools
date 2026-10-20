@@ -36,9 +36,9 @@ const instructions = [
     "For a refusal before dispatch, follow its concrete recovery hint once when applicable, then refresh the observation; a refusal alone does not prove the capability is missing.",
     "After completed, interrupted, or uncertain input, inspect the current target before deciding whether another action is needed. Never replay input just because its follow-up observation failed.",
     "",
-    ...desktopToolRules(host),
+    ...desktopToolRules(host, config.wire),
 ].join("\n");
-const tools = desktopTools({ place: "this Mac", app: host });
+const tools = desktopTools({ place: "this Mac", app: host, wire: config.wire });
 const byName = new Map(tools.map((tool) => [tool.name, tool]));
 const listed = tools.map(({ name, op, description, parameters }) => ({
     name,
