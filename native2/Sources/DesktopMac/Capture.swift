@@ -11,6 +11,10 @@ public let maxImage = 900_000
 extension Mac {
 	/// One window's pixels at one pixel per point, without its shadow, as Peekaboo captures them.
 	public static func captureWindow(_ windowID: Int, bounds: CGRect) async throws -> CGImage {
+		// Peekaboo's capture gate checks the lock first; Node adds the final period after Peekaboo's own.
+		if (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true {
+			throw ToolError("DESKTOP_ERROR: Capture failed: Screen capture is unavailable while the macOS GUI session is locked. `screen list` can still report connected displays; unlock the active user session and retry..")
+		}
 		guard CGPreflightScreenCaptureAccess() else {
 			throw ToolError("permissionDenied: Screen Recording access is off for the Desktop Tools host.")
 		}

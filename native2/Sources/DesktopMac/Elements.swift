@@ -37,6 +37,8 @@ public struct ElementTree: @unchecked Sendable {
 	public var deadlineReached = false
 	public var incompleteAccessibilityRead = false
 
+	public init() {}
+
 	public var truncated: Bool {
 		maxDepthReached || maxElementCountReached || maxChildrenPerNodeReached || deadlineReached || incompleteAccessibilityRead
 	}

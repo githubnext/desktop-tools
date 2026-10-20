@@ -1,0 +1,8 @@
+[
+	["desktop_inspect", {"pid": "$pid", "window": "$window", "mode": "pixels"}],
+	["desktop_inspect", {"pid": "$pid", "window": "$window", "scope": {"snapshot": "$snapshot", "element": "$label:Press me"}}],
+	["desktop_inspect", {"pid": "$pid", "window": "$window", "scope": {"snapshot": "$snapshot", "element": "elem_999"}}],
+	["desktop_inspect", {"pid": "$pid", "window": "$window", "ocr": true}],
+	["desktop_inspect", {"pid": "$pid", "window": "$window", "save_path": "/tmp/dt2-inspect.png", "overwrite": true}],
+	["desktop_inspect", {"pid": "$pid", "window": "$window", "web_accessibility": false}]
+]

@@ -62,7 +62,8 @@ const normal = (value) => JSON.stringify(sorted(value))
 	.replace(/(snap|ps1)_[\w-]+/g, "S")
 	.replace(/"process_start_identity_decimal":"\d+"/g, '"process_start_identity_decimal":"P"')
 	.replace(/"route":"(local|bridge)"/g, '"route":"R"')
-	.replace(/"(elapsed_ms|polls)":\d+/g, '"$1":"T"');
+	.replace(/"(elapsed_ms|polls)":\d+/g, '"$1":"T"')
+	.replace(/"observed_at":"[^"]+"/g, '"observed_at":"T"');
 
 function summary(result) {
 	if (mode === "calls") {
@@ -71,6 +72,12 @@ function summary(result) {
 	const data = json(result);
 	const { action, ...observation } = typeof data === "object" ? data : {};
 	delete observation.diagnostics;
+	// A plain observation, such as desktop_inspect's, compares by its content, without Peekaboo's internal metadata.
+	if (!action && observation.ui_elements) {
+		const { timings: _t, detection_metadata: _d, ...content } = observation;
+		if (content.recognized_text?.lines) content.recognized_text = { ...content.recognized_text, lines: content.recognized_text.lines.map((line) => line.text) };
+		return { first: result.content?.[0]?.text?.startsWith("{") ? "json" : result.content?.[0]?.text?.split("\n")[0], images: result.content?.filter((item) => item.type === "image").length, fields: Object.keys(observation).sort(), content };
+	}
 	return {
 		first: result.content?.[0]?.text?.startsWith("{") ? "json" : result.content?.[0]?.text?.split("\n")[0],
 		images: result.content?.filter((item) => item.type === "image").length,

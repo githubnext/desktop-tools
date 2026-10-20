@@ -249,7 +249,7 @@ struct WaitCondition: Sendable {
 			return Check(holds: false, observation: .object([
 				"running_pids": .array(pids.map { JSON($0) }),
 				"windows": .array(Array(seen.prefix(maxRows))),
-				"errors": errors.isEmpty ? nil : .array(errors.map(JSON.string)),
+				"errors": errors.isEmpty ? JSON?.none : .array(errors.map(JSON.string)),
 			]))
 		}
 		if until == "window_gone" {
