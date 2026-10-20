@@ -144,6 +144,38 @@ struct BackgroundInputDriverPositionalTargetTests {
 
     @Test
     @MainActor
+    func `descendant walk never expands containers away from the point`() {
+        // System Settings' Spotlight pane: the hit is the content hosting view, and reading the app
+        // list's rows grows it, pushing the button below off the point before its frame is checked.
+        let point = CGPoint(x: 1020, y: 709)
+        let hosting = PositionalMockElement(role: "AXGroup", frame: CGRect(x: 397, y: 116, width: 740, height: 625))
+        let frameless = PositionalMockElement(role: "AXGroup")
+        let scrollArea = PositionalMockElement(role: "AXScrollArea", frame: CGRect(x: 629, y: 168, width: 508, height: 573))
+        let appList = PositionalMockElement(role: "AXGroup", frame: CGRect(x: 649, y: -495, width: 468, height: 767))
+        let row = PositionalMockElement(role: "AXRow", frame: CGRect(x: 649, y: 0, width: 468, height: 42))
+        let button = PositionalMockElement(
+            role: "AXButton",
+            frame: CGRect(x: 959.5, y: 697, width: 123.5, height: 24),
+            supportedActions: [AXActionNames.kAXPressAction])
+        appList.automationChildren = [row]
+        scrollArea.automationChildren = [appList, button]
+        frameless.automationChildren = [scrollArea]
+        hosting.automationChildren = [frameless]
+
+        let descendants = BackgroundInputDriver.descendantsBreadthFirst(
+            of: hosting, containing: point, maxVisited: 256, maxDepth: 8)
+
+        #expect(descendants.map { $0 as? PositionalMockElement }.elementsEqual(
+            [frameless, scrollArea, appList, button], by: ===))
+        let resolved = BackgroundInputDriver.positionalClickTarget(
+            inCandidates: [hosting] + descendants,
+            at: point,
+            button: MouseButton.left)
+        #expect((resolved?.element as? PositionalMockElement) === button)
+    }
+
+    @Test
+    @MainActor
     func `press target resolves from a pressable ancestor of the hit leaf`() {
         let point = CGPoint(x: 50, y: 50)
         let leaf = PositionalMockElement(role: "AXStaticText", frame: CGRect(x: 40, y: 40, width: 20, height: 20))
@@ -595,7 +627,7 @@ private final class PositionalMockElement: AutomationElementRepresenting, @unche
         self.frame.map { CGPoint(x: $0.midX, y: $0.midY) }
     }
 
-    let automationChildren: [any AutomationElementRepresenting] = []
+    var automationChildren: [any AutomationElementRepresenting] = []
     var setFocusedValues: [Bool] = []
     var setSelectedValues: [Bool] = []
     var performedActions: [String] = []
