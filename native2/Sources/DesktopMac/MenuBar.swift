@@ -215,6 +215,12 @@ private func refusal(_ message: String, hint: String?, reason: String = "target_
 	return refusal
 }
 
+/// Peekaboo's plain error, which the bridge reports with this code and the client treats as possibly dispatched.
+public struct StatusItemFailed: Error {
+	public let code: String
+	public let message: String
+}
+
 /// The press went out but its effect is unknown.
 public struct StatusItemUnconfirmed: Error {
 	public let delivery: Delivery
@@ -245,20 +251,25 @@ extension Mac {
 	/// Presses the status item at `index` once its identity matches `expected` on two fresh reads: AXPress, or
 	/// AXShowMenu where press is absent. Throws Refusal before the press and StatusItemUnconfirmed after it.
 	public static func pressStatusItem(index: Int, expected: String) async throws -> Delivery {
-		for _ in 0 ..< 2 {
-			let current = try await statusItems()
-			guard current.indices.contains(index) else {
-				throw refusal("Menu bar item [\(index)] disappeared before dispatch.", hint: "Refresh menu bar items before retrying.")
-			}
-			guard current[index].leaf == expected else {
-				throw refusal("Menu bar item [\(index)] changed identity or order before dispatch.", hint: "Refresh menu bar items before retrying.")
-			}
-			guard current[index].isVisible else {
-				throw refusal("Menu bar item '\(current[index].title)' is outside the active displays. It may be hidden by a menu bar manager.",
-				              hint: "Refresh menu bar items before retrying.")
-			}
+		let first = try await statusItems()
+		guard first.indices.contains(index) else {
+			throw StatusItemFailed(code: "invalidRequest", message: "Invalid menu bar item index: \(index). Valid range: 0-\(first.count - 1)")
 		}
-		let item = try await statusItems()[index]
+		guard first[index].leaf == expected else {
+			throw refusal("Menu bar item [\(index)] changed identity or order before dispatch.", hint: "Refresh menu bar items before retrying.")
+		}
+		guard first[index].isVisible else {
+			throw StatusItemFailed(code: "internalError",
+			                       message: "Menu bar item '\(first[index].title)' is outside the active displays. It may be hidden by a menu bar manager.")
+		}
+		let refreshed = try await statusItems()
+		guard refreshed.indices.contains(index) else {
+			throw refusal("Menu bar item [\(index)] disappeared before dispatch.", hint: "Refresh menu bar items before retrying.")
+		}
+		guard refreshed[index].leaf == expected else {
+			throw refusal("Menu bar item [\(index)] changed identity or order before dispatch.", hint: "Refresh menu bar items before retrying.")
+		}
+		let item = refreshed[index]
 		let matches = extrasItems(item.pid).filter { $0.frame == item.frame && sanitized($0.identifier) == item.identifier }
 		guard matches.count == 1, startIdentity(item.pid).value == item.generation else {
 			throw refusal("Menu bar item [\(index)] no longer resolves to exactly one Accessibility element of its owner.",

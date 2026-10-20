@@ -105,6 +105,12 @@ extension Tools {
 			delivery = try await Mac.pressStatusItem(index: index, expected: items[index].leaf)
 		} catch let refusal as Refusal {
 			return refused(refusal)
+		} catch let failed as StatusItemFailed {
+			action += [
+				("item", item), ("requires_fresh_observation", true),
+				("error", errorJSON(failed.code, failed.message, hint: "The click may have opened the item's menu. Observe with desktop_screen before acting; do not blindly repeat it, because a second click usually closes the menu.")),
+			]
+			return result("unknown")
 		} catch let unconfirmed as StatusItemUnconfirmed {
 			action += [
 				("native_outcome", unconfirmed.delivery.json), ("item", item), ("requires_fresh_observation", true),
