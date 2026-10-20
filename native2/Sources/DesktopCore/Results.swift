@@ -3,12 +3,6 @@ import DesktopProtocol
 /// Keeps a result within what an agent can take in at once.
 public let maxText = 32_000
 
-public struct ToolError: Error, CustomStringConvertible {
-	public let message: String
-	public init(_ message: String) { self.message = message }
-	public var description: String { message }
-}
-
 /// What one tool returns before it becomes MCP content.
 public struct ToolResult: Sendable {
 	public var text: String
@@ -39,14 +33,29 @@ public func bounded(_ data: JSON, field: String, limit: Int = maxText, keep: ((J
 	var value = data
 	value.set(field, .array(values))
 	var text = value.text
+	func truncated(_ kept: [JSON]) -> String {
+		var shorter = data
+		shorter.set(field, .array(kept))
+		shorter.set("truncated", true)
+		shorter.set("omitted", JSON(source.count - kept.count))
+		return shorter.text
+	}
+	// Without `keep`, dropping from the end keeps the longest prefix that fits, so search for it
+	// rather than writing the whole result once per dropped value.
+	if keep == nil, text.utf8.count > limit {
+		var fits = 0
+		var over = values.count
+		while over - fits > 1 {
+			let mid = (fits + over) / 2
+			if truncated(Array(values[..<mid])).utf8.count <= limit { fits = mid } else { over = mid }
+		}
+		values = Array(values[..<fits])
+		text = truncated(values)
+	}
 	while text.utf8.count > limit, !values.isEmpty {
 		let index = keep.flatMap { keep in values.lastIndex { !keep($0) } } ?? values.count - 1
 		values.remove(at: index)
-		var shorter = data
-		shorter.set(field, .array(values))
-		shorter.set("truncated", true)
-		shorter.set("omitted", JSON(source.count - values.count))
-		text = shorter.text
+		text = truncated(values)
 	}
 	guard text.utf8.count <= limit else { throw ToolError("Native inspection metadata exceeds the result limit.") }
 	return text
