@@ -4,6 +4,10 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Added
+
+- `desktop_select` selects text on a PDF page in Preview. It was refused because the page's text reports itself disabled and has no selection until one is set. To copy it, activate Preview and choose Edit > Copy, since Preview disables Copy in the background. ([#130](https://github.com/githubnext/desktop-tools/issues/130))
+
 ### Changed
 
 - The agent's name label under the window outline is smaller and tighter, and edged in a darker shade of the outline color instead of white.
