@@ -90,6 +90,34 @@ extension Tools {
 	}
 }
 
+extension Tools {
+	/// Reads a window with its app's web accessibility turned on when `allowed`: before the read for an app that
+	/// ships Chromium, or after a read that found a nearly empty web area; then reads again once the tree is built.
+	/// Ported from the native client's WebAccessibilityPolicy.
+	static func webRead<T>(
+		pid: pid_t, allowed: Bool, tree: (T) -> ElementTree, _ read: () async throws -> T
+	) async throws -> (T, (change: WebAccessibilityChange, via: WebAccessibilityVia?)?) {
+		var web: (change: WebAccessibilityChange, via: WebAccessibilityVia?)?
+		if allowed, Mac.shipsChromium(pid) {
+			web = Mac.enableWebAccessibility(pid: pid, chromium: true)
+			if web?.change == .enabled { try await Task.sleep(for: .milliseconds(500)) }
+		}
+		let first = try await read()
+		guard allowed, !tree(first).truncated else { return (first, web) }
+		if web?.change == .enabled {
+			// A fresh Chrome turned on with AXEnhancedUserInterface can take over a second to build its tree.
+			guard !webAreas(tree(first).elements).contains(where: { $0 > 2 }) else { return (first, web) }
+			try await Task.sleep(for: .seconds(1))
+			return (try await read(), web)
+		}
+		guard web == nil, webAreas(tree(first).elements).contains(where: { $0 <= 2 }) else { return (first, web) }
+		web = Mac.enableWebAccessibility(pid: pid, chromium: Mac.shipsChromium(pid))
+		guard web?.change == .enabled else { return (first, web) }
+		try await Task.sleep(for: .milliseconds(500))
+		return (try await read(), web)
+	}
+}
+
 /// A duration in seconds.
 func seconds(_ duration: Duration) -> Double {
 	Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18

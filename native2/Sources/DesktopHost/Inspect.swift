@@ -128,32 +128,8 @@ extension Tools {
 		var budget = ElementBudget()
 		if source != nil { (budget.maxDepth, budget.maxElements, budget.maxChildren, budget.seconds) = (64, 4000, 1000, 18) }
 		let accessibility = !request.pixels
-		let chromium = accessibility && request.web && Mac.shipsChromium(pid)
-		var web: (change: WebAccessibilityChange, via: WebAccessibilityVia?)?
-		if chromium {
-			web = Mac.enableWebAccessibility(pid: pid, chromium: true)
-			if web?.change == .enabled { try await Task.sleep(for: .milliseconds(500)) }
-		}
-		var (window, image, elements, captureDone) = try await read(pid: pid, windowID: windowID, generation: generation, budget: accessibility ? budget : nil, started: started)
-		if accessibility, request.web, !elements.truncated {
-			var again = false
-			if web?.change == .enabled {
-				// A fresh Chrome turned on with AXEnhancedUserInterface can take over a second to build its tree.
-				if !webAreas(elements.elements).contains(where: { $0 > 2 }) {
-					try await Task.sleep(for: .seconds(1))
-					again = true
-				}
-			} else if web == nil, webAreas(elements.elements).contains(where: { $0 <= 2 }) {
-				let change = Mac.enableWebAccessibility(pid: pid, chromium: Mac.shipsChromium(pid))
-				web = change
-				if change.change == .enabled {
-					try await Task.sleep(for: .milliseconds(500))
-					again = true
-				}
-			}
-			if again {
-				(window, image, elements, captureDone) = try await read(pid: pid, windowID: windowID, generation: generation, budget: budget, started: started)
-			}
+		let ((window, image, elements, captureDone), web) = try await webRead(pid: pid, allowed: accessibility && request.web, tree: \.2) {
+			try await read(pid: pid, windowID: windowID, generation: generation, budget: accessibility ? budget : nil, started: started)
 		}
 		let detectionDone = ContinuousClock.now
 		let jpeg = try Mac.jpeg(image)

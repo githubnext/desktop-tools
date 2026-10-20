@@ -37,6 +37,8 @@ struct WaitCondition: Sendable {
 	var bundleID: String? { request["bundle_id"]?.string }
 	var window: Int? { request["window"]?.int }
 	var element: JSON? { request["element"] }
+	/// What earlier polls of this wait saw: text_changes' baseline, and whether it turned web accessibility on.
+	let memory = WaitMemory()
 
 	/// Refuses argument combinations a condition doesn't use, so a misplaced filter is never silently ignored.
 	init(_ request: JSON, maxTimeout: Int = waitMax, defaultTimeout: Int = waitDefault) throws {
@@ -80,6 +82,13 @@ struct WaitCondition: Sendable {
 		}
 		if elementConditions.contains(until) || textConditions.contains(until) {
 			allowed.formUnion(["scope", "element", "web_accessibility"])
+			if let scope = request["scope"] {
+				guard let keys = scope.keys, keys.allSatisfy({ $0 == "snapshot" || $0 == "element" }) else {
+					throw ToolError("scope takes snapshot and element.")
+				}
+				try exact("scope.snapshot", scope["snapshot"], limit: 256)
+				try exact("scope.element", scope["element"], limit: 256)
+			}
 			if elementConditions.contains(until), request["element"] == nil { throw ToolError("\(until) needs element.") }
 			if let match = request["element"] { try Self.validateMatch(match, forText: textConditions.contains(until)) }
 			if let web = request["web_accessibility"], web.bool == nil { throw ToolError("Choose web_accessibility true or false.") }
@@ -97,11 +106,11 @@ struct WaitCondition: Sendable {
 		}
 		let extra = (request.keys ?? []).filter { !allowed.contains($0) && request[$0] != nil }
 		if !extra.isEmpty { throw ToolError("\(until) doesn't use \(extra.joined(separator: ", ")).") }
-		for unported in ["scope", "web_accessibility"] where request[unported] != nil {
-			throw ToolError("desktop_wait's \(unported) isn't in the Swift spike yet.")
-		}
-		if until.hasPrefix("dialog_") || textConditions.contains(until) {
+		if until.hasPrefix("dialog_") {
 			throw ToolError("desktop_wait's \(until) isn't in the Swift spike yet.")
+		}
+		if textConditions.contains(until), request["element"] == nil {
+			throw ToolError("desktop_wait's \(until) on a whole window's text isn't in the Swift spike yet.")
 		}
 		self.until = until
 		self.request = request
@@ -173,9 +182,30 @@ struct WaitCondition: Sendable {
 		budget.maxElements = 4000
 		budget.maxChildren = 1000
 		let wide = budget
+		var source: ScopeSource?
+		if let scope = request["scope"], let snapshot = scope["snapshot"]?.string, let element = scope["element"]?.string {
+			source = try await Tools.scopeSource(ScopeRequest(snapshot: snapshot, element: element), pid: pid, windowID: window)
+		}
 		let generation = Mac.generation(pid)
-		let tree = try await run { try Mac.elements(pid: pid, windowID: window, budget: wide) }
-		let found = tree.elements.filter { element in
+		let (tree, web) = try await Tools.webRead(pid: pid, allowed: request["web_accessibility"]?.bool != false, tree: { $0 }) {
+			try await run {
+				do {
+					return try Mac.elements(pid: pid, windowID: window, budget: wide)
+				} catch let error as ToolError where error.message.contains("returned no usable Accessibility elements") {
+					// Peekaboo's tree read reports a window Accessibility can't reach as an empty, incomplete read.
+					var empty = ElementTree()
+					empty.windowTitle = Mac.window(window)?.title
+					empty.incompleteAccessibilityRead = true
+					return empty
+				}
+			}
+		}
+		var selected = tree.elements
+		if let source {
+			let ordered = Tools.preorder(tree.elements)
+			selected = Tools.subtree(ordered, at: try Tools.locateScope(source, in: ordered, generation: generation ?? 0))
+		}
+		let found = selected.filter { element in
 			let attributes = element.attributes
 			guard attributes["role"] == match["role"]?.string || element.type == match["role"]?.string else { return false }
 			if let title = match["title"]?.string, element.label != title, attributes["title"] != title { return false }
@@ -200,10 +230,12 @@ struct WaitCondition: Sendable {
 				])
 			}),
 			"match_count": JSON(found.count),
-			"element_count": JSON(tree.elements.count),
+			"element_count": JSON(selected.count),
 			"traversed_element_count": JSON(tree.elements.count),
 			"truncated": JSON(!truncation.isEmpty),
 			"truncation": .array(truncation.map(JSON.string)),
+			"web_accessibility": web.map { JSON($0.change.rawValue) },
+			"web_accessibility_via": web?.via.map { JSON($0.rawValue) },
 			"target_receipt": generation.map { .object([
 				("pid", JSON(pid)), ("process_start_identity_decimal", JSON(String($0))), ("window_id", JSON(window)),
 			]) },
@@ -262,7 +294,42 @@ struct WaitCondition: Sendable {
 			}
 			return Check(holds: false, observation: .object([("pid", JSON(pid!)), ("window_id", JSON(window!)), ("inventory_completeness", "partial")]))
 		}
-		// element_appears or element_gone
+		return memory.rememberTurnOn(textConditions.contains(until) ? try await checkText() : try await checkElement())
+	}
+
+	/// text_changes, text_equals or text_contains on the one matching element's value.
+	private func checkText() async throws -> Check {
+		let found: JSON
+		do { found = try await findElements() } catch {
+			try Task.checkCancellation()
+			return Check(holds: false, observation: .object([("error", JSON((error as? ToolError)?.message ?? String(describing: error)))]))
+		}
+		let count = found["match_count"]?.int ?? 0
+		var observation = found
+		var text: String?
+		if count > 1 {
+			observation.set("error", "Several elements match; add title or identifier, or a scope.")
+			return Check(holds: false, observation: observation)
+		}
+		if count == 1, let element = found["matches"]?.array?.first {
+			text = element["value"]?.string ?? element["label"]?.string
+			observation = .object([("element", element), ("text", text.map(JSON.string) ?? .null)])
+		}
+		if until == "text_changes" {
+			// The first successful read is the baseline; an element that appears or disappears also changes it.
+			guard let baseline = memory.baseline(text) else {
+				observation.set("baseline", true)
+				return Check(holds: false, observation: observation)
+			}
+			observation.set("before", baseline.map(JSON.string) ?? .null)
+			return Check(holds: text != baseline, observation: observation)
+		}
+		guard let text, let wanted = request["text"]?.string else { return Check(holds: false, observation: observation) }
+		return Check(holds: until == "text_equals" ? text == wanted : text.contains(wanted), observation: observation)
+	}
+
+	/// element_appears or element_gone.
+	private func checkElement() async throws -> Check {
 		let appears = until == "element_appears"
 		let found: JSON
 		do { found = try await findElements() } catch {
@@ -450,5 +517,35 @@ extension Tools {
 		}
 		let outcome = matched ? "completed" : "unknown"
 		return ToolResult(text: text, outcome: outcome, image: matched ? image : nil, isError: !matched)
+	}
+}
+
+/// State one wait keeps between its polls.
+final class WaitMemory: @unchecked Sendable {
+	private let lock = NSLock()
+	private var first: String??
+	private var turnedOn: JSON?
+
+	/// The baseline text, or nil after recording `text` as the baseline on the first read.
+	func baseline(_ text: String?) -> String?? {
+		lock.lock()
+		defer { lock.unlock() }
+		if let first { return first }
+		first = .some(text)
+		return nil
+	}
+
+	/// Keeps reporting that this wait turned web accessibility on after a later poll finds it already on.
+	func rememberTurnOn(_ check: Check) -> Check {
+		lock.lock()
+		defer { lock.unlock() }
+		var check = check
+		if check.observation["web_accessibility"]?.string == "enabled" {
+			turnedOn = check.observation["web_accessibility_via"] ?? .null
+		} else if let turnedOn, check.observation["web_accessibility"]?.string == "already_on" {
+			check.observation.set("web_accessibility", "enabled")
+			check.observation.set("web_accessibility_via", turnedOn)
+		}
+		return check
 	}
 }
