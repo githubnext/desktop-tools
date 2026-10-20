@@ -63,7 +63,8 @@ class Mcp {
 	async call(name, args = {}) {
 		const result = await this.request("tools/call", { name, arguments: args });
 		const text = (result.content ?? []).filter((c) => c.type === "text").map((c) => c.text);
-		const bytes = text.reduce((n, t) => n + Buffer.byteLength(t), 0);
+		const bytes = text.reduce((n, t) => n + Buffer.byteLength(t), 0)
+			+ (result.content ?? []).filter((c) => c.type === "image").reduce((n, c) => n + c.data.length, 0);
 		const json = text.find((t) => t.startsWith("{"));
 		if (result.isError) throw new Error(`${name}: ${text.join(" ")}`);
 		return { data: json ? JSON.parse(json) : {}, bytes };
@@ -105,6 +106,16 @@ async function bench(command) {
 		if (want("apps")) results.apps = await time(() => mcp.call("desktop_apps"));
 		if (want("apps_query")) results.apps_query = await time(() => mcp.call("desktop_apps", { query: "finder" }));
 		if (want("windows") && finder) results.windows = await time(() => mcp.call("desktop_windows", { pid: finder.pid }));
+		// Inspect the first available window of each app; text and image bytes show what an agent pays per look.
+		for (const [key, bundle] of [["inspect_finder", "com.apple.finder"], ["inspect_safari", "com.apple.Safari"], ["inspect_ghostty", "com.mitchellh.ghostty"]]) {
+			if (!want(key)) continue;
+			const app = data.apps?.find((a) => a.bundle_id === bundle);
+			if (!app) continue;
+			const { data: listing } = await mcp.call("desktop_windows", { pid: app.pid });
+			const window = listing.windows?.find((w) => w.availability?.state === "available");
+			if (!window) continue;
+			results[key] = await time(() => mcp.call("desktop_inspect", { pid: app.pid, window: window.window_id }));
+		}
 		if (want("windows_missing")) {
 			results.windows_missing = await time(() => mcp.call("desktop_windows", { pid: 999999 }).catch(() => undefined));
 		}
