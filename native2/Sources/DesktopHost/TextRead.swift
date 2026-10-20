@@ -57,6 +57,17 @@ private struct TextNode {
 
 private typealias Piece = (text: String, bounds: CGRect)
 
+extension Tools {
+	/// The text desktop_read reads from pre-order `elements`, as desktop_wait's text conditions compare it.
+	static func windowText(of elements: [Element]) -> (text: String, truncated: Bool) {
+		let reading = readableText(elements.map { element in
+			TextNode(role: element.attributes["role"] ?? "", depth: depth(element), label: element.label,
+			         value: isSecure(element) ? nil : element.value, bounds: element.frame)
+		}, limit: readTextLimit)
+		return (reading.text, reading.truncated)
+	}
+}
+
 /// The readable text of a complete pre-order subtree, in reading order within `limit` UTF-8 bytes.
 private func readableText(_ nodes: [TextNode], limit: Int) -> (text: String, truncated: Bool, omitted: Int) {
 	var pieces: [Piece] = []

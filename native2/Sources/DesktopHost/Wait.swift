@@ -109,9 +109,6 @@ struct WaitCondition: Sendable {
 		if until.hasPrefix("dialog_") {
 			throw ToolError("desktop_wait's \(until) isn't in the Swift spike yet.")
 		}
-		if textConditions.contains(until), request["element"] == nil {
-			throw ToolError("desktop_wait's \(until) on a whole window's text isn't in the Swift spike yet.")
-		}
 		self.until = until
 		self.request = request
 		timeout = request["timeout_ms"]?.int ?? defaultTimeout
@@ -176,7 +173,9 @@ struct WaitCondition: Sendable {
 
 	/// Matching elements of one window, read through Accessibility alone with the wide budget.
 	func findElements() async throws -> JSON {
-		guard let pid, let window, let match = element else { throw ToolError("Read matching elements of one window.") }
+		// Matching elements, or without a match the text, as desktop_read reads it.
+		guard let pid, let window else { throw ToolError("Read either matching elements or text of one window.") }
+		let match = element
 		var budget = ElementBudget()
 		budget.maxDepth = 64
 		budget.maxElements = 4000
@@ -205,6 +204,22 @@ struct WaitCondition: Sendable {
 			let ordered = Tools.preorder(tree.elements)
 			selected = Tools.subtree(ordered, at: try Tools.locateScope(source, in: ordered, generation: generation ?? 0))
 		}
+		var truncation = tree.warnings.map { $0 == "ax_truncated_incomplete" ? "ax_incomplete_read" : $0 }
+		guard let match else {
+			let reading = Tools.windowText(of: source == nil ? Tools.preorder(selected) : selected)
+			if reading.truncated { truncation.insert("text_limit", at: 0) }
+			return .object([
+				"application_name": Mac.appName(pid).map(JSON.string),
+				"window_title": tree.windowTitle.map(JSON.string),
+				"text": JSON(reading.text),
+				"element_count": JSON(selected.count),
+				"traversed_element_count": JSON(tree.elements.count),
+				"truncated": JSON(!truncation.isEmpty),
+				"truncation": .array(truncation.map(JSON.string)),
+				"web_accessibility": web.map { JSON($0.change.rawValue) },
+				"web_accessibility_via": web?.via.map { JSON($0.rawValue) },
+			])
+		}
 		let found = selected.filter { element in
 			let attributes = element.attributes
 			guard attributes["role"] == match["role"]?.string || element.type == match["role"]?.string else { return false }
@@ -213,7 +228,6 @@ struct WaitCondition: Sendable {
 			if let identifier = match["identifier"]?.string, attributes["identifier"] != identifier { return false }
 			return true
 		}
-		let truncation = tree.warnings.map { $0 == "ax_truncated_incomplete" ? "ax_incomplete_read" : $0 }
 		return .object([
 			"application_name": Mac.appName(pid).map(JSON.string),
 			"window_title": tree.windowTitle.map(JSON.string),
@@ -307,7 +321,14 @@ struct WaitCondition: Sendable {
 		let count = found["match_count"]?.int ?? 0
 		var observation = found
 		var text: String?
-		if count > 1 {
+		if element == nil {
+			text = found["text"]?.string
+			observation = .object([
+				"window_title": found["window_title"], "text": found["text"], "truncated": found["truncated"],
+				"truncation": found["truncation"], "web_accessibility": found["web_accessibility"],
+				"web_accessibility_via": found["web_accessibility_via"],
+			])
+		} else if count > 1 {
 			observation.set("error", "Several elements match; add title or identifier, or a scope.")
 			return Check(holds: false, observation: observation)
 		}
