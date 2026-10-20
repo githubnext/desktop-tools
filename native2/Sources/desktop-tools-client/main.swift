@@ -3,13 +3,17 @@ import DesktopAppLink
 import DesktopProtocol
 import Foundation
 
-// One tool call per run, for embedders that spawn a client per request, as createDesktop does with wire 2:
+// The signed client embedders run, since the host serves only its own app's client:
 //
-//   desktop-tools-client <socket> <tool> [--verbose]   with the tool's arguments as a JSON object on stdin
+//   desktop-tools-client <socket> <tool> [--verbose]   one tool call, with its arguments as a JSON object on stdin
+//   desktop-tools-client <socket> --serve              many calls over one connection, as createDesktop makes with wire 2
 //   desktop-tools-client [<socket>] status | repair   what native/'s client prints for the same commands
 //
-// It prints one JSON line: {"result": <MCP tool result>}, or {"error": {"code", "message"}} and exits 1 when nothing
-// ran. DESKTOP_TOOLS_AGENT in its environment names the agent in the host's window outline, as native/'s client does.
+// One call prints one JSON line: {"result": <MCP tool result>}, or {"error": {"code", "message"}} and exits 1 when
+// nothing ran. --serve reads one request per line, {"id", "tool", "arguments"?, "verbose"?} or {"cancel": id}, and
+// writes one line per reply tagged with its id, {"id", "result"} or {"id", "error": {"code", "message"}}; when it can't
+// connect it prints the same untagged error as one call, and nothing ran. DESKTOP_TOOLS_AGENT in its environment names
+// the agent in the host's window outline, as native/'s client does.
 
 func finish(_ value: JSON, status: Int32) -> Never {
 	FileHandle.standardOutput.write(Data((value.text + "\n").utf8))
@@ -42,22 +46,12 @@ if positional.count == 2, positional[1] == "status" || positional[1] == "repair"
 	FileHandle.standardOutput.write(output + Data([10]))
 	exit(failed ? 1 : 0)
 }
-guard positional.count == 2 else {
+let serving = arguments.contains("--serve")
+guard positional.count == (serving ? 1 : 2) else {
 	refuse("USAGE", "Usage: desktop-tools-client <socket> <tool> [--verbose], with the tool's arguments as JSON on stdin, "
-		+ "or desktop-tools-client [<socket>] status | repair.")
+		+ "desktop-tools-client <socket> --serve, or desktop-tools-client [<socket>] status | repair.")
 }
-let (socketPath, tool) = (positional[0], positional[1])
-let verbose = arguments.contains("--verbose")
-
-let input = FileHandle.standardInput.readDataToEndOfFile()
-let toolArguments: JSON
-if input.allSatisfy({ $0 == 0x20 || $0 == 0x0A || $0 == 0x0D || $0 == 0x09 }) {
-	toolArguments = .object([])
-} else if let parsed = try? JSON(parsing: input), parsed.pairs != nil {
-	toolArguments = parsed
-} else {
-	refuse("USAGE", "The tool's arguments on stdin must be one JSON object.")
-}
+let socketPath = positional[0]
 
 /// Connects and exchanges hellos; nil with the connect errno when no host accepted.
 func connect() throws -> (Connection?, Int32) {
@@ -99,6 +93,19 @@ guard let connection else {
 	// Run outside an app: a missing socket means no host has served it; a refused one, a host that stopped serving.
 	if failure == ENOENT { refuse("HOST_NOT_RUNNING", "No host is serving \(socketPath).") }
 	refuse("HOST_NOT_SERVING", "The host at \(socketPath) refused the connection (\(String(cString: strerror(failure)))).")
+}
+
+if serving { serve(connection) }
+let tool = positional[1]
+let verbose = arguments.contains("--verbose")
+let input = FileHandle.standardInput.readDataToEndOfFile()
+let toolArguments: JSON
+if input.allSatisfy({ $0 == 0x20 || $0 == 0x0A || $0 == 0x0D || $0 == 0x09 }) {
+	toolArguments = .object([])
+} else if let parsed = try? JSON(parsing: input), parsed.pairs != nil {
+	toolArguments = parsed
+} else {
+	refuse("USAGE", "The tool's arguments on stdin must be one JSON object.")
 }
 
 do {

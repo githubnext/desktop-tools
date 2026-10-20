@@ -3,9 +3,10 @@ id: 01M5CK60VAR940NANTKJ6RZXXG
 anchor: '@file'
 created: 2026-10-20T12:04:37Z
 norm: '1'
-sig: 1ddd0c5deb717ae9
-body_hash: 0ae974f65528efc4
-raw_hash: e32cd97ff43fb742
+sig: dbab06ac65abdcfa
+body_hash: 77cf50c971a2cc12
+raw_hash: 6f5367c9a9b34247
+vouched: 2026-10-20T14:24:10Z
 lines: 1-2115
 ---
 
