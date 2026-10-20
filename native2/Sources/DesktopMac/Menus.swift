@@ -345,13 +345,4 @@ extension Mac {
 		let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
 		return Set(list.compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue })
 	}
-
-	/// Whether a normal-layer window of `pid` that isn't in `before` exists.
-	public static func appearedWindow(pid: pid_t, before: Set<Int>) -> Bool {
-		let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
-		return list.contains { info in
-			(info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid && (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0
-				&& !before.contains((info[kCGWindowNumber as String] as? NSNumber)?.intValue ?? 0)
-		}
-	}
 }

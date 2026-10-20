@@ -129,23 +129,15 @@ extension Tools {
 		}
 	}
 
-	/// The app's windows that appeared after an action, waiting up to a second for one; nil when they can't be listed.
-	static func createdWindows(pid: pid_t, generation: UInt64, before: Set<Int>) async -> JSON? {
-		let deadline = Date().addingTimeInterval(1)
-		repeat {
-			if Mac.appearedWindow(pid: pid, before: before) {
-				// Windows open in quick succession, as with several documents; let them settle.
-				try? await Task.sleep(for: .milliseconds(250))
-				break
-			}
-			try? await Task.sleep(for: .milliseconds(125))
-		} while Date() < deadline
+	/// The app's windows that appeared after an action, waiting up to `seconds` for one; nil when they can't be listed.
+	static func createdWindows(pid: pid_t, generation: UInt64, before: Set<Int>, seconds: Int = 1) async -> JSON? {
+		await Mac.awaitNewWindow(pid: pid, before: before, seconds: Double(seconds))
 		guard let listing = try? await Mac.windows(pid: pid) else { return nil }
 		let windows = (listing["windows"]?.array ?? []).filter { row in
 			row["window_id"]?.int.map { !before.contains($0) } == true && row["process_start_identity_decimal"]?.string == String(generation)
 		}
 		let (attribution, note): (String, String) = switch windows.count {
-		case 0: ("none", "No new window of the app appeared within about 1 second. One may still open later, or the action may reuse an existing window; list desktop_windows before acting.")
+		case 0: ("none", "No new window of the app appeared within about \(seconds == 1 ? "1 second" : "\(seconds) seconds"). One may still open later, or the action may reuse an existing window; list desktop_windows before acting.")
 		case 1: ("exclusive", "This is the only window of the app that appeared after the action was sent, so it is very likely the one the action opened. Another agent acting on the same app at the same moment can still open a window in this interval; if that matters, confirm its contents with desktop_inspect.")
 		default: ("ambiguous", "Several windows of the app appeared after the action was sent. The action may have opened more than one, or something else opened the others at the same time; nothing here says which came from this action. Inspect them, or ask the user, before choosing one.")
 		}

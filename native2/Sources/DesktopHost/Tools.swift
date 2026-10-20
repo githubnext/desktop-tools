@@ -9,6 +9,8 @@ public enum Tools {
 		"desktop_click", "desktop_key", "desktop_type", "desktop_scroll", "desktop_drag", "desktop_hover", "desktop_set_value",
 		"desktop_element_action", "desktop_select", "desktop_insert", "desktop_fill_password", "desktop_clipboard_write",
 		"desktop_menu", "desktop_dialog_answer", "desktop_menubar_click",
+		"desktop_launch", "desktop_open", "desktop_activate", "desktop_hide", "desktop_unhide", "desktop_quit", "desktop_close",
+		"desktop_focus", "desktop_minimize", "desktop_restore", "desktop_maximize", "desktop_fullscreen", "desktop_move", "desktop_resize",
 	]
 	static let expectTools: Set = ["desktop_click", "desktop_key", "desktop_system_key", "desktop_drag", "desktop_insert"]
 
@@ -62,6 +64,9 @@ public enum Tools {
 			case "desktop_spaces": return try await spaces(arguments)
 			case "desktop_notifications": return try await notifications(arguments)
 			case "desktop_notification_action": return await notificationAction(arguments)
+			case "desktop_launch": return try await launch(arguments, opensItem: false)
+			case "desktop_open": return try await launch(arguments, opensItem: true)
+			case _ where manageOps[name] != nil: return try await manage(name, arguments)
 			default:
 				return ToolResult(text: "\(name) isn't in the Swift spike yet.", isError: true)
 			}
