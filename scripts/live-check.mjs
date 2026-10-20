@@ -16,15 +16,17 @@ const { values } = parseArgs({
 		list: { type: "boolean" },
 		json: { type: "string" },
 		"keep-fixtures": { type: "boolean" },
+		server: { type: "string" },
 		help: { type: "boolean", short: "h" },
 	},
 	strict: true,
 });
 if (values.help) {
-	console.log(`Usage: npm run live-check -- [--only <pr>[,<pr>]] [--list] [--json <path>] [--keep-fixtures]
+	console.log(`Usage: npm run live-check -- [--only <pr>[,<pr>]] [--list] [--json <path>] [--keep-fixtures] [--server <path>]
 
 Drives the installed Desktop Tools, or the dev app whose state folder is DESKTOP_TOOLS_STATE
-(~/.local/state/desktop-tools-dev for npm run dev-app), through dist/mcp.js. Refuses to run while the screen is locked. See docs/live-checks.md.`);
+(~/.local/state/desktop-tools-dev for npm run dev-app), through dist/mcp.js, or through the MCP server executable
+--server names. Refuses to run while the screen is locked. See docs/live-checks.md.`);
 	process.exit(0);
 }
 const only = new Set((values.only ?? []).flatMap((v) => v.split(",")).map((v) => v.trim().replace(/^#/, "")).filter(Boolean));
@@ -44,7 +46,8 @@ class Mcp {
 	constructor(launcher = []) {
 		this.next = 1;
 		this.waiting = new Map();
-		const command = [...launcher, process.execPath, new URL("../dist/mcp.js", import.meta.url).pathname];
+		const server = values.server ? [values.server] : [process.execPath, new URL("../dist/mcp.js", import.meta.url).pathname];
+		const command = [...launcher, ...server];
 		this.child = spawn(command[0], command.slice(1), {
 			stdio: ["pipe", "pipe", "inherit"],
 			env: process.env,
