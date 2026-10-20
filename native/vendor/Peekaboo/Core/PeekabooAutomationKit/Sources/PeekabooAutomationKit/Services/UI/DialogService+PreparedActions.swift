@@ -477,6 +477,7 @@ extension DialogService {
         var structuralDialogs: [Element] = []
         var legacyDialogs: [Element] = []
         var visited: Set<Element> = []
+        var parents: [Element: Element] = [:]
         var stack = [window]
 
         while let element = stack.popLast() {
@@ -492,12 +493,16 @@ extension DialogService {
             {
                 legacyDialogs.append(element)
             }
+            for child in node.children where parents[child] == nil && child != window {
+                parents[child] = element
+            }
             stack.append(contentsOf: node.children.reversed())
         }
         return FreshDialogElements(
             structural: DialogTraversal.preferredStructuralDialogs(
                 in: window,
-                candidates: structuralDialogs),
+                candidates: structuralDialogs,
+                parent: { parents[$0] }),
             legacy: legacyDialogs)
     }
 

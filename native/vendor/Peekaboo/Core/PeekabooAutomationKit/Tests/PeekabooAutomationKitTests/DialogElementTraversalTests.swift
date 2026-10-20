@@ -81,9 +81,26 @@ struct DialogElementTraversalTests {
 
         let preferred = DialogTraversal.preferredStructuralDialogs(
             in: parent,
-            candidates: [parent, sheet])
+            candidates: [parent, sheet],
+            parent: { $0 == sheet ? parent : nil })
 
         #expect(preferred == [sheet])
+    }
+
+    @Test
+    func `a panel stacked on a sheet supersedes the sheet and its parent`() {
+        let parent = TraversalNode(name: "Search Privacy", isMatch: true)
+        let sheet = TraversalNode(name: "Sheet", isMatch: true, isSheet: true)
+        let group = TraversalNode(name: "Group")
+        let panel = TraversalNode(name: "Open", isMatch: true, isSheet: true)
+        let parents = [sheet: parent, group: sheet, panel: group]
+
+        let preferred = DialogTraversal.preferredStructuralDialogs(
+            in: parent,
+            candidates: [parent, sheet, panel],
+            parent: { parents[$0] })
+
+        #expect(preferred == [panel])
     }
 
     @Test
@@ -94,7 +111,8 @@ struct DialogElementTraversalTests {
 
         let preferred = DialogTraversal.preferredStructuralDialogs(
             in: parent,
-            candidates: [parent, firstSheet, secondAlert])
+            candidates: [parent, firstSheet, secondAlert],
+            parent: { $0 == parent ? nil : parent })
 
         #expect(preferred == [firstSheet, secondAlert])
     }
@@ -105,7 +123,8 @@ struct DialogElementTraversalTests {
 
         let preferred = DialogTraversal.preferredStructuralDialogs(
             in: fixture,
-            candidates: [fixture])
+            candidates: [fixture],
+            parent: { _ in nil })
 
         #expect(preferred == [fixture])
     }
@@ -116,8 +135,8 @@ struct DialogElementTraversalTests {
         let second = TraversalNode(name: "Dialog Fixture 2", isMatch: true)
 
         let candidates = [
-            DialogTraversal.preferredStructuralDialogs(in: first, candidates: [first]),
-            DialogTraversal.preferredStructuralDialogs(in: second, candidates: [second]),
+            DialogTraversal.preferredStructuralDialogs(in: first, candidates: [first], parent: { _ in nil }),
+            DialogTraversal.preferredStructuralDialogs(in: second, candidates: [second], parent: { _ in nil }),
         ].flatMap(\.self)
 
         #expect(candidates == [first, second])
