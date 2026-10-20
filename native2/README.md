@@ -12,6 +12,7 @@ A Swift MCP server and host with no Peekaboo and no Node. Each tool is ported fr
 | `DesktopHost` | The tools, the snapshot store and the socket server |
 | `desktop-tools-host` | The host, run from a terminal for now; it holds the macOS grants |
 | `desktop-tools-mcp` | The stdio MCP server, which forwards each call to the host |
+| `DesktopTools` | `libDesktopTools.dylib`, the menu bar app's embedding runtime with native/'s C ABI (docs/embed.md): it serves the host's `Server` and draws the agent cursor, window outline and activity list through `DesktopHost/Hooks.swift` |
 
 The host serves `~/.local/state/desktop-tools2/desktop.sock`, or `$DESKTOP_TOOLS2_STATE/desktop.sock`, so it runs beside the installed Desktop Tools.
 

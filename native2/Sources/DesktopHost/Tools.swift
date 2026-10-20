@@ -11,6 +11,7 @@ public enum Tools {
 	/// `client` is the connected MCP binary's pid, which names the caller the user approves.
 	public static func call(_ name: String, arguments: JSON, client: pid_t? = nil) async -> ToolResult {
 		if let refusal = await admission(name, arguments: arguments, client: client) { return refused(name, refusal) }
+		Hooks.admitted()
 		// Node checks expect before the action's own arguments.
 		if expectTools.contains(name), arguments["expect"] != nil {
 			do {

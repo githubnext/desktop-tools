@@ -14,6 +14,7 @@ extension Tools {
 		return await act("scroll", snapshotID: snapshotID, element: element) { snapshot, target in
 			let window = window(snapshot)
 			try window.check()
+			Hooks.showPointer(.scroll(at: target.map { CGPoint(x: $0.frame.midX, y: $0.frame.midY) } ?? globalPoint(fraction!, in: window.bounds), direction: direction, amount: amount, window: window.windowID))
 			if let target { return try Mac.scroll(target.reference, direction: direction, amount: amount, window: window) }
 			return try Mac.scroll(at: globalPoint(fraction!, in: window.bounds), direction: direction, amount: amount, window: window)
 		}
@@ -52,6 +53,7 @@ extension Tools {
 			await act("drag", snapshotID: snapshotID, element: nil) { snapshot, _ in
 				let window = window(snapshot)
 				try window.check()
+				Hooks.showPointer(.drag(from: globalPoint(points[0], in: window.bounds), to: globalPoint(points.last!, in: window.bounds), seconds: Double(duration) / 1000, window: window.windowID))
 				return try Mac.drag(points.map { globalPoint($0, in: window.bounds) }, button: button == "right" ? .right : .left, milliseconds: duration, window: window)
 			}
 		}
@@ -71,7 +73,8 @@ extension Tools {
 				throw Refusal("DESKTOP_ACTION_FAILED", "Another window covers this point, or the window moved since the snapshot. Inspect the window again; bring it forward with desktop_focus if it is covered.")
 			}
 		}) { snapshot, target in
-			try Mac.hover(at: point(snapshot, target), window: window(snapshot))
+			Hooks.showPointer(.move(to: point(snapshot, target), window: snapshot.windowID))
+			return try Mac.hover(at: point(snapshot, target), window: window(snapshot))
 		}
 	}
 
