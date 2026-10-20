@@ -4,6 +4,11 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Fixed
+
+- A point click on a sheet that Accessibility only lists inside its parent window, such as the **+** in System Settings > Spotlight > Search Privacy, or **Cancel** in the Open panel it opens, reaches the sheet. It was refused as occluded by the parent, although nothing covered the sheet. ([#141](https://github.com/githubnext/desktop-tools/issues/141))
+- A point click that finds no pressable element, or an element in a window covering the target, is `refused` instead of `unknown`, since nothing was sent, and the message no longer suggests a `--foreground` option the tools don't have. The occlusion refusal names the window it found. ([#141](https://github.com/githubnext/desktop-tools/issues/141))
+
 ## [0.15.0] - 2026-10-19
 
 ### Added
