@@ -1,0 +1,645 @@
+import CoreGraphics
+import Foundation
+import PeekabooAutomationKit
+import PeekabooBridgeTestSupport
+import PeekabooFoundation
+import PeekabooFoundationTestSupport
+import Testing
+@testable import PeekabooBridge
+@testable import PeekabooCore
+
+@Suite(.serialized)
+@MainActor
+struct RemoteUIAutomationServiceActionResultTests {
+    private static let snapshotID = SnapshotReferenceFixtures.first.rawValue
+
+    @Test
+    func `remote explicit value policy requires negotiated support for allow and deny`() async throws {
+        let client = PeekabooBridgeClient(
+            socketPath: "/tmp/peekaboo-unused-value-policy-\(UUID().uuidString).sock",
+            requestTimeoutSec: 1)
+        let remote = RemoteUIAutomationService(
+            client: client,
+            supportsTargetedClicks: true,
+            supportsProcessGenerationPinnedClicks: true)
+        let identity = ApplicationProcessIdentity(processIdentifier: 42, processStartIdentity: 7)
+
+        for allowsValueDelivery in [true, false] {
+            await #expect(throws: PeekabooError.self) {
+                try await remote.clickWithOutcome(
+                    target: .elementId("field"),
+                    clickType: .single,
+                    snapshotId: nil,
+                    expectedProcessIdentity: identity,
+                    allowsAccessibilityValueDelivery: allowsValueDelivery)
+            }
+        }
+    }
+
+    @Test
+    func `remote held pointer capability defaults closed and accepts negotiated support`() {
+        let client = PeekabooBridgeClient(
+            socketPath: "/tmp/peekaboo-unused-held-capability-\(UUID().uuidString).sock",
+            requestTimeoutSec: 1)
+        let unsupported = RemoteUIAutomationService(client: client)
+        let supported = RemoteUIAutomationService(
+            client: client,
+            supportsExactWindowHeldPointerLifecycle: true)
+
+        #expect(!unsupported.supportsExactWindowHeldPointerLifecycle)
+        #expect(supported.supportsExactWindowHeldPointerLifecycle)
+    }
+
+    @Test
+    func `remote global pointer automation preserves canonical results and signed global receipts`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { Task { await fixture.host.stop() } }
+        let pointerProvider: any UIAutomationGlobalPointerActionResultProviding = fixture.remote
+
+        let drag = try await pointerProvider.dragWithOutcome(.init(
+            from: CGPoint(x: 10, y: 20),
+            to: CGPoint(x: 30, y: 40),
+            duration: 0,
+            steps: 1,
+            modifiers: nil,
+            profile: .linear))
+        try await Self.expectGlobalPointerResult(drag, operation: .drag, client: fixture.client)
+
+        let move = try await pointerProvider.moveMouseWithOutcome(
+            to: CGPoint(x: 50, y: 60),
+            duration: 0,
+            steps: 1,
+            profile: .linear)
+        try await Self.expectGlobalPointerResult(move, operation: .moveMouse, client: fixture.client)
+
+        await fixture.host.stop()
+    }
+
+    @Test
+    func `legacy remote global pointer automation keeps receiptless success compatibility`() async throws {
+        let handshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: .init(major: 1, minor: 22),
+            supportedOperations: [.drag, .moveMouse])
+        let peer = try ScriptedBridgePeer(responses: [
+            .handshake(handshake),
+            .ok,
+            .ok,
+        ])
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        _ = try await client.handshake(client: .init(
+            bundleIdentifier: "dev.peekaboo.remote-global-pointer-legacy-tests",
+            teamIdentifier: nil,
+            processIdentifier: getpid()))
+        let remote = RemoteUIAutomationService(client: client)
+
+        let drag = try await remote.dragWithOutcome(.init(
+            from: CGPoint(x: 10, y: 20),
+            to: CGPoint(x: 30, y: 40),
+            duration: 0,
+            steps: 1,
+            modifiers: nil,
+            profile: .linear))
+        let move = try await remote.moveMouseWithOutcome(
+            to: CGPoint(x: 50, y: 60),
+            duration: 0,
+            steps: 1,
+            profile: .linear)
+
+        #expect(drag.outcome == nil)
+        #expect(drag.targetIdentity == nil)
+        #expect(move.outcome == nil)
+        #expect(move.targetIdentity == nil)
+        await peer.waitUntilFinished()
+    }
+
+    @Test
+    func `remote drag cancellation remains retry unsafe with a signed global receipt`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { Task { await fixture.host.stop() } }
+        fixture.services.automationStub.dragError = CancellationError()
+
+        do {
+            _ = try await fixture.remote.dragWithOutcome(.init(
+                from: CGPoint(x: 10, y: 20),
+                to: CGPoint(x: 30, y: 40),
+                duration: 0,
+                steps: 1,
+                modifiers: nil,
+                profile: .linear))
+            Issue.record("Expected post-admission drag cancellation to remain indeterminate")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.evidence == .completionUnknown)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.dispatchState.mutationDispatched)
+
+            let receipt = try #require(await fixture.client.lastOperationReceipt())
+            #expect(receipt.payload.operation == .drag)
+            #expect(receipt.payload.target == .global)
+            #expect(receipt.payload.outcome == failure.outcome.projection)
+        }
+
+        await fixture.host.stop()
+    }
+
+    @Test
+    func `remote automation preserves canonical results exact targets and signed receipts`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { Task { await fixture.host.stop() } }
+
+        let outcomeProvider: any UIAutomationActionOutcomeProviding = fixture.remote
+        let accessibilityDelivery = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityAction,
+            mode: .background)
+        let windowDelivery = DesktopActionOutcome.Delivery(
+            mechanism: .windowTargetedEvents,
+            mode: .background)
+        let valueDelivery = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityValue,
+            mode: .background)
+
+        fixture.services.automationStub.actionOutcome = .dispatchedUnverified(
+            delivery: accessibilityDelivery,
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let click = try await outcomeProvider.clickWithOutcome(
+            target: .query("Save"),
+            clickType: .single,
+            snapshotId: Self.snapshotID,
+            expectedWindowIdentity: fixture.windowIdentity,
+            expectedWindowBounds: fixture.windowBounds)
+        try await Self.expect(
+            click,
+            outcome: fixture.services.automationStub.actionOutcome,
+            target: fixture.target,
+            operation: .exactWindowTargetedClick,
+            fixture: fixture)
+
+        fixture.services.automationStub.actionOutcome = .dispatchedUnverified(
+            delivery: accessibilityDelivery,
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let type = try await outcomeProvider.typeWithOutcome(
+            text: "hello",
+            target: "T1",
+            clearExisting: true,
+            typingDelay: 0,
+            snapshotId: Self.snapshotID)
+        try await Self.expect(
+            type,
+            outcome: fixture.services.automationStub.actionOutcome,
+            target: fixture.target,
+            operation: .type,
+            fixture: fixture)
+
+        fixture.services.automationStub.actionOutcome = .dispatchedUnverified(
+            delivery: windowDelivery,
+            evidence: .deliveryAccepted,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(5))
+        let typeActions = try await outcomeProvider.typeActionsWithOutcome(
+            [.text("world")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: Self.snapshotID,
+            expectedWindowIdentity: fixture.windowIdentity,
+            expectedWindowBounds: fixture.windowBounds)
+        try await Self.expect(
+            typeActions,
+            outcome: fixture.services.automationStub.actionOutcome,
+            target: fixture.target,
+            operation: .exactWindowTargetedTypeActions,
+            fixture: fixture)
+        #expect(typeActions.payload.totalCharacters == 5)
+        #expect(typeActions.payload.keyPresses == 5)
+        #expect(typeActions.payload.specialKeyPresses == 0)
+
+        fixture.services.automationStub.actionOutcome = .dispatchedUnverified(
+            delivery: accessibilityDelivery,
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let scroll = try await outcomeProvider.scrollWithOutcome(ScrollRequest(
+            direction: .down,
+            amount: 3,
+            target: "T1",
+            snapshotId: Self.snapshotID,
+            expectedWindow: UIAutomationTarget.ExactWindow(
+                identity: fixture.windowIdentity,
+                bounds: fixture.windowBounds)))
+        try await Self.expect(
+            scroll,
+            outcome: fixture.services.automationStub.actionOutcome,
+            target: fixture.target,
+            operation: .targetedScroll,
+            fixture: fixture)
+
+        fixture.services.automationStub.actionOutcome = .dispatchedUnverified(
+            delivery: windowDelivery,
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let hotkey = try await outcomeProvider.hotkeyWithOutcome(
+            keys: "cmd,s",
+            holdDuration: 0,
+            expectedWindowIdentity: fixture.windowIdentity,
+            expectedWindowBounds: fixture.windowBounds)
+        try await Self.expect(
+            hotkey,
+            outcome: fixture.services.automationStub.actionOutcome,
+            target: fixture.target,
+            operation: .exactWindowTargetedHotkey,
+            fixture: fixture)
+
+        fixture.services.automationStub.actionOutcome = .dispatchedUnverified(
+            delivery: valueDelivery,
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let setValue = try await outcomeProvider.setValueWithOutcome(
+            target: "T1",
+            value: .string("updated"),
+            snapshotId: Self.snapshotID)
+        try await Self.expect(
+            setValue,
+            outcome: fixture.services.automationStub.actionOutcome,
+            target: fixture.target,
+            operation: .setValue,
+            fixture: fixture)
+
+        fixture.services.automationStub.actionOutcome = .dispatchedUnverified(
+            delivery: accessibilityDelivery,
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        let action = try await outcomeProvider.performActionWithOutcome(
+            target: "B1",
+            actionName: "AXPress",
+            snapshotId: Self.snapshotID)
+        try await Self.expect(
+            action,
+            outcome: fixture.services.automationStub.actionOutcome,
+            target: fixture.target,
+            operation: .performAction,
+            fixture: fixture)
+
+        await fixture.host.stop()
+    }
+
+    @Test(arguments: [false, true])
+    func `remote select all preserves signed AX selection outcomes`(_ exactWindow: Bool) async throws {
+        let fixture = try await Self.makeFixture()
+        defer { Task { await fixture.host.stop() } }
+        let target = try exactWindow
+            ? fixture.target
+            : DesktopTargetIdentity(processIdentity: fixture.windowIdentity.processIdentity)
+        fixture.services.automationStub.uiAutomationOutcomeTargetIdentity = target
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityValue, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: .one)
+        fixture.services.automationStub.uiAutomationOutcomeScript.append(outcome, for: .hotkey)
+
+        let result: UIAutomationActionResult<Void>
+        if exactWindow {
+            result = try await fixture.remote.hotkeyWithOutcome(
+                keys: "command,a",
+                holdDuration: 0,
+                expectedWindowIdentity: fixture.windowIdentity,
+                expectedWindowBounds: fixture.windowBounds)
+            #expect(fixture.services.automationStub.exactKeyboardEvents == ["hotkey"])
+        } else {
+            result = try await fixture.remote.hotkeyWithOutcome(
+                keys: "command,a", holdDuration: 0, expectedProcessIdentity: fixture.windowIdentity.processIdentity)
+            #expect(fixture.services.automationStub.lastProcessTargetedHotkey?.keys == "command,a")
+        }
+        #expect(fixture.services.automationStub.uiAutomationOutcomeScript.callCount(for: .hotkey) == 1)
+        try await Self.expect(
+            result,
+            outcome: outcome,
+            target: target,
+            operation: exactWindow ? .exactWindowTargetedHotkey : .targetedHotkey,
+            fixture: fixture)
+        await fixture.host.stop()
+    }
+
+    @Test(arguments: [false, true])
+    func `remote uncertain select all retains signed failure instead of losing its response`(
+        _ exactWindow: Bool) async throws
+    {
+        for count: Int? in [nil, 1] {
+            let fixture = try await Self.makeFixture()
+            defer { Task { await fixture.host.stop() } }
+            let target = try exactWindow
+                ? fixture.target
+                : DesktopTargetIdentity(processIdentity: fixture.windowIdentity.processIdentity)
+            fixture.services.automationStub.uiAutomationOutcomeTargetIdentity = target
+            let error = InputDeliveryIndeterminateError(
+                operation: .hotkey,
+                emittedUnitCount: count,
+                causeDescription: "selection write unconfirmed",
+                delivery: .init(mechanism: .accessibilityValue, mode: .background))
+            if exactWindow {
+                fixture.services.automationStub.exactHotkeyError = error
+            } else {
+                fixture.services.automationStub.targetedHotkeyError = error
+            }
+
+            do {
+                if exactWindow {
+                    _ = try await fixture.remote.hotkeyWithOutcome(
+                        keys: "cmd,a",
+                        holdDuration: 0,
+                        expectedWindowIdentity: fixture.windowIdentity,
+                        expectedWindowBounds: fixture.windowBounds)
+                } else {
+                    _ = try await fixture.remote.hotkeyWithOutcome(
+                        keys: "cmd,a", holdDuration: 0, expectedProcessIdentity: fixture.windowIdentity.processIdentity)
+                }
+                Issue.record("Expected uncertain selection failure")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome.state == .indeterminate)
+                #expect(failure.outcome.evidence == .completionUnknown)
+                #expect(failure.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
+                #expect(failure.outcome.dispatchState.unitCount?.rawValue == count)
+                #expect(failure.outcome.retrySafety == .unsafe)
+                #expect(failure.causeDescription == "selection write unconfirmed")
+                try await Self.expectFailureReceipt(
+                    failure,
+                    target: .init(targetIdentity: target),
+                    fixture: fixture,
+                    operation: exactWindow ? .exactWindowTargetedHotkey : .targetedHotkey)
+            }
+            #expect(fixture.services.automationStub.uiAutomationOutcomeScript.callCount(for: .hotkey) == 1)
+            #expect(fixture.services.automationStub.exactKeyboardEvents.isEmpty)
+            #expect(fixture.services.automationStub.lastProcessTargetedHotkey == nil)
+            await fixture.host.stop()
+        }
+    }
+
+    @Test
+    func `remote automation turns a returned non success result into an exact attributed failure`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { Task { await fixture.host.stop() } }
+        let returnedOutcome = DesktopActionOutcome.partial(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            unitCount: .one)
+        fixture.services.automationStub.actionOutcome = returnedOutcome
+
+        do {
+            _ = try await fixture.remote.clickWithOutcome(
+                target: .query("Save"),
+                clickType: .single,
+                snapshotId: Self.snapshotID,
+                expectedWindowIdentity: fixture.windowIdentity,
+                expectedWindowBounds: fixture.windowBounds)
+            Issue.record("Expected the returned partial result to cross Bridge as a canonical failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == returnedOutcome.routed(to: .bridge))
+            #expect(failure.targetReceipt == DesktopActionTargetReceipt(
+                processIdentifier: fixture.windowIdentity.ownerProcessIdentifier,
+                processStartIdentity: fixture.windowIdentity.ownerProcessStartIdentity,
+                windowID: fixture.windowIdentity.windowID))
+        }
+
+        let receipt = try #require(await fixture.client.lastOperationReceipt())
+        #expect(receipt.payload.operation == .exactWindowTargetedClick)
+        #expect(receipt.payload.target == .window(fixture.windowIdentity))
+        #expect(receipt.payload.outcome == returnedOutcome.routed(to: .bridge).projection)
+        await fixture.host.stop()
+    }
+
+    @Test
+    func `current remote perform action preserves authenticated no dispatch refusal`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { Task { await fixture.host.stop() } }
+        let refusal = DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "The fixture button is unavailable before dispatch.",
+            hint: "Observe the button again.",
+            causeDescription: "fixture target disappeared")
+        fixture.services.automationStub.uiAutomationOutcomeScript.appendFailure(refusal, for: .performAction)
+
+        let caught = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await fixture.remote.performActionWithOutcome(
+                target: "B1",
+                actionName: "AXPress",
+                snapshotId: Self.snapshotID)
+        }
+        let failure = try #require(caught)
+        #expect(failure == refusal.routed(to: .bridge))
+        #expect(failure.outcome.state == .refused)
+        #expect(failure.outcome.dispatchState == .none)
+        #expect(failure.outcome.retrySafety == .safe)
+        #expect(fixture.services.automationStub.uiAutomationOutcomeScript.callCount(for: .performAction) == 1)
+        #expect(fixture.services.automationStub.lastPerformAction == nil)
+        try await Self.expectFailureReceipt(failure, target: nil, fixture: fixture)
+        await fixture.host.stop()
+    }
+
+    @Test
+    func `current remote perform action preserves authenticated attributed partial failure`() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { Task { await fixture.host.stop() } }
+        let outcome = DesktopActionOutcome.partial(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            unitCount: .one)
+        fixture.services.automationStub.uiAutomationOutcomeScript.append(outcome, for: .performAction)
+
+        let caught = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await fixture.remote.performActionWithOutcome(
+                target: "B1",
+                actionName: "AXPress",
+                snapshotId: Self.snapshotID)
+        }
+        let failure = try #require(caught)
+        #expect(failure.outcome == outcome.routed(to: .bridge))
+        #expect(failure.outcome.state == .partial)
+        #expect(failure.outcome.dispatchState.unitCount == .one)
+        #expect(failure.outcome.retrySafety == .unsafe)
+        #expect(failure.targetReceipt == fixture.target.actionTargetReceipt)
+        #expect(failure.message == "The desktop action provider returned a non-success result.")
+        #expect(failure.causeDescription == nil)
+        #expect(fixture.services.automationStub.uiAutomationOutcomeScript.callCount(for: .performAction) == 1)
+        let call = try #require(fixture.services.automationStub.lastPerformAction)
+        #expect(call.target == "B1")
+        #expect(call.actionName == "AXPress")
+        #expect(call.snapshotId == Self.snapshotID)
+        try await Self.expectFailureReceipt(
+            failure,
+            target: .window(fixture.windowIdentity),
+            fixture: fixture)
+        await fixture.host.stop()
+    }
+
+    private static func expectFailureReceipt(
+        _ failure: DesktopActionFailure,
+        target: PeekabooBridgeOperationTargetReceipt?,
+        fixture: Fixture,
+        operation: PeekabooBridgeOperation = .performAction) async throws
+    {
+        #expect(fixture.handshake.negotiatedVersion == PeekabooBridgeConstants.protocolVersion)
+        #expect(fixture.handshake.enabledOperations?.contains(operation) == true)
+        let bundle = try #require(await fixture.client.lastOperationReceiptBundle())
+        let listener = try #require(fixture.handshake.operationAttestation)
+        let session = try #require(fixture.handshake.operationSessionAttestation)
+        try bundle.validate(trustAnchor: .listenerAttestation(listener))
+        let payload = bundle.receipt.payload
+        #expect(payload.operation == operation)
+        #expect(payload.target == target)
+        #expect(payload.targetAttributionFailure == nil)
+        #expect(payload.targetAttributionEvidence == nil)
+        #expect(payload.focusedElement == nil)
+        #expect(payload.outcome == failure.outcome.projection)
+        #expect(payload.sessionID == session.sessionID)
+        #expect(payload.clientInstanceID == session.clientInstanceID)
+        #expect(payload.client == session.client)
+        #expect(payload.requestID == PeekabooBridgeOperationReceiptCoding.deterministicRequestID(
+            sessionID: session.sessionID,
+            sequence: payload.sessionSequence))
+        #expect(payload.selectedLeafEvidence == nil)
+        #expect(failure.selectedLeafEvidence == nil)
+        let response = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeResponse.self,
+            from: bundle.canonicalResponse)
+        guard case let .projectedAction(projected) = response,
+              case let .error(envelope) = projected.response
+        else {
+            Issue.record("Expected a signed projected action failure")
+            return
+        }
+        #expect(projected.outcome == failure.outcome.projection)
+        let signedFailure = try #require(envelope.desktopActionFailure)
+        let signedTarget = try payload.resolvedTargetIdentity()
+        #expect(signedFailure.attributed(to: signedTarget?.actionTargetReceipt) == failure)
+    }
+
+    private static func expect(
+        _ result: UIAutomationActionResult<some Sendable>,
+        outcome: DesktopActionOutcome,
+        target: DesktopTargetIdentity,
+        operation: PeekabooBridgeOperation,
+        fixture: Fixture) async throws
+    {
+        let routedOutcome = outcome.routed(to: .bridge)
+        #expect(result.outcome == routedOutcome)
+        #expect(result.targetIdentity == target)
+        let bundle = try #require(await fixture.client.lastOperationReceiptBundle())
+        let listener = try #require(fixture.handshake.operationAttestation)
+        let session = try #require(fixture.handshake.operationSessionAttestation)
+        try bundle.validate(trustAnchor: .listenerAttestation(listener))
+        let receipt = bundle.receipt
+        #expect(receipt.payload.sessionID == session.sessionID)
+        #expect(receipt.payload.clientInstanceID == session.clientInstanceID)
+        #expect(receipt.payload.client == session.client)
+        #expect(receipt.payload.requestID == PeekabooBridgeOperationReceiptCoding.deterministicRequestID(
+            sessionID: session.sessionID,
+            sequence: receipt.payload.sessionSequence))
+        #expect(receipt.payload.operation == operation)
+        #expect(receipt.payload.target == .init(targetIdentity: target))
+        #expect(receipt.payload.outcome == routedOutcome.projection)
+        #expect(receipt.payload.selectedLeafEvidence == result.selectedLeafEvidence)
+        #expect(result.selectedLeafEvidence == nil)
+    }
+
+    private static func expectGlobalPointerResult(
+        _ result: UIAutomationActionResult<Void>,
+        operation: PeekabooBridgeOperation,
+        client: PeekabooBridgeClient) async throws
+    {
+        let outcome = try #require(result.outcome)
+        #expect(outcome.state == .dispatchedUnverified)
+        #expect(outcome.route == .bridge)
+        #expect(outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+        #expect(outcome.dispatchState.unitCount == .one)
+        #expect(result.targetIdentity == nil)
+
+        let receipt = try #require(await client.lastOperationReceipt())
+        #expect(receipt.payload.operation == operation)
+        #expect(receipt.payload.target == .global)
+        #expect(receipt.payload.outcome == outcome.projection)
+    }
+
+    private static func makeFixture() async throws -> Fixture {
+        let processIdentifier = getpid()
+        let processStartIdentity = try #require(
+            SystemIdentityResolver.processStartIdentity(processIdentifier))
+        let windowBounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let windowIdentity = WindowMutationIdentity(
+            windowID: 999_999,
+            ownerProcessIdentifier: processIdentifier,
+            ownerProcessStartIdentity: processStartIdentity,
+            capturedBounds: windowBounds)
+        let target = try DesktopTargetIdentity(exactWindow: .init(
+            identity: windowIdentity,
+            bounds: windowBounds))
+        let services = StubServices()
+        services.automationStub.uiAutomationOutcomeTargetIdentity = target
+        let socketPath = "/tmp/peekaboo-remote-ui-results-\(UUID().uuidString).sock"
+        let server = PeekabooBridgeServer(
+            services: services,
+            hostKind: .gui,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            postEventAccessEvaluator: { true },
+            permissionStatusEvaluator: { _ in
+                PermissionsStatus(
+                    screenRecording: false,
+                    accessibility: true,
+                    postEvent: true)
+            },
+            windowOwnerProcessIdentifierProvider: { _ in processIdentifier },
+            windowBoundsProvider: { _ in windowBounds },
+            processStartIdentityProvider: { _ in processStartIdentity })
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+
+        let client = TrustedBridgeClientFixture.make(socketPath: socketPath, requestTimeoutSec: 2)
+        let handshake = try await client.handshake(client: .init(
+            bundleIdentifier: "dev.peekaboo.remote-ui-result-tests",
+            teamIdentifier: nil,
+            processIdentifier: processIdentifier))
+        let supportsComposite = handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.compositeTypeDelivery) == true
+        let supportsSetValueBinding = handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.setValueResultTargetBinding) == true
+        #expect(supportsComposite)
+        #expect(supportsSetValueBinding)
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.processGenerationBoundElementMutations) == true)
+        let remote = RemoteElementActionUIAutomationService(
+            client: client,
+            supportsTargetedHotkeys: true,
+            supportsProcessGenerationPinnedHotkeys: true,
+            supportsTargetedTypeActions: true,
+            supportsProcessGenerationPinnedTypeActions: true,
+            supportsTargetedClicks: true,
+            supportsProcessGenerationPinnedClicks: true,
+            supportsExactWindowTargetedClicks: true,
+            supportsTargetedScroll: true,
+            supportsRequestPinnedExactWindowScrollReceipt: true,
+            supportsExactWindowTargetedKeyboard: true,
+            supportsExactWindowCompositeTypeDelivery: supportsComposite,
+            supportsSetValueResultTargetBinding: supportsSetValueBinding)
+        return Fixture(
+            services: services,
+            host: host,
+            client: client,
+            handshake: handshake,
+            remote: remote,
+            windowIdentity: windowIdentity,
+            windowBounds: windowBounds,
+            target: target)
+    }
+}
+
+@MainActor
+private struct Fixture {
+    let services: StubServices
+    let host: PeekabooBridgeHost
+    let client: PeekabooBridgeClient
+    let handshake: PeekabooBridgeHandshakeResponse
+    let remote: RemoteElementActionUIAutomationService
+    let windowIdentity: WindowMutationIdentity
+    let windowBounds: CGRect
+    let target: DesktopTargetIdentity
+}

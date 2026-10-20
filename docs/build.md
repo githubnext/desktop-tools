@@ -26,13 +26,14 @@ npm run build:js && npm run check   # after editing src/
 The build:
 
 1. Resolves only the versions in `Package.resolved`.
-2. Checks Peekaboo's pinned revision.
-3. Assembles the ordered patch stack in a private Git index and applies only the missing suffix. The checkout under `<scratch>/checkouts/Peekaboo` is build scratch: when it matches no complete prefix, as after an earlier revision of a patch or a local edit, the build says so with its path, discards its local changes, and applies the whole stack. It still fails if the result differs from the stack. Keep Peekaboo edits you want in a patch, not in the checkout.
-4. Builds in release mode.
+2. Checks that the runtime's allowed operations survive the embedded host's allowlist.
+3. Builds in release mode.
 
-`--out` receives `libDesktopTools.dylib`, `desktop-tools-client`, `desktop-tools-app` (the [Desktop Tools app](app.md) host), and `Licenses/<dependency>/` notices for this package and every resolved pin. Existing files in `<out>/Licenses` are kept.
+Peekaboo is vendored in `native/vendor/Peekaboo`: version 4.8.0 with our changes, which you edit there like any other source. `git diff peekaboo-upstream-4d43dc9 -- native/vendor/Peekaboo` shows them, and [`native/vendor/README.md`](https://github.com/githubnext/desktop-tools/blob/main/native/vendor/README.md) explains each one.
 
-Give each concurrent build its own `--scratch` directory, or run builds one at a time. Patches are applied to the scratch's Peekaboo checkout outside SwiftPM's lock. The default scratch is `native/.build` inside the package, which is not suitable for an installed dependency.
+`--out` receives `libDesktopTools.dylib`, `desktop-tools-client`, `desktop-tools-app` (the [Desktop Tools app](app.md) host), and `Licenses/<dependency>/` notices for this package, Peekaboo and every resolved pin. Existing files in `<out>/Licenses` are kept.
+
+Give each concurrent build its own `--scratch` directory, or run builds one at a time. The default scratch is `native/.build` inside the package, which is not suitable for an installed dependency.
 
 Peekaboo's own tests take the real desktop operation locks in `~/.peekaboo` (`global.lock` and its turnstile) whenever a test uses the default coordination root. The path comes from the account database, so changing `HOME` doesn't isolate it. A hung or slow test run blocks every desktop operation for the same user, including the installed Desktop Tools app. A timed-out operation names the processes holding the lock open. Run Peekaboo tests with a narrow `--filter` and a time limit, and stop any run that hangs.
 

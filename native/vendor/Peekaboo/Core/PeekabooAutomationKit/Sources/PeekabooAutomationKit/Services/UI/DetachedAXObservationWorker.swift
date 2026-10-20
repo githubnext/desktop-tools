@@ -1,0 +1,1242 @@
+import ApplicationServices
+import CoreGraphics
+import Foundation
+import PeekabooFoundation
+
+@_spi(Testing) public struct DetachedAXWindowIdentityCandidate: Sendable, Equatable {
+    public let windowID: Int?
+    public let bounds: CGRect?
+
+    public init(windowID: Int?, bounds: CGRect?) {
+        self.windowID = windowID
+        self.bounds = bounds
+    }
+}
+
+@_spi(Testing) public enum DetachedAXExactWindowSelectionPolicy {
+    public static func uniqueExactIndex(
+        windowID: Int,
+        candidates: [DetachedAXWindowIdentityCandidate]) -> Int?
+    {
+        let matches = candidates.indices.filter { candidates[$0].windowID == windowID }
+        return matches.count == 1 ? matches[0] : nil
+    }
+}
+
+struct DetachedAXObservationRequest: Sendable {
+    let processIdentifier: Int32
+    let expectedProcessStartIdentity: UInt64
+    let windowID: Int?
+    let windowTitle: String?
+    let expectedWindowBounds: CGRect?
+    let windowMutationIdentity: WindowMutationIdentity?
+    let includeMenuBarElements: Bool
+    let appIsActive: Bool
+    let traversalBudget: AXTraversalBudget
+    let timing: DetachedAXObservationTiming
+    var allowApplicationScopedFallback = false
+}
+
+struct DetachedAXObservationTiming: Sendable, Equatable {
+    // AX calls are not cooperatively cancellable. Stop traversal early enough for one bounded
+    // native call plus result publication before the caller's hard timeout abandons the lane.
+    private static let maximumCompletionGrace: TimeInterval = 0.25
+    private static let minimumCompletionGrace: TimeInterval = 0.01
+
+    let cooperativeDeadlineSeconds: TimeInterval
+    let hardTimeoutSeconds: TimeInterval
+
+    init(hardTimeoutSeconds: TimeInterval) {
+        let proportionalGrace = hardTimeoutSeconds * 0.1
+        let completionGrace = min(
+            Self.maximumCompletionGrace,
+            max(Self.minimumCompletionGrace, proportionalGrace))
+        self.cooperativeDeadlineSeconds = max(0.001, hardTimeoutSeconds - completionGrace)
+        self.hardTimeoutSeconds = hardTimeoutSeconds
+    }
+}
+
+struct DetachedAXObservationResult: Sendable {
+    let elements: [DetectedElement]
+    let windowID: Int?
+    let windowTitle: String
+    let windowBounds: CGRect?
+    let isDialog: Bool
+    let truncationInfo: DetectionTruncationInfo?
+    var isApplicationScopedFallback = false
+    var applicationScopedFallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin?
+    var corroboratedFocusedElementID: String?
+}
+
+enum DetachedAXMultiAttributeReadDisposition: Equatable {
+    case values
+    case fallback
+    case incomplete
+}
+
+enum DetachedAXNodeTraversalDisposition: Equatable {
+    case emitAndTraverse
+    case traverseOnly
+    case traverseOnlyIncomplete
+}
+
+enum DetachedAXPostChildStopReason: Equatable {
+    case maxElementCount
+    case deadline
+}
+
+/// A deliberately small read-only AX implementation for background observation workers.
+/// It creates every AX reference inside the worker lane and returns only immutable Sendable values.
+enum DetachedAXObservationWorker {
+    private static let maximumPerCallTimeout = 0.2
+    private static let childAttributeNames = [
+        kAXChildrenAttribute,
+        "AXVisibleChildren",
+        "AXWebAreaChildren",
+        "AXApplicationNavigation",
+        "AXApplicationElements",
+        "AXBodyArea",
+        "AXSplitGroupContents",
+        "AXLayoutAreaChildren",
+        "AXGroupChildren",
+        "AXContents",
+        "AXChildrenInNavigationOrder",
+        kAXSelectedChildrenAttribute,
+        kAXRowsAttribute,
+        kAXColumnsAttribute,
+        "AXTabs",
+    ]
+    private static let descriptorAttributeNames = [
+        kAXPositionAttribute,
+        kAXSizeAttribute,
+        kAXRoleAttribute,
+        kAXSubroleAttribute,
+        kAXTitleAttribute,
+        "AXLabel",
+        kAXValueAttribute,
+        kAXDescriptionAttribute,
+        kAXHelpAttribute,
+        kAXRoleDescriptionAttribute,
+        kAXIdentifierAttribute,
+        kAXEnabledAttribute,
+        kAXSelectedAttribute,
+        kAXFocusedAttribute,
+        "AXPlaceholderValue",
+        "AXEditable",
+        "AXKeyboardShortcut",
+    ]
+    private static let actionableRoles: Set<String> = [
+        "axbutton", "axpopupbutton", "axtextfield", "axtextarea", "axsearchfield", "axsecuretextfield",
+        "axlink", "axweblink", "axcheckbox", "axradiobutton", "axmenuitem", "axcombobox", "axslider", "axtab",
+    ]
+    private static let actionLookupRoles: Set<String> = [
+        "axgroup", "aximage", "axcell", "axrow", "axoutlineitem",
+    ]
+
+    static var descriptorAttributeCount: Int {
+        self.descriptorAttributeNames.count
+    }
+
+    static var descriptorAttributes: [String] {
+        self.descriptorAttributeNames
+    }
+
+    static func descriptorAttributeIndex(_ name: String) -> Int? {
+        self.descriptorAttributeNames.firstIndex(of: name)
+    }
+
+    static var childAttributeCount: Int {
+        self.childAttributeNames.count
+    }
+
+    static func descriptorReadDisposition(error: AXError, values: [Any]?)
+        -> DetachedAXMultiAttributeReadDisposition
+    {
+        if error == .success {
+            guard let values, values.count == self.descriptorAttributeNames.count else { return .incomplete }
+            return AXAttributeReadCompletenessPolicy.hasNodeInvalidatingErrorValue(
+                names: self.descriptorAttributeNames,
+                values: values) ? .incomplete : .values
+        }
+        return self.isUnsupported(error) ? .fallback : .incomplete
+    }
+
+    static func childrenReadDisposition(error: AXError, values: [Any]?)
+        -> DetachedAXMultiAttributeReadDisposition
+    {
+        self.multiAttributeReadDisposition(
+            error: error,
+            values: values,
+            expectedValueCount: self.childAttributeNames.count)
+    }
+
+    static func nodeTraversalDisposition(
+        descriptorAvailable: Bool,
+        readIncomplete: Bool) -> DetachedAXNodeTraversalDisposition
+    {
+        if readIncomplete {
+            return .traverseOnlyIncomplete
+        }
+        return descriptorAvailable ? .emitAndTraverse : .traverseOnly
+    }
+
+    static func postChildStopReason(
+        elementCount: Int,
+        maxElementCount: Int,
+        deadlineExpired: Bool,
+        hasRemainingWork: Bool) -> DetachedAXPostChildStopReason?
+    {
+        guard hasRemainingWork else { return nil }
+        if elementCount >= maxElementCount {
+            return .maxElementCount
+        }
+        return deadlineExpired ? .deadline : nil
+    }
+
+    static func valueSettableMetadata(error: AXError, isSettable: Bool) -> Bool? {
+        error == .success ? isSettable : nil
+    }
+
+    static func exactWindowCandidates<Window>(
+        windows: [Window],
+        remainingTimeout: () -> Float?,
+        applyTimeout: (Window, Float) -> Void,
+        windowID: (Window) -> Int?) -> [DetachedAXWindowIdentityCandidate]
+    {
+        windows.map { window in
+            guard let timeout = remainingTimeout() else {
+                return DetachedAXWindowIdentityCandidate(windowID: nil, bounds: nil)
+            }
+            let resolvedID = AXChildWindowMessagingTimeout.perform(
+                timeout: timeout,
+                applyTimeout: { applyTimeout(window, $0) },
+                operation: { windowID(window) })
+            return DetachedAXWindowIdentityCandidate(windowID: resolvedID, bounds: nil)
+        }
+    }
+
+    static func inspect(_ request: DetachedAXObservationRequest) throws -> DetachedAXObservationResult {
+        try self.inspect(
+            request,
+            resolveWindow: { application, request, deadline in
+                try self.resolveWindow(application: application, request: request, deadline: deadline)
+            },
+            exactWindowUnavailableResult: { request, deadlineReached in
+                self.exactWindowUnavailableResult(request, deadlineReached: deadlineReached)
+            },
+            validateIdentity: { request in
+                try self.validateIdentity(request)
+            })
+    }
+
+    static func inspect(
+        _ request: DetachedAXObservationRequest,
+        resolveWindow: (
+            _ application: AXUIElement,
+            _ request: DetachedAXObservationRequest,
+            _ deadline: ContinuousClock.Instant) throws -> AXUIElement,
+        exactWindowUnavailableResult: (
+            _ request: DetachedAXObservationRequest,
+            _ deadlineReached: Bool) -> DetachedAXObservationResult?,
+        validateIdentity: (_ request: DetachedAXObservationRequest) throws -> Void) throws
+        -> DetachedAXObservationResult
+    {
+        let diagnosticStart = AXObservationReadDiagnostics.start()
+        defer {
+            AXObservationReadDiagnostics.recordObservation(
+                startedAt: diagnosticStart,
+                processIdentifier: request.processIdentifier,
+                windowID: request.windowID)
+        }
+        try validateIdentity(request)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(request.timing.cooperativeDeadlineSeconds))
+        let application = AXUIElementCreateApplication(request.processIdentifier)
+        self.prepare(application, deadline: deadline)
+
+        let window: AXUIElement
+        let isApplicationScopedFallback: Bool
+        do {
+            window = try resolveWindow(application, request, deadline)
+            isApplicationScopedFallback = false
+        } catch {
+            let deadlineReached = ContinuousClock.now >= deadline
+            let exactWindowNotFound = self.isExactWindowNotFound(error)
+            let exactWindowUnavailable = exactWindowNotFound
+                ? exactWindowUnavailableResult(request, deadlineReached)
+                : nil
+            if request.allowApplicationScopedFallback,
+               request.windowID != nil,
+               exactWindowNotFound,
+               !deadlineReached,
+               exactWindowUnavailable?.windowID == request.windowID
+            {
+                window = application
+                isApplicationScopedFallback = true
+            } else {
+                if let fallback = exactWindowUnavailable {
+                    try validateIdentity(request)
+                    return fallback
+                }
+                throw error
+            }
+        }
+        self.prepare(window, deadline: deadline)
+        let title = self.stringAttribute(kAXTitleAttribute, of: window) ?? request.windowTitle ?? "Untitled"
+        let bounds = self.frame(of: window)
+        let role = self.stringAttribute(kAXRoleAttribute, of: window) ?? ""
+        let subrole = self.stringAttribute(kAXSubroleAttribute, of: window) ?? ""
+        let identifier = self.stringAttribute(kAXIdentifierAttribute, of: window) ?? ""
+        let isModal = self.boolAttribute(kAXModalAttribute, of: window)
+        let initialFocus: AXUIElement? = if !isApplicationScopedFallback,
+                                            request.windowID != nil,
+                                            request.windowMutationIdentity != nil,
+                                            request.expectedWindowBounds != nil
+        {
+            self.initialFocusedReference(deadline: deadline) {
+                self.focusedReference(application: application, timeout: $0)
+            }
+        } else {
+            nil
+        }
+        var state = TraversalState()
+        state.listsCustomActions = NotificationCenterCustomActions.isNotificationCenter(request.processIdentifier)
+        self.process(
+            window,
+            request: TraversalRequest(
+                depth: 0,
+                deadline: deadline,
+                budget: request.traversalBudget,
+                source: nil),
+            state: &state)
+
+        if request.includeMenuBarElements, request.appIsActive,
+           let menuBar = self.readApplicationReference(
+               deadline: deadline,
+               applyTimeout: { AXUIElementSetMessagingTimeout(application, $0) == .success },
+               read: { self.elementAttribute(kAXMenuBarAttribute, of: application) })
+        {
+            self.process(
+                menuBar,
+                request: TraversalRequest(
+                    depth: 0,
+                    deadline: deadline,
+                    budget: request.traversalBudget,
+                    source: "applicationMenuBar"),
+                state: &state)
+        }
+
+        // A budget cut leaves the emitted candidates unread past the limit, not misread; the match below is the
+        // app's own focused element, so it holds for those candidates. A deadline or failed read does not.
+        let corroboratedFocus = self.corroboratedFocusElementID(
+            observation: (
+                initialReference: initialFocus,
+                candidates: state.focusedReferences,
+                isComplete: !isApplicationScopedFallback && state.truncationInfo?.hasIncompleteReads != true),
+            canRead: { self.remainingMessagingTimeout(until: deadline) != nil },
+            readCurrentReference: { self.focusedReference(application: application, deadline: deadline) },
+            referencesEqual: { CFEqual($0, $1) },
+            belongsToWindow: {
+                self.focusedElement(
+                    $0, belongsTo: window, processIdentifier: request.processIdentifier, deadline: deadline)
+            })
+        state.elements = self.attachingFocusedTextSelection(
+            observation: (
+                elements: state.elements,
+                references: state.focusedReferences,
+                corroboratedElementID: corroboratedFocus,
+                isComplete: !isApplicationScopedFallback && state.truncationInfo?.isTruncated != true),
+            request: request,
+            deadline: deadline)
+        let partialFallback = isApplicationScopedFallback
+            ? DetectionTruncationInfo(incompleteAccessibilityRead: true)
+            : nil
+        let applicationScopedFallbackOrigin: ApplicationScopedAccessibilityFallbackOrigin?
+        if isApplicationScopedFallback {
+            guard let identity = request.windowMutationIdentity,
+                  let origin = ApplicationScopedAccessibilityFallbackOrigin(windowIdentity: identity)
+            else {
+                throw PeekabooError.snapshotStale(
+                    "Application-scoped AX fallback lost its exact WindowServer origin receipt")
+            }
+            applicationScopedFallbackOrigin = origin
+        } else {
+            applicationScopedFallbackOrigin = nil
+        }
+        let result = DetachedAXObservationResult(
+            elements: state.elements,
+            windowID: isApplicationScopedFallback ? nil : AXWindowIDResolver.windowID(of: window).map(Int.init)
+                ?? request.windowID,
+            windowTitle: isApplicationScopedFallback ? "Application-scoped partial semantics" : title,
+            windowBounds: isApplicationScopedFallback ? nil : bounds,
+            isDialog: !isApplicationScopedFallback && DialogElementClassifier.isObservationDialog(DialogElementEvidence(
+                role: role,
+                subrole: subrole,
+                roleDescription: "",
+                identifier: identifier,
+                title: title,
+                isModal: isModal)),
+            truncationInfo: DetectionTruncationInfo.merge(state.truncationInfo, partialFallback),
+            isApplicationScopedFallback: isApplicationScopedFallback,
+            applicationScopedFallbackOrigin: applicationScopedFallbackOrigin,
+            corroboratedFocusedElementID: corroboratedFocus)
+        try validateIdentity(request)
+        return result
+    }
+
+    static func validateIdentity(
+        _ request: DetachedAXObservationRequest,
+        processStartIdentityProvider: (pid_t) -> UInt64? = SystemIdentityResolver.processStartIdentity,
+        windowIdentityProvider: (CGWindowID) -> SystemWindowIdentity? = SystemIdentityResolver.windowIdentity,
+        receiptValidator: (WindowMutationIdentity, CGRect) -> Bool = {
+            SystemIdentityResolver.validateWindowMutationIdentity($0, expectedBounds: $1)
+        }) throws
+    {
+        guard processStartIdentityProvider(request.processIdentifier) == request.expectedProcessStartIdentity else {
+            throw PeekabooError.snapshotStale(
+                "Target PID \(request.processIdentifier) changed process generation during AX observation")
+        }
+        guard let requestedWindowID = request.windowID else { return }
+        guard requestedWindowID > 0,
+              let windowID = CGWindowID(exactly: requestedWindowID)
+        else {
+            throw PeekabooError.snapshotStale("Exact AX observation window identifier is invalid")
+        }
+
+        if let receipt = request.windowMutationIdentity {
+            guard receipt.windowID == requestedWindowID,
+                  receipt.ownerProcessIdentifier == request.processIdentifier,
+                  receipt.ownerProcessStartIdentity == request.expectedProcessStartIdentity,
+                  let bounds = request.expectedWindowBounds,
+                  receiptValidator(receipt, bounds)
+            else {
+                throw PeekabooError.snapshotStale(
+                    "Exact AX observation window receipt changed during traversal")
+            }
+            return
+        }
+
+        guard let liveWindow = windowIdentityProvider(windowID),
+              liveWindow.ownerProcessIdentifier == request.processIdentifier,
+              request.expectedWindowBounds == nil || liveWindow.bounds == request.expectedWindowBounds
+        else {
+            throw PeekabooError.snapshotStale(
+                "Legacy exact AX observation window changed during traversal")
+        }
+    }
+
+    private static func exactWindowUnavailableResult(
+        _ request: DetachedAXObservationRequest,
+        deadlineReached: Bool) -> DetachedAXObservationResult?
+    {
+        guard let requestedID = request.windowID,
+              let windowID = CGWindowID(exactly: requestedID),
+              let identity = SystemIdentityResolver.windowIdentity(windowID),
+              identity.ownerProcessIdentifier == request.processIdentifier
+        else {
+            return nil
+        }
+        return DetachedAXObservationResult(
+            elements: [],
+            windowID: requestedID,
+            windowTitle: identity.title,
+            windowBounds: identity.bounds,
+            isDialog: self.isFileDialogTitle(identity.title),
+            truncationInfo: self.exactWindowResolutionFailureTruncation(
+                deadlineReached: deadlineReached),
+            isApplicationScopedFallback: false,
+            applicationScopedFallbackOrigin: nil)
+    }
+
+    private static func isExactWindowNotFound(_ error: any Error) -> Bool {
+        guard let error = error as? PeekabooError else { return false }
+        if case .windowNotFound = error {
+            return true
+        }
+        return false
+    }
+
+    static func exactWindowResolutionFailureTruncation(
+        deadlineReached: Bool) -> DetectionTruncationInfo
+    {
+        if deadlineReached {
+            return DetectionTruncationInfo(deadlineReached: true)
+        }
+        return DetectionTruncationInfo(incompleteAccessibilityRead: true)
+    }
+
+    private static func resolveWindow(
+        application: AXUIElement,
+        request: DetachedAXObservationRequest,
+        deadline: ContinuousClock.Instant) throws -> AXUIElement
+    {
+        if let requestedID = request.windowID {
+            guard requestedID > 0,
+                  let cgWindowID = CGWindowID(exactly: requestedID),
+                  let identity = SystemIdentityResolver.windowIdentity(cgWindowID),
+                  identity.ownerProcessIdentifier == request.processIdentifier
+            else {
+                throw PeekabooError.windowNotFound(
+                    criteria: "window id \(requestedID) owned by PID \(request.processIdentifier)")
+            }
+
+            let windows = self.elementsAttribute(kAXWindowsAttribute, of: application)
+            let candidates = self.exactWindowCandidates(
+                windows: windows,
+                remainingTimeout: { self.remainingMessagingTimeout(until: deadline) },
+                applyTimeout: { AXUIElementSetMessagingTimeout($0, $1) },
+                windowID: { AXWindowIDResolver.windowID(of: $0).map(Int.init) })
+            if let exactIndex = DetachedAXExactWindowSelectionPolicy.uniqueExactIndex(
+                windowID: Int(cgWindowID),
+                candidates: candidates)
+            {
+                return windows[exactIndex]
+            }
+            throw PeekabooError.windowNotFound(
+                criteria: "accessible window id \(requestedID) owned by PID \(request.processIdentifier)")
+        }
+
+        let windows = self.elementsAttribute(kAXWindowsAttribute, of: application)
+        if let title = request.windowTitle,
+           let match = windows.first(where: {
+               self.prepare($0, deadline: deadline)
+               return self.stringAttribute(kAXTitleAttribute, of: $0)?.localizedCaseInsensitiveContains(title) == true
+           })
+        {
+            return match
+        }
+        if let focused = self.elementAttribute(kAXFocusedWindowAttribute, of: application) {
+            return focused
+        }
+        if let main = self.elementAttribute(kAXMainWindowAttribute, of: application) {
+            return main
+        }
+        guard let first = windows.first else {
+            throw PeekabooError.windowNotFound(criteria: "accessible window for PID \(request.processIdentifier)")
+        }
+        return first
+    }
+
+    private static func process(
+        _ element: AXUIElement,
+        request: TraversalRequest,
+        state: inout TraversalState)
+    {
+        guard ContinuousClock.now < request.deadline else {
+            state.deadlineReached = true
+            return
+        }
+        guard request.depth < request.budget.maxDepth else {
+            state.maxDepthReached = true
+            return
+        }
+        guard state.elements.count < request.budget.maxElementCount else {
+            state.maxElementCountReached = true
+            return
+        }
+        guard !state.visited.contains(where: { CFEqual($0, element) }) else { return }
+        state.visited.append(element)
+
+        self.prepare(element, deadline: request.deadline)
+        let descriptorRead = self.descriptor(of: element, node: state.visited.count)
+        switch self.nodeTraversalDisposition(
+            descriptorAvailable: descriptorRead.descriptor != nil,
+            readIncomplete: descriptorRead.isIncomplete)
+        {
+        case .traverseOnlyIncomplete:
+            state.incompleteAccessibilityRead = true
+            // The unreadable container is never emitted or targetable. Its descendants still
+            // receive independent complete role/frame descriptor checks before they can be returned.
+            self.processChildren(of: element, request: request, state: &state)
+            return
+        case .traverseOnly:
+            self.processChildren(of: element, request: request, state: &state)
+            return
+        case .emitAndTraverse:
+            break
+        }
+        guard let descriptor = descriptorRead.descriptor else { return }
+        let normalizedRole = descriptor.role.lowercased()
+        let baseType = self.elementType(role: normalizedRole, isEditable: descriptor.isEditable)
+        let elementTypeInput = ElementTypeAdjustmentInput(
+            role: descriptor.role,
+            roleDescription: descriptor.roleDescription,
+            title: descriptor.title,
+            label: descriptor.label,
+            placeholder: descriptor.placeholder,
+            isEditable: descriptor.isEditable)
+        let elementType = ElementTypeAdjuster.resolve(
+            baseType: baseType,
+            input: elementTypeInput,
+            hasTextFieldDescendant: false)
+        let identifier = ElementTypeAdjuster.resolveIdentifier(
+            descriptor.identifier,
+            baseType: baseType,
+            resolvedType: elementType)
+        // One action read per emitted element records what it advertises for exact action requests.
+        let advertisedActions = self.actions(of: element, node: state.visited.count)
+        let exposesAction = self.actionableRoles.contains(normalizedRole) ||
+            (self.actionLookupRoles.contains(normalizedRole) && advertisedActions.contains(kAXPressAction))
+        let isValueSettable = self.valueSettable(
+            of: element,
+            role: descriptor.role,
+            recoveredType: elementType,
+            node: state.visited.count,
+            deadline: request.deadline)
+        let isActionable = exposesAction || isValueSettable == true
+        let elementID = request.source == nil ?
+            "elem_\(state.elements.count)" : "menuitem_\(state.elements.count)"
+        var attributes = ["role": descriptor.role, "axEnabledKnown": String(descriptor.isEnabled != nil)]
+        if let title = descriptor.title {
+            attributes["title"] = title
+        }
+        if let description = descriptor.description {
+            attributes["description"] = description
+        }
+        if let help = descriptor.help {
+            attributes["help"] = help
+        }
+        if let roleDescription = descriptor.roleDescription {
+            attributes["roleDescription"] = roleDescription
+        }
+        if descriptor.isSecure {
+            // Readers withhold secure values by this attribute; the role stays what Accessibility reports.
+            attributes["subrole"] = "AXSecureTextField"
+        }
+        if let identifier {
+            attributes["identifier"] = identifier
+        }
+        if let placeholder = descriptor.placeholder {
+            attributes["placeholder"] = placeholder
+        }
+        if let shortcut = descriptor.keyboardShortcut {
+            attributes["keyboardShortcut"] = shortcut
+        }
+        if isActionable {
+            attributes["isActionable"] = "true"
+        }
+        if let isValueSettable {
+            attributes["isValueSettable"] = String(isValueSettable)
+        }
+        if let isFocused = descriptor.isFocused {
+            attributes["isFocused"] = String(isFocused)
+        }
+        if let actions = self.standardActionList(advertisedActions) {
+            attributes["actions"] = actions
+        }
+        if state.listsCustomActions, let names = NotificationCenterCustomActions.attribute(advertisedActions) {
+            attributes["customActions"] = names
+        }
+        if let source = request.source {
+            attributes["source"] = source
+        }
+        if normalizedRole == "axtable" {
+            // A web table names its header cells here; their role description no longer says so on macOS 27.
+            if let headers = self.rawAttribute("AXColumnHeaderUIElements", of: element) as? [AXUIElement] {
+                state.columnHeaders.append(contentsOf: headers.prefix(Self.maximumColumnHeaders))
+            }
+        } else if normalizedRole == "axcell", state.columnHeaders.contains(where: { CFEqual($0, element) }) {
+            attributes["columnHeader"] = "true"
+        }
+        if normalizedRole == "axrow" {
+            // Outline rows are flat siblings; only their disclosure level shows the hierarchy.
+            attributes.merge(
+                self.rowDisclosureAttributes(
+                    level: self.rawAttribute("AXDisclosureLevel", of: element),
+                    disclosing: self.rawAttribute("AXDisclosing", of: element)),
+                uniquingKeysWith: { current, _ in current })
+        }
+        // Pre-order IDs plus depth let a reader recover each element's subtree from the flat result.
+        attributes["depth"] = String(request.depth)
+
+        state.elements.append(DetectedElement(
+            id: elementID,
+            type: elementType,
+            label: self.label(for: descriptor),
+            value: descriptor.value,
+            bounds: descriptor.frame,
+            isEnabled: descriptor.isEnabled ?? false,
+            isSelected: descriptor.isSelected,
+            attributes: attributes))
+
+        if descriptor.isFocused == true, request.source != DetectedElementRootPolicy.applicationMenuBarSource {
+            state.focusedReferences[elementID] = element
+        }
+
+        self.processChildren(of: element, request: request, state: &state)
+    }
+
+    private static func processChildren(
+        of element: AXUIElement,
+        request: TraversalRequest,
+        state: inout TraversalState)
+    {
+        let childrenRead = self.children(of: element, node: state.visited.count)
+        state.incompleteAccessibilityRead = state.incompleteAccessibilityRead || childrenRead.isIncomplete
+        let children = childrenRead.elements
+        if children.count > request.budget.maxChildrenPerNode {
+            state.maxChildrenPerNodeReached = true
+        }
+        let limitedChildren = Array(children.prefix(request.budget.maxChildrenPerNode))
+        for (index, child) in limitedChildren.enumerated() {
+            self.process(
+                child,
+                request: TraversalRequest(
+                    depth: request.depth + 1,
+                    deadline: request.deadline,
+                    budget: request.budget,
+                    source: request.source),
+                state: &state)
+            let stopReason = self.postChildStopReason(
+                elementCount: state.elements.count,
+                maxElementCount: request.budget.maxElementCount,
+                deadlineExpired: ContinuousClock.now >= request.deadline,
+                hasRemainingWork: index < limitedChildren.count - 1)
+            switch stopReason {
+            case .maxElementCount:
+                state.maxElementCountReached = true
+                return
+            case .deadline:
+                state.deadlineReached = true
+                return
+            case nil:
+                break
+            }
+        }
+    }
+}
+
+extension DetachedAXObservationWorker {
+    private static func descriptor(of element: AXUIElement, node: Int) -> DescriptorReadResult {
+        var rawValues: CFArray?
+        let startedAt = AXObservationReadDiagnostics.start()
+        let error = AXUIElementCopyMultipleAttributeValues(
+            element,
+            self.descriptorAttributeNames as CFArray,
+            [],
+            &rawValues)
+        let values = rawValues as? [Any]
+        let disposition = self.descriptorReadDisposition(error: error, values: values)
+        AXObservationReadDiagnostics.record(
+            .descriptorBatch,
+            startedAt: startedAt,
+            node: node,
+            error: error,
+            attributes: (self.descriptorAttributeNames, values),
+            disposition: disposition)
+        switch disposition {
+        case .fallback:
+            return self.descriptorWithSingleReads(of: element, node: node)
+        case .incomplete:
+            return .incomplete
+        case .values:
+            break
+        }
+        guard let values else { return .incomplete }
+
+        let byName = Dictionary(uniqueKeysWithValues: zip(self.descriptorAttributeNames, values))
+        let frame = CGRect(
+            origin: self.pointValue(byName[kAXPositionAttribute]) ?? .zero,
+            size: self.sizeValue(byName[kAXSizeAttribute]) ?? .zero)
+        guard frame.width > 5, frame.height > 5 else { return .absent }
+        let role = self.stringValue(byName[kAXRoleAttribute]) ?? "Unknown"
+        let isSecure = self.isSecure(role: role, subrole: self.stringValue(byName[kAXSubroleAttribute]))
+        return .value(Descriptor(
+            frame: frame,
+            role: role,
+            isSecure: isSecure,
+            title: self.stringValue(byName[kAXTitleAttribute]),
+            label: self.stringValue(byName["AXLabel"]),
+            // A secure field's value is a mask, one character per secret character, so even it is never kept.
+            value: isSecure ? nil : AXDescriptorReader.displayValue(byName[kAXValueAttribute]),
+            description: self.stringValue(byName[kAXDescriptionAttribute]),
+            help: self.stringValue(byName[kAXHelpAttribute]),
+            roleDescription: self.stringValue(byName[kAXRoleDescriptionAttribute]),
+            identifier: self.stringValue(byName[kAXIdentifierAttribute]),
+            isEnabled: self.boolValue(byName[kAXEnabledAttribute]),
+            isSelected: self.boolValue(byName[kAXSelectedAttribute]) ??
+                self.booleanSelectionValue(role: role, rawValue: byName[kAXValueAttribute]),
+            isFocused: self.boolValue(byName[kAXFocusedAttribute]),
+            placeholder: self.stringValue(byName["AXPlaceholderValue"]),
+            isEditable: self.boolValue(byName["AXEditable"]) ?? false,
+            keyboardShortcut: self.stringValue(byName["AXKeyboardShortcut"])))
+    }
+
+    /// Secure text fields report the role AXTextField with the subrole AXSecureTextField; some report it as their role.
+    private static func isSecure(role: String, subrole: String?) -> Bool {
+        role == "AXSecureTextField" || subrole == "AXSecureTextField"
+    }
+
+    private static func descriptorWithSingleReads(of element: AXUIElement, node: Int) -> DescriptorReadResult {
+        var valuesByName: [String: Any] = [:]
+        for name in self.descriptorAttributeNames {
+            let read = self.rawAttributeRead(name, of: element, node: node)
+            if read.invalidatesNode(attribute: name) {
+                return .incomplete
+            }
+            if let value = read.value {
+                valuesByName[name] = value
+            }
+        }
+
+        let frame = CGRect(
+            origin: self.pointValue(valuesByName[kAXPositionAttribute]) ?? .zero,
+            size: self.sizeValue(valuesByName[kAXSizeAttribute]) ?? .zero)
+        guard frame.width > 5, frame.height > 5 else { return .absent }
+        let role = self.stringValue(valuesByName[kAXRoleAttribute]) ?? "Unknown"
+        let isSecure = self.isSecure(role: role, subrole: self.stringValue(valuesByName[kAXSubroleAttribute]))
+        return .value(Descriptor(
+            frame: frame,
+            role: role,
+            isSecure: isSecure,
+            title: self.stringValue(valuesByName[kAXTitleAttribute]),
+            label: self.stringValue(valuesByName["AXLabel"]),
+            // A secure field's value is a mask, one character per secret character, so even it is never kept.
+            value: isSecure ? nil : AXDescriptorReader.displayValue(valuesByName[kAXValueAttribute]),
+            description: self.stringValue(valuesByName[kAXDescriptionAttribute]),
+            help: self.stringValue(valuesByName[kAXHelpAttribute]),
+            roleDescription: self.stringValue(valuesByName[kAXRoleDescriptionAttribute]),
+            identifier: self.stringValue(valuesByName[kAXIdentifierAttribute]),
+            isEnabled: self.boolValue(valuesByName[kAXEnabledAttribute]),
+            isSelected: self.boolValue(valuesByName[kAXSelectedAttribute]) ??
+                self.booleanSelectionValue(role: role, rawValue: valuesByName[kAXValueAttribute]),
+            isFocused: self.boolValue(valuesByName[kAXFocusedAttribute]),
+            placeholder: self.stringValue(valuesByName["AXPlaceholderValue"]),
+            isEditable: self.boolValue(valuesByName["AXEditable"]) ?? false,
+            keyboardShortcut: self.stringValue(valuesByName["AXKeyboardShortcut"])))
+    }
+
+    private static func children(of element: AXUIElement, node: Int) -> ChildrenReadResult {
+        var rawValues: CFArray?
+        let startedAt = AXObservationReadDiagnostics.start()
+        let error = AXUIElementCopyMultipleAttributeValues(
+            element,
+            self.childAttributeNames as CFArray,
+            [],
+            &rawValues)
+        let values = rawValues as? [Any]
+        let disposition = self.childrenReadDisposition(error: error, values: values)
+        AXObservationReadDiagnostics.record(
+            .childrenBatch,
+            startedAt: startedAt,
+            node: node,
+            error: error,
+            attributes: (self.childAttributeNames, values),
+            disposition: disposition)
+        switch disposition {
+        case .fallback:
+            return self.fallbackChildren(of: element, node: node, alreadyIncomplete: false)
+        case .incomplete:
+            return self.fallbackChildren(of: element, node: node, alreadyIncomplete: true)
+        case .values:
+            break
+        }
+        guard let values else { return ChildrenReadResult(elements: [], isIncomplete: true) }
+
+        var result: [AXUIElement] = []
+        for value in values {
+            guard let elements = value as? [AXUIElement] else { continue }
+            for child in elements where !result.contains(where: { CFEqual($0, child) }) {
+                result.append(child)
+            }
+        }
+        return ChildrenReadResult(elements: result, isIncomplete: false)
+    }
+
+    private static func fallbackChildren(
+        of element: AXUIElement,
+        node: Int,
+        alreadyIncomplete: Bool) -> ChildrenReadResult
+    {
+        let read = self.rawAttributeRead(kAXChildrenAttribute, of: element, node: node)
+        return ChildrenReadResult(
+            elements: read.value as? [AXUIElement] ?? [],
+            isIncomplete: alreadyIncomplete || read.isIncomplete)
+    }
+
+    /// Standard action names only, bounded; custom actions carry arbitrary app text and are omitted.
+    static func standardActionList(_ actions: [String]) -> String? {
+        var names: [String] = []
+        for action in actions where names.count < 16 {
+            guard action.hasPrefix("AX"), action.utf8.count <= 48,
+                  action.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) }),
+                  !names.contains(action)
+            else { continue }
+            names.append(action)
+        }
+        return names.isEmpty ? nil : names.joined(separator: ",")
+    }
+
+    private static func actions(of element: AXUIElement, node: Int) -> [String] {
+        var names: CFArray?
+        let startedAt = AXObservationReadDiagnostics.start()
+        let error = AXUIElementCopyActionNames(element, &names)
+        AXObservationReadDiagnostics.record(.actions, startedAt: startedAt, node: node, error: error)
+        guard error == .success else { return [] }
+        return names as? [String] ?? []
+    }
+
+    private static func valueSettable(
+        of element: AXUIElement,
+        role: String,
+        recoveredType: ElementType,
+        node: Int,
+        deadline: ContinuousClock.Instant) -> Bool?
+    {
+        guard recoveredType == .textField || ElementClassifier.supportsValueMetadata(for: role) else { return nil }
+        guard let timeout = self.remainingMessagingTimeout(until: deadline) else { return nil }
+        AXUIElementSetMessagingTimeout(element, timeout)
+        var isSettable = DarwinBoolean(false)
+        let startedAt = AXObservationReadDiagnostics.start()
+        let error = AXUIElementIsAttributeSettable(
+            element,
+            kAXValueAttribute as CFString,
+            &isSettable)
+        AXObservationReadDiagnostics.record(.valueSettable, startedAt: startedAt, node: node, error: error)
+        return self.valueSettableMetadata(error: error, isSettable: isSettable.boolValue)
+    }
+
+    private static func prepare(_ element: AXUIElement, deadline: ContinuousClock.Instant) {
+        let timeout = self.remainingMessagingTimeout(until: deadline) ?? 0.01
+        AXUIElementSetMessagingTimeout(element, timeout)
+    }
+
+    private static func remainingMessagingTimeout(
+        until deadline: ContinuousClock.Instant,
+        now: ContinuousClock.Instant = .now) -> Float?
+    {
+        let duration = now.duration(to: deadline)
+        let components = duration.components
+        let remaining = Double(components.seconds) +
+            Double(components.attoseconds) / 1_000_000_000_000_000_000
+        guard remaining > 0 else { return nil }
+        let timeout = Float(min(self.maximumPerCallTimeout, remaining))
+        return timeout > 0 ? timeout : nil
+    }
+
+    private static func rawAttribute(_ name: String, of element: AXUIElement) -> CFTypeRef? {
+        self.rawAttributeRead(name, of: element).value
+    }
+
+    private static func rawAttributeRead(
+        _ name: String,
+        of element: AXUIElement,
+        node: Int = 0) -> AXAttributeReadResult
+    {
+        var value: CFTypeRef?
+        let startedAt = AXObservationReadDiagnostics.start()
+        let error = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+        AXObservationReadDiagnostics.record(
+            .attribute,
+            startedAt: startedAt,
+            node: node,
+            error: error,
+            attributes: ([name], value.map { [$0] }))
+        return AXAttributeReadResult(error: error, value: value)
+    }
+
+    private static func elementAttribute(_ name: String, of element: AXUIElement) -> AXUIElement? {
+        guard let value = self.rawAttribute(name, of: element),
+              CFGetTypeID(value) == AXUIElementGetTypeID()
+        else {
+            return nil
+        }
+        return unsafeDowncast(value, to: AXUIElement.self)
+    }
+
+    private static func elementsAttribute(_ name: String, of element: AXUIElement) -> [AXUIElement] {
+        self.rawAttribute(name, of: element) as? [AXUIElement] ?? []
+    }
+
+    private static func stringAttribute(_ name: String, of element: AXUIElement) -> String? {
+        self.rawAttribute(name, of: element) as? String
+    }
+
+    private static func boolAttribute(_ name: String, of element: AXUIElement) -> Bool? {
+        self.booleanAttributeValue(self.rawAttribute(name, of: element))
+    }
+
+    private static func frame(of element: AXUIElement) -> CGRect? {
+        guard let position = self.pointValue(self.rawAttribute(kAXPositionAttribute, of: element)),
+              let size = self.sizeValue(self.rawAttribute(kAXSizeAttribute, of: element))
+        else {
+            return nil
+        }
+        return CGRect(origin: position, size: size)
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        value as? String
+    }
+
+    /// An outline row's nesting level from 0, and whether it is expanded; a flat table row has neither.
+    static func rowDisclosureAttributes(level: Any?, disclosing: Any?) -> [String: String] {
+        var attributes: [String: String] = [:]
+        if let level = level as? NSNumber, CFGetTypeID(level) != CFBooleanGetTypeID(),
+           (0...1000).contains(level.intValue)
+        {
+            attributes["disclosureLevel"] = String(level.intValue)
+        }
+        if let disclosing = self.boolValue(disclosing) {
+            attributes["disclosing"] = String(disclosing)
+        }
+        return attributes
+    }
+
+    /// Header cells kept per table; a wider header is matched only this far.
+    static let maximumColumnHeaders = 64
+
+    static func booleanAttributeValue(_ value: Any?) -> Bool? {
+        self.boolValue(value)
+    }
+
+    private static func boolValue(_ value: Any?) -> Bool? {
+        AXDescriptorReader.boolValue(value)
+    }
+
+    private static func pointValue(_ value: Any?) -> CGPoint? {
+        guard let axValue = self.axValue(value), AXValueGetType(axValue) == .cgPoint else { return nil }
+        var point = CGPoint.zero
+        return AXValueGetValue(axValue, .cgPoint, &point) ? point : nil
+    }
+
+    private static func sizeValue(_ value: Any?) -> CGSize? {
+        guard let axValue = self.axValue(value), AXValueGetType(axValue) == .cgSize else { return nil }
+        var size = CGSize.zero
+        return AXValueGetValue(axValue, .cgSize, &size) ? size : nil
+    }
+
+    private static func axValue(_ value: Any?) -> AXValue? {
+        guard let value else { return nil }
+        let cfValue = value as CFTypeRef
+        guard CFGetTypeID(cfValue) == AXValueGetTypeID() else { return nil }
+        return unsafeDowncast(cfValue, to: AXValue.self)
+    }
+
+    private static func booleanSelectionValue(role: String, rawValue: Any?) -> Bool? {
+        guard ["axcheckbox", "axradiobutton", "axswitch"].contains(role.lowercased()) else { return nil }
+        return self.boolValue(rawValue)
+    }
+
+    private static func elementType(role: String, isEditable: Bool) -> ElementType {
+        switch role {
+        case "axbutton", "axpopupbutton": .button
+        case "axtextfield", "axtextarea", "axsearchfield", "axsecuretextfield": .textField
+        case "axlink", "axweblink": .link
+        case "aximage": .image
+        case "axcheckbox", "axradiobutton": .checkbox
+        case "axslider": .slider
+        case "axmenu", "axmenubar": .menu
+        case "axgroup" where isEditable: .textField
+        case "axgroup": .group
+        default: .other
+        }
+    }
+
+    private static func label(for descriptor: Descriptor) -> String? {
+        ElementLabelResolver.resolve(
+            info: ElementLabelInfo(
+                role: descriptor.role,
+                label: descriptor.label,
+                title: descriptor.title,
+                value: descriptor.value,
+                roleDescription: descriptor.roleDescription,
+                description: descriptor.description,
+                identifier: descriptor.identifier,
+                placeholder: descriptor.placeholder),
+            childTexts: [],
+            identifierCleaner: {
+                $0.replacingOccurrences(of: "-button", with: "")
+                    .replacingOccurrences(of: "-", with: " ")
+            })
+    }
+
+    private static func isFileDialogTitle(_ title: String) -> Bool {
+        ["Open", "Save", "Export", "Import"].contains(title) || title.hasPrefix("Save As")
+    }
+
+    private static func multiAttributeReadDisposition(
+        error: AXError,
+        values: [Any]?,
+        expectedValueCount: Int) -> DetachedAXMultiAttributeReadDisposition
+    {
+        if error == .success {
+            guard let values, values.count == expectedValueCount else { return .incomplete }
+            return AXAttributeReadCompletenessPolicy.hasIncompleteErrorValue(in: values) ? .incomplete : .values
+        }
+        if self.isUnsupported(error) {
+            return .fallback
+        }
+        return .incomplete
+    }
+
+    private static func isUnsupported(_ error: AXError) -> Bool {
+        error == .attributeUnsupported || error == .parameterizedAttributeUnsupported || error == .notImplemented
+    }
+}
+
+extension DetachedAXObservationWorker {
+    static func readApplicationReference<Reference>(
+        deadline: ContinuousClock.Instant,
+        now: ContinuousClock.Instant = .now,
+        applyTimeout: (Float) -> Bool,
+        read: () -> Reference?) -> Reference?
+    {
+        // The shared application reference may retain the initial focus probe's shorter timeout.
+        guard let timeout = self.remainingMessagingTimeout(until: deadline, now: now),
+              applyTimeout(timeout)
+        else { return nil }
+        return read()
+    }
+
+    static func initialFocusedReference<Reference>(
+        deadline: ContinuousClock.Instant,
+        now: ContinuousClock.Instant = .now,
+        read: (Float) -> Reference?) -> Reference?
+    {
+        guard let remaining = self.remainingMessagingTimeout(until: deadline, now: now) else { return nil }
+        // Optional corroboration must leave the ordinary traversal its original deadline.
+        let timeout = min(0.05, remaining / 4)
+        guard timeout >= 0.001 else { return nil }
+        return read(timeout)
+    }
+
+    static func corroboratedFocusElementID<Reference>(
+        observation: (initialReference: Reference?, candidates: [String: Reference], isComplete: Bool),
+        canRead: () -> Bool,
+        readCurrentReference: () -> Reference?,
+        referencesEqual: (Reference, Reference) -> Bool,
+        belongsToWindow: (Reference) -> Bool) -> String?
+    {
+        guard observation.isComplete, observation.candidates.count > 1,
+              let initialReference = observation.initialReference,
+              canRead(), let current = readCurrentReference(), canRead(),
+              referencesEqual(initialReference, current)
+        else { return nil }
+
+        let matches = observation.candidates.filter { referencesEqual($0.value, current) }
+        guard matches.count == 1, let candidate = matches.first,
+              canRead(), belongsToWindow(candidate.value), canRead()
+        else { return nil }
+        return candidate.key
+    }
+
+    private static func focusedReference(
+        application: AXUIElement,
+        deadline: ContinuousClock.Instant) -> AXUIElement?
+    {
+        self.readApplicationReference(
+            deadline: deadline,
+            applyTimeout: { AXUIElementSetMessagingTimeout(application, $0) == .success },
+            read: { DetachedExactWindowFocusReader.focusedElementReference(of: application) })
+    }
+
+    private static func focusedReference(application: AXUIElement, timeout: Float) -> AXUIElement? {
+        guard AXUIElementSetMessagingTimeout(application, timeout) == .success else { return nil }
+        return DetachedExactWindowFocusReader.focusedElementReference(of: application)
+    }
+
+    private static func focusedElement(
+        _ element: AXUIElement,
+        belongsTo window: AXUIElement,
+        processIdentifier: pid_t,
+        deadline: ContinuousClock.Instant) -> Bool
+    {
+        guard self.remainingMessagingTimeout(until: deadline) != nil else { return false }
+        var owner: pid_t = 0
+        guard AXUIElementGetPid(element, &owner) == .success, owner == processIdentifier,
+              let owningWindowID = AXWindowIDResolver.owningWindowID(of: element, tree: .bounded(deadline: deadline))
+        else { return false }
+        return owningWindowID == AXWindowIDResolver.windowID(of: window)
+    }
+}
+
+private struct TraversalRequest {
+    let depth: Int
+    let deadline: ContinuousClock.Instant
+    let budget: AXTraversalBudget
+    let source: String?
+}
+
+private struct Descriptor {
+    let frame: CGRect
+    let role: String
+    let isSecure: Bool
+    let title: String?
+    let label: String?
+    let value: String?
+    let description: String?
+    let help: String?
+    let roleDescription: String?
+    let identifier: String?
+    let isEnabled: Bool?
+    let isSelected: Bool?
+    let isFocused: Bool?
+    let placeholder: String?
+    let isEditable: Bool
+    let keyboardShortcut: String?
+}
+
+private enum DescriptorReadResult {
+    case value(Descriptor)
+    case absent
+    case incomplete
+
+    var descriptor: Descriptor? {
+        guard case let .value(descriptor) = self else { return nil }
+        return descriptor
+    }
+
+    var isIncomplete: Bool {
+        if case .incomplete = self {
+            return true
+        }
+        return false
+    }
+}
+
+private struct ChildrenReadResult {
+    let elements: [AXUIElement]
+    let isIncomplete: Bool
+}
+
+private struct AXAttributeReadResult {
+    let error: AXError
+    let value: CFTypeRef?
+
+    var isIncomplete: Bool {
+        AXAttributeReadCompletenessPolicy.isIncomplete(error: self.error)
+    }
+
+    func invalidatesNode(attribute: String) -> Bool {
+        AXAttributeReadCompletenessPolicy.attributeErrorInvalidatesNode(self.error, attribute: attribute)
+    }
+}
+
+private struct TraversalState {
+    var elements: [DetectedElement] = []
+    var visited: [AXUIElement] = []
+    var focusedReferences: [String: AXUIElement] = [:]
+    var maxDepthReached = false
+    var maxElementCountReached = false
+    var maxChildrenPerNodeReached = false
+    var deadlineReached = false
+    var incompleteAccessibilityRead = false
+    /// Only Notification Center's custom action names are listed; elsewhere they are arbitrary app text.
+    var listsCustomActions = false
+    /// The header cells that tables seen so far name, so each cell is matched without another read.
+    var columnHeaders: [AXUIElement] = []
+
+    var truncationInfo: DetectionTruncationInfo? {
+        guard self.maxDepthReached || self.maxElementCountReached || self.maxChildrenPerNodeReached ||
+            self.deadlineReached || self.incompleteAccessibilityRead
+        else {
+            return nil
+        }
+        return DetectionTruncationInfo(
+            maxDepthReached: self.maxDepthReached,
+            maxElementCountReached: self.maxElementCountReached,
+            maxChildrenPerNodeReached: self.maxChildrenPerNodeReached,
+            deadlineReached: self.deadlineReached,
+            incompleteAccessibilityRead: self.incompleteAccessibilityRead)
+    }
+}

@@ -1,0 +1,111 @@
+import CoreGraphics
+import Testing
+@testable import PeekabooAgentRuntime
+@testable import PeekabooAutomation
+@testable import PeekabooCore
+@testable import PeekabooVisualizer
+
+@Suite(.tags(.safe))
+struct UIAutomationServiceFocusTests {
+    @Test
+    @MainActor
+    func `getFocusedElement returns nil when no element focused`() {
+        let service = UIAutomationService()
+
+        // Note: This test may be environment-dependent
+        // In a real test environment with no focused elements, this should return nil
+        let result = service.getFocusedElement()
+
+        // We can't guarantee no focus in all test environments,
+        // but we can at least verify the method doesn't crash
+        if let focusInfo = result {
+            #expect(!focusInfo.applicationName.isEmpty)
+            #expect(!focusInfo.role.isEmpty)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `getFocusedElement structure validation`() {
+        let service = UIAutomationService()
+
+        // This test validates that if we get a result, it has the expected structure
+        let result = service.getFocusedElement()
+
+        if let focusInfo = result {
+            // Validate app information
+            #expect(!focusInfo.applicationName.isEmpty)
+            #expect(focusInfo.processId > 0)
+
+            // Validate element information
+            #expect(!focusInfo.role.isEmpty)
+            #expect(focusInfo.frame.width >= 0)
+            #expect(focusInfo.frame.height >= 0)
+
+            // Validate optional properties
+            _ = focusInfo.title
+            _ = focusInfo.value
+            _ = focusInfo.bundleIdentifier
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Focus info dictionary format validation`() {
+        let service = UIAutomationService()
+
+        let result = service.getFocusedElement()
+
+        if let focusInfo = result {
+            // Validate UIFocusInfo structure directly
+            #expect(!focusInfo.applicationName.isEmpty)
+            #expect(focusInfo.processId > 0)
+            #expect(!focusInfo.role.isEmpty)
+            #expect(focusInfo.frame.width >= 0)
+            #expect(focusInfo.frame.height >= 0)
+
+            // Validate bundle identifier
+            #expect(!focusInfo.bundleIdentifier.isEmpty)
+        }
+    }
+}
+
+// MARK: - Mock Tests for Focus Information
+
+struct FocusInformationMockTests {
+    @Test
+    func `UIFocusInfo basic properties`() {
+        // Test UIFocusInfo structure
+        let focusInfo = UIFocusInfo(
+            role: "AXTextField",
+            title: "Email Address",
+            value: "",
+            frame: CGRect(x: 100, y: 200, width: 250, height: 30),
+            applicationName: "TestApp",
+            bundleIdentifier: "com.test.app",
+            processId: 1234)
+
+        #expect(focusInfo.role == "AXTextField")
+        #expect(focusInfo.title == "Email Address")
+        #expect(focusInfo.applicationName == "TestApp")
+        #expect(focusInfo.processId == 1234)
+    }
+
+    @Test
+    func `UIFocusInfo with nil values`() {
+        // Test UIFocusInfo with optional values as nil
+        let focusInfo = UIFocusInfo(
+            role: "AXButton",
+            title: nil,
+            value: nil,
+            frame: CGRect(x: 0, y: 0, width: 100, height: 50),
+            applicationName: "App",
+            bundleIdentifier: "com.unknown.app",
+            processId: 999)
+
+        #expect(focusInfo.role == "AXButton")
+        #expect(focusInfo.title == nil)
+        #expect(focusInfo.value == nil)
+        #expect(focusInfo.bundleIdentifier == "com.unknown.app")
+    }
+}

@@ -1,0 +1,1848 @@
+import ApplicationServices
+@preconcurrency import AXorcist
+import CoreGraphics
+import Darwin
+import Foundation
+import os.log
+import PeekabooFoundation
+
+enum FocusedTextKeyDispatch: Equatable {
+    case unsupported
+    case noChange
+    case accessibilityValue
+}
+
+/// Background input that targets a process directly without focusing it or moving the cursor.
+///
+/// Keyboard input is delivered as pid-routed CGEvents. Single left clicks prefer accessibility
+/// actions. Pixel right- and double-clicks use a PID/window-routed event sequence carrying an
+/// explicit window-local point; they never use the desktop-global event tap.
+enum BackgroundInputDriver {
+    private static let logger = Logger(subsystem: "boo.peekaboo.core", category: "BackgroundInputDriver")
+
+    struct MouseWindowRouteCandidate: Equatable {
+        let windowID: CGWindowID
+        let processIdentifier: pid_t
+        let layer: Int
+        let bounds: CGRect
+        let alpha: CGFloat
+        let isOnScreen: Bool
+
+        init(
+            windowID: CGWindowID,
+            processIdentifier: pid_t,
+            layer: Int,
+            bounds: CGRect,
+            alpha: CGFloat = 1,
+            isOnScreen: Bool = true)
+        {
+            self.windowID = windowID
+            self.processIdentifier = processIdentifier
+            self.layer = layer
+            self.bounds = bounds
+            self.alpha = alpha
+            self.isOnScreen = isOnScreen
+        }
+    }
+
+    struct PointerReceiverIdentity: Equatable {
+        let processIdentifier: pid_t
+        let windowID: CGWindowID
+        let accessibilityProcessIdentifier: pid_t
+
+        init(
+            processIdentifier: pid_t,
+            windowID: CGWindowID,
+            accessibilityProcessIdentifier: pid_t? = nil)
+        {
+            self.processIdentifier = processIdentifier
+            self.windowID = windowID
+            self.accessibilityProcessIdentifier = accessibilityProcessIdentifier ?? processIdentifier
+        }
+    }
+
+    struct KeyboardEventPlan {
+        let modifierKeyDownEvents: [CGEvent]
+        let primaryKeyDownEvent: CGEvent
+        let primaryKeyUpEvent: CGEvent
+        let modifierKeyUpEvents: [CGEvent]
+    }
+
+    /// How a background positional click is delivered once the AX element chain is resolved.
+    enum PositionalClickAction: Equatable {
+        case press
+        case showMenu
+        case select
+        case focus
+    }
+
+    /// Picks the element that should receive a positional background click.
+    ///
+    /// `candidates` is ordered: the hit-tested element first, then its descendants, then its
+    /// ancestors (see `hitTestCandidates`). The hit-test element is authoritative — macOS returned
+    /// it for this exact point — so it is never rejected on frame grounds; every other candidate
+    /// must still contain the point. Editable text fields prefer verified keyboard focus even when
+    /// they advertise AXPress; otherwise the first enabled actionable candidate wins.
+    /// SwiftUI hit-tests can land on a non-pressable container whose pressable target is a
+    /// descendant, so descendants are searched before ancestors. Left clicks on text inputs (which
+    /// have no `AXPress`) fall back to focusing the element, mirroring `ActionInputDriver`.
+    @MainActor
+    static func positionalClickTarget(
+        inCandidates candidates: [any AutomationElementRepresenting],
+        at point: CGPoint,
+        button: MouseButton) -> (element: any AutomationElementRepresenting, action: PositionalClickAction)?
+    {
+        let spatiallyValid = self.spatiallyValidCandidates(candidates, at: point)
+
+        // Preserve hit-test ordering: a button inside a field still owns its own point.
+        let prefersFocus: (any AutomationElementRepresenting) -> Bool = {
+            button == .left && ($0.role == "AXTextField" || $0.role == "AXTextArea") && $0.isFocusedSettable
+        }
+        let requiredAction = button == .right ? AXActionNames.kAXShowMenuAction : AXActionNames.kAXPressAction
+        if let actionable = spatiallyValid.first(where: {
+            $0.isEnabled && (prefersFocus($0) ||
+                ($0.supportsAction(requiredAction) &&
+                    (button == .right || !self.nonPressableContainerRoles.contains($0.role ?? ""))))
+        }) {
+            // WebKit text fields may advertise AXPress without giving it keyboard focus.
+            if prefersFocus(actionable) { return (actionable, .focus) }
+            let role = actionable.role ?? "<none>"
+            let frame = String(describing: actionable.frame)
+            self.logger.debug(
+                """
+                Resolved background positional click to role=\(role, privacy: .public) \
+                action=\(requiredAction, privacy: .public) frame=\(frame, privacy: .public)
+                """)
+            return (actionable, button == .right ? .showMenu : .press)
+        }
+
+        guard button == .left else { return nil }
+        if let selectableRow = self.selectableRow(in: spatiallyValid) {
+            return (selectableRow, .select)
+        }
+
+        let focusable = spatiallyValid.first(where: self.canFocusForPositionalClick)
+        if let focusable {
+            let role = focusable.role ?? "<none>"
+            let frame = String(describing: focusable.frame)
+            self.logger.debug(
+                """
+                Resolved background positional click to role=\(role, privacy: .public) \
+                action=focus frame=\(frame, privacy: .public)
+                """)
+            return (focusable, .focus)
+        }
+        self.logger.debug("No actionable background positional click target resolved")
+        return nil
+    }
+
+    /// Picks only a writable focus target at one hit-tested point.
+    ///
+    /// Composed pixel-focus typing must not reuse normal click resolution: that resolver deliberately
+    /// prefers pressable controls and selectable rows before editable fields. A focus prelude instead
+    /// admits only the narrow text-entry roles whose AXFocused attribute can be set.
+    @MainActor
+    static func positionalFocusTarget(
+        inCandidates candidates: [any AutomationElementRepresenting],
+        at point: CGPoint) -> (any AutomationElementRepresenting)?
+    {
+        self.spatiallyValidCandidates(candidates, at: point)
+            .first(where: self.canFocusForPositionalClick)
+    }
+
+    @MainActor
+    private static func spatiallyValidCandidates(
+        _ candidates: [any AutomationElementRepresenting],
+        at point: CGPoint) -> [any AutomationElementRepresenting]
+    {
+        guard let hit = candidates.first else { return [] }
+        // Trust the hit-test element regardless of its reported frame (coordinate-space quirks must
+        // not veto the element macOS resolved for the point); spatially filter the rest.
+        return [hit] + candidates.dropFirst().filter { element in
+            element.frame?.contains(point) == true
+        }
+    }
+
+    /// Coordinate clicks may focus text-entry controls that expose no press action. Keep this
+    /// narrower than element-targeted action input: Chromium marks full-page AXGroup containers
+    /// value/focus-settable, and focusing those containers is not a delivered click.
+    @MainActor
+    private static func canFocusForPositionalClick(_ element: any AutomationElementRepresenting) -> Bool {
+        guard element.isFocusedSettable else { return false }
+        switch element.role {
+        case "AXTextField", "AXTextArea", "AXComboBox":
+            return true
+        default:
+            return element.subrole == "AXSearchField"
+        }
+    }
+
+    /// Gathers positional-click candidates for `point`, ordered hit → descendants → ancestors.
+    ///
+    /// The hit-test element is where macOS says the point lands. Descendants are searched next
+    /// because SwiftUI frequently hit-tests to a container whose pressable button is nested inside
+    /// it; ancestors are the last resort. All three sets are bounded so a deep tree cannot stall
+    /// the click.
+    /// Rejects a resolved element that does not belong to the pinned `targetWindowID`.
+    ///
+    /// WebKit leaves may only identify their containing window through AXWindow. Resolve that
+    /// native link before comparing the same CGWindowID used by the pinning selector. Missing or
+    /// different window identities are still refused; bounds alone never authorize an AX action.
+    @MainActor
+    private static func assertBelongsToTargetWindow(
+        _ element: any AutomationElementRepresenting,
+        targetWindowID: CGWindowID,
+        at point: CGPoint) throws
+    {
+        guard let axElement = element.underlyingAXElement else {
+            // In-memory elements (tests) carry no AX identity and cannot be window-verified.
+            return
+        }
+        guard let owner = AXWindowIDResolver.owner(of: axElement) else {
+            throw Self.occludedWindowRefusal(at: point, targetWindowID: targetWindowID, resolvedWindowID: nil)
+        }
+        if owner.windowID == targetWindowID || owner.sheetWindowID == targetWindowID { return }
+        // A sheet with no AXWindow of its own reaches Accessibility only through its parent's tree, so hit-testing
+        // names the parent even though the sheet is in front at the point. An Open or Save panel's controls name
+        // the panel service's window instead, which is never on screen: the panel is drawn in the target.
+        if self.isSheetWithoutAccessibilityWindow(targetWindowID, attachedTo: owner.windowID) { return }
+        throw Self.occludedWindowRefusal(at: point, targetWindowID: targetWindowID, resolvedWindowID: owner.windowID)
+    }
+
+    /// Hit-testing runs before anything is sent, so these refusals are retry-safe.
+    static func occludedWindowRefusal(
+        at point: CGPoint,
+        targetWindowID: CGWindowID,
+        resolvedWindowID: CGWindowID?) -> DesktopActionFailure
+    {
+        DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: Self.occludedWindowMessage(
+                at: point,
+                targetWindowID: targetWindowID,
+                resolvedWindowID: resolvedWindowID))
+    }
+
+    /// Whether `sheetID` is an on-screen window of the same app as `parentID`, in front of it, centered on it with
+    /// its top edge inside it, that the app's AXWindows don't list: a sheet whose controls Accessibility reports
+    /// under the parent. An Open or Save panel attached to a sheet can be wider than the parent, so its width
+    /// isn't checked. When `parentID` isn't on screen, as for the panel service's window that an Open or Save
+    /// panel's controls name, any window of the sheet's app behind it can be the parent.
+    @MainActor
+    static func isSheetWithoutAccessibilityWindow(
+        _ sheetID: CGWindowID,
+        attachedTo parentID: CGWindowID,
+        copyWindowInfo: (CGWindowListOption, CGWindowID) -> [[String: Any]]? = { options, relativeToWindow in
+            CGWindowListCopyWindowInfo(options, relativeToWindow) as? [[String: Any]]
+        },
+        accessibilityWindowIDs: @MainActor (pid_t) -> [CGWindowID]? = BackgroundInputDriver.accessibilityWindowIDs) -> Bool
+    {
+        guard sheetID != parentID else { return false }
+        // Front to back.
+        let candidates = self.mouseWindowRouteCandidates(exactWindowID: nil, copyWindowInfo: copyWindowInfo)
+        guard let sheetIndex = candidates.firstIndex(where: { $0.windowID == sheetID }) else { return false }
+        let sheet = candidates[sheetIndex]
+        let attached = { (parent: MouseWindowRouteCandidate) in
+            parent.processIdentifier == sheet.processIdentifier &&
+                parent.layer == 0 &&
+                abs(sheet.bounds.midX - parent.bounds.midX) <= 2 &&
+                sheet.bounds.minY >= parent.bounds.minY &&
+                sheet.bounds.minY < parent.bounds.maxY
+        }
+        let behind = candidates[(sheetIndex + 1)...]
+        let parent: MouseWindowRouteCandidate? = if candidates.contains(where: { $0.windowID == parentID }) {
+            behind.first { $0.windowID == parentID }.flatMap { attached($0) ? $0 : nil }
+        } else {
+            behind.first(where: attached)
+        }
+        guard let parent,
+              sheet.layer == 0,
+              let listed = accessibilityWindowIDs(parent.processIdentifier)
+        else { return false }
+        return !listed.contains(sheetID)
+    }
+
+    /// The window IDs of an app's AXWindows, or nil when Accessibility can't list them.
+    @MainActor
+    static func accessibilityWindowIDs(_ processIdentifier: pid_t) -> [CGWindowID]? {
+        let application = AXUIElementCreateApplication(processIdentifier)
+        _ = AXUIElementSetMessagingTimeout(application, 1)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &value) == .success,
+              let windows = value as? [AXUIElement]
+        else { return nil }
+        return windows.compactMap { AXWindowIDResolver.windowID(of: $0) }
+    }
+
+    // The worker returns only an immutable retained CF handle; AXorcist remains on MainActor.
+    private struct HitTestElement: @unchecked Sendable {
+        let element: AXUIElement
+    }
+
+    @MainActor
+    private static func hitTestCandidates(
+        at point: CGPoint,
+        targetProcessIdentifier: pid_t,
+        targetProcessStartIdentity: UInt64?) async throws -> [any AutomationElementRepresenting]
+    {
+        let retained: HitTestElement
+        do {
+            // A self-targeted AX hit test needs the app's main actor free to answer it.
+            // Only the read runs here; cancellation never permits later input from this lane.
+            retained = try await ElementDetectionTimeoutRunner.runDetached(
+                targetProcessIdentifier: targetProcessIdentifier,
+                targetProcessStartIdentity: targetProcessStartIdentity,
+                seconds: 2,
+                maximumPendingOperationCount: 1)
+            {
+                let application = AXUIElementCreateApplication(targetProcessIdentifier)
+                let timeoutError = AXUIElementSetMessagingTimeout(application, 1)
+                guard timeoutError == .success else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: timeoutError == .apiDisabled ? .permissionDenied : .targetUnavailable,
+                        message: "The background hit-test timeout could not be set (AX error \(timeoutError.rawValue)).")
+                }
+                var element: AXUIElement?
+                let error = AXUIElementCopyElementAtPosition(
+                    application, Float(point.x), Float(point.y), &element)
+                guard error == .success else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: error == .apiDisabled ? .permissionDenied : .targetUnavailable,
+                        message: "The background Accessibility hit test failed before input (AX error \(error.rawValue)).",
+                        hint: "Inspect the exact window again before choosing another action.")
+                }
+                guard let element else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "The background Accessibility hit test returned no target before input.")
+                }
+                return HitTestElement(element: element)
+            }
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The background click point could not be read before input.",
+                hint: "Inspect the exact window again before choosing another action.",
+                causeDescription: error.localizedDescription)
+        }
+        try Task.checkCancellation()
+
+        let hit = Element(retained.element)
+        var candidates: [any AutomationElementRepresenting] = [AutomationElement(hit)]
+        candidates.append(contentsOf: self.descendantsBreadthFirst(of: hit, maxVisited: 256, maxDepth: 8))
+
+        var current = hit.parent()
+        var remainingAncestors = 8
+        while let element = current, remainingAncestors > 0 {
+            candidates.append(AutomationElement(element))
+            current = element.parent()
+            remainingAncestors -= 1
+        }
+        return candidates
+    }
+
+    @MainActor
+    private static func descendantsBreadthFirst(
+        of root: Element,
+        maxVisited: Int,
+        maxDepth: Int) -> [any AutomationElementRepresenting]
+    {
+        var result: [any AutomationElementRepresenting] = []
+        var queue: [(element: Element, depth: Int)] = (root.children() ?? []).map { ($0, 1) }
+        var visited = 0
+        while !queue.isEmpty, visited < maxVisited {
+            let (element, depth) = queue.removeFirst()
+            visited += 1
+            result.append(AutomationElement(element))
+            if depth < maxDepth {
+                queue.append(contentsOf: (element.children() ?? []).map { ($0, depth + 1) })
+            }
+        }
+        return result
+    }
+
+    @MainActor
+    private static func performDetachedAction(
+        _ actionName: String,
+        on element: any AutomationElementRepresenting,
+        gracePeriod: TimeInterval?,
+        beforeMutation: @MainActor () throws -> Void = {}) async throws -> DesktopActionOutcome
+    {
+        try Task.checkCancellation()
+        try beforeMutation()
+        try Task.checkCancellation()
+        guard let axElement = element.underlyingAXElement else {
+            try element.performAutomationAction(actionName)
+            return .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .deliveryAccepted)
+        }
+
+        do {
+            let outcome = try await DetachedAXActionRunner.perform(
+                action: actionName,
+                on: axElement,
+                gracePeriod: gracePeriod)
+            return try self.validateDetachedActionOutcome(outcome, actionName: actionName)
+        } catch let error as DesktopActionFailure {
+            throw error
+        } catch {
+            let classified = ActionInputDriver.classify(error)
+            if actionName == AXActionNames.kAXPressAction,
+               ActionInputDriver.nativeMutationFailureMayHaveDispatched(classified)
+            {
+                throw DesktopActionFailure.indeterminate(
+                    delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                    evidence: .completionUnknown,
+                    unitCount: .one,
+                    message: "Accessibility click returned without reliable completion evidence.",
+                    hint: "Observe the exact target before deciding whether to retry this click.",
+                    causeDescription: error.localizedDescription)
+            }
+            throw classified
+        }
+    }
+
+    @discardableResult
+    static func validateDetachedActionOutcome(
+        _ outcome: DesktopActionOutcome,
+        actionName: String) throws -> DesktopActionOutcome
+    {
+        if outcome.evidence == .operationStillRunning, actionName == "AXPress" {
+            guard let failure = DesktopActionFailure(
+                outcome: outcome,
+                message: self.unverifiedPressMessage,
+                hint: "Retry with explicit foreground synthetic input after observing the target state.")
+            else {
+                throw PeekabooError.operationError(
+                    message: "A confirmed accessibility press was incorrectly classified as unverified")
+            }
+            throw failure
+        }
+        return outcome
+    }
+
+    static func typeCharacter(_ character: Character, targetProcessIdentifier: pid_t) throws {
+        try self.validateTarget(targetProcessIdentifier)
+        try self.postUnicodeCharacter(character, targetProcessIdentifier: targetProcessIdentifier)
+    }
+
+    static func tapKey(
+        keyCode: CGKeyCode,
+        modifiers: CGEventFlags = [],
+        targetProcessIdentifier: pid_t) throws
+    {
+        try self.validateTarget(targetProcessIdentifier)
+        try self.postKeyboardStroke(
+            (keyCode: keyCode, flags: modifiers),
+            targetProcessIdentifier: targetProcessIdentifier)
+    }
+
+    static func postEvent(_ event: CGEvent, to pid: pid_t) {
+        self.post(event, to: pid)
+    }
+
+    @discardableResult
+    @MainActor
+    static func replaceFocusedText(
+        with text: String,
+        targetProcessIdentifier: pid_t,
+        exactWindow: UIAutomationTarget.ExactWindow? = nil,
+        phase: KeyboardFocusValidationPhase = .initial,
+        validatedReceiver: Element? = nil) async throws -> FocusedTextKeyDispatch
+    {
+        try self.validateLiveTarget(targetProcessIdentifier)
+        return try await self.replaceFocusedText(
+            with: text,
+            exactWindow: exactWindow,
+            phase: phase,
+            validatedReceiver: validatedReceiver,
+            access: self.focusedTextEditAccess(
+                targetProcessIdentifier: targetProcessIdentifier,
+                exactWindow: exactWindow))
+    }
+
+    @discardableResult
+    @MainActor
+    static func insertTextIntoFocusedText(
+        _ text: String,
+        targetProcessIdentifier: pid_t,
+        exactWindow: UIAutomationTarget.ExactWindow? = nil,
+        phase: KeyboardFocusValidationPhase = .initial,
+        validatedReceiver: Element? = nil) async throws -> FocusedTextKeyDispatch
+    {
+        try self.validateLiveTarget(targetProcessIdentifier)
+        return try await self.insertTextIntoFocusedText(
+            text,
+            exactWindow: exactWindow,
+            phase: phase,
+            validatedReceiver: validatedReceiver,
+            access: self.focusedTextEditAccess(
+                targetProcessIdentifier: targetProcessIdentifier,
+                exactWindow: exactWindow))
+    }
+
+    private static func post(_ event: CGEvent, to pid: pid_t) {
+        if !SkyLightPerPidEventPost.post(event, to: pid) {
+            event.postToPid(pid)
+        }
+    }
+
+    private static func validateTarget(_ targetProcessIdentifier: pid_t) throws {
+        guard CGPreflightPostEventAccess() else {
+            throw PeekabooError.permissionDeniedEventSynthesizing
+        }
+
+        try self.validateLiveTarget(targetProcessIdentifier)
+    }
+
+    private static func validateLiveTarget(_ targetProcessIdentifier: pid_t) throws {
+        guard targetProcessIdentifier > 0, self.isProcessAlive(targetProcessIdentifier) else {
+            throw PeekabooError.invalidInput("Target process identifier is not running: \(targetProcessIdentifier)")
+        }
+    }
+
+    private static func postKeyboardStroke(
+        _ stroke: (keyCode: CGKeyCode, flags: CGEventFlags),
+        targetProcessIdentifier: pid_t) throws
+    {
+        let plan = try self.keyboardEventPlan(
+            keyCode: stroke.keyCode,
+            flags: stroke.flags,
+            targetProcessIdentifier: targetProcessIdentifier)
+
+        for event in plan.modifierKeyDownEvents {
+            self.post(event, to: targetProcessIdentifier)
+            usleep(1000)
+        }
+
+        self.post(plan.primaryKeyDownEvent, to: targetProcessIdentifier)
+        usleep(1000)
+        self.post(plan.primaryKeyUpEvent, to: targetProcessIdentifier)
+
+        for event in plan.modifierKeyUpEvents {
+            usleep(1000)
+            self.post(event, to: targetProcessIdentifier)
+        }
+    }
+
+    static func keyboardEventPlan(
+        keyCode: CGKeyCode,
+        flags: CGEventFlags,
+        targetProcessIdentifier: pid_t) throws -> KeyboardEventPlan
+    {
+        let source = CGEventSource(stateID: .hidSystemState)
+        let modifiers = self.modifierKeys(for: flags)
+        var activeFlags: CGEventFlags = []
+
+        let modifierDownEvents = try modifiers.map { modifier in
+            activeFlags.insert(modifier.flag)
+            return try self.makeKeyboardEvent(
+                keyCode: modifier.keyCode,
+                keyDown: true,
+                flags: activeFlags,
+                source: source,
+                targetProcessIdentifier: targetProcessIdentifier)
+        }
+
+        let primaryKeyDownEvent = try self.makeKeyboardEvent(
+            keyCode: keyCode,
+            keyDown: true,
+            flags: flags,
+            source: source,
+            targetProcessIdentifier: targetProcessIdentifier)
+        let primaryKeyUpEvent = try self.makeKeyboardEvent(
+            keyCode: keyCode,
+            keyDown: false,
+            flags: flags,
+            source: source,
+            targetProcessIdentifier: targetProcessIdentifier)
+
+        let modifierUpEvents = try modifiers.reversed().map { modifier in
+            activeFlags.remove(modifier.flag)
+            return try self.makeKeyboardEvent(
+                keyCode: modifier.keyCode,
+                keyDown: false,
+                flags: activeFlags,
+                source: source,
+                targetProcessIdentifier: targetProcessIdentifier)
+        }
+
+        return KeyboardEventPlan(
+            modifierKeyDownEvents: modifierDownEvents,
+            primaryKeyDownEvent: primaryKeyDownEvent,
+            primaryKeyUpEvent: primaryKeyUpEvent,
+            modifierKeyUpEvents: modifierUpEvents)
+    }
+
+    private static func makeKeyboardEvent(
+        keyCode: CGKeyCode,
+        keyDown: Bool,
+        flags: CGEventFlags,
+        source: CGEventSource?,
+        targetProcessIdentifier: pid_t) throws -> CGEvent
+    {
+        guard let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: keyDown) else {
+            throw PeekabooError.operationError(message: "Failed to create background keyboard events")
+        }
+
+        event.flags = flags
+        self.stampKeyboardRoutingFields(on: event, targetProcessIdentifier: targetProcessIdentifier)
+        return event
+    }
+
+    private static func modifierKeys(for flags: CGEventFlags) -> [(keyCode: CGKeyCode, flag: CGEventFlags)] {
+        var modifiers: [(keyCode: CGKeyCode, flag: CGEventFlags)] = []
+
+        if flags.contains(.maskCommand) {
+            modifiers.append((keyCode: 0x37, flag: .maskCommand))
+        }
+        if flags.contains(.maskShift) {
+            modifiers.append((keyCode: 0x38, flag: .maskShift))
+        }
+        if flags.contains(.maskAlternate) {
+            modifiers.append((keyCode: 0x3A, flag: .maskAlternate))
+        }
+        if flags.contains(.maskControl) {
+            modifiers.append((keyCode: 0x3B, flag: .maskControl))
+        }
+        if flags.contains(.maskSecondaryFn) {
+            modifiers.append((keyCode: 0x3F, flag: .maskSecondaryFn))
+        }
+
+        return modifiers
+    }
+
+    private static func postUnicodeCharacter(_ character: Character, targetProcessIdentifier: pid_t) throws {
+        let events = try self.unicodeKeyboardEvents(
+            for: character,
+            targetProcessIdentifier: targetProcessIdentifier)
+        self.post(events.keyDown, to: targetProcessIdentifier)
+        usleep(1000)
+        self.post(events.keyUp, to: targetProcessIdentifier)
+    }
+
+    static func unicodeKeyboardEvents(
+        for character: Character,
+        targetProcessIdentifier: pid_t,
+        makeEvent: (CGEventSource?, Bool) -> CGEvent? = {
+            CGEvent(keyboardEventSource: $0, virtualKey: 0, keyDown: $1)
+        }) throws -> (keyDown: CGEvent, keyUp: CGEvent)
+    {
+        let string = String(character)
+        let source = CGEventSource(stateID: .hidSystemState)
+
+        guard let keyDown = makeEvent(source, true),
+              let keyUp = makeEvent(source, false)
+        else {
+            throw PeekabooError.operationError(message: "Failed to create background unicode keyboard events")
+        }
+
+        let chars = Array(string.utf16)
+        chars.withUnsafeBufferPointer { buffer in
+            keyDown.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: buffer.baseAddress!)
+            keyUp.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: buffer.baseAddress!)
+        }
+
+        // Literal text must not inherit held user modifiers and become a shortcut.
+        keyDown.flags = []
+        keyUp.flags = []
+
+        self.stampKeyboardRoutingFields(on: keyDown, targetProcessIdentifier: targetProcessIdentifier)
+        self.stampKeyboardRoutingFields(on: keyUp, targetProcessIdentifier: targetProcessIdentifier)
+        return (keyDown, keyUp)
+    }
+
+    static func stampKeyboardRoutingFields(on event: CGEvent, targetProcessIdentifier: pid_t) {
+        event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(targetProcessIdentifier))
+    }
+
+    static func textByReplacingSelection(
+        in currentText: String,
+        selection: CFRange?,
+        replacement: String) -> (text: String, cursorLocation: Int)
+    {
+        guard let selection,
+              selection.location >= 0,
+              selection.length >= 0
+        else {
+            return (currentText + replacement, currentText.utf16.count + replacement.utf16.count)
+        }
+
+        let utf16 = currentText.utf16
+        guard let startUTF16 = utf16.index(
+            utf16.startIndex,
+            offsetBy: selection.location,
+            limitedBy: utf16.endIndex),
+            let endUTF16 = utf16.index(
+                startUTF16,
+                offsetBy: selection.length,
+                limitedBy: utf16.endIndex),
+            let start = String.Index(startUTF16, within: currentText),
+            let end = String.Index(endUTF16, within: currentText)
+        else {
+            return (currentText + replacement, currentText.utf16.count + replacement.utf16.count)
+        }
+
+        let updated = currentText.replacingCharacters(in: start..<end, with: replacement)
+        return (updated, selection.location + replacement.utf16.count)
+    }
+
+    static func cursorLocationMovingLeft(from selection: CFRange, in text: String) -> Int {
+        if selection.length > 0 {
+            return selection.location
+        }
+        guard selection.location > 0,
+              let cursor = self.stringIndex(in: text, utf16Offset: selection.location)
+        else {
+            return max(0, selection.location - 1)
+        }
+
+        return text.index(before: cursor).utf16Offset(in: text)
+    }
+
+    static func cursorLocationMovingRight(from selection: CFRange, in text: String) -> Int {
+        if selection.length > 0 {
+            return selection.location + selection.length
+        }
+        let textLength = text.utf16.count
+        guard selection.location < textLength,
+              let cursor = self.stringIndex(in: text, utf16Offset: selection.location)
+        else {
+            return min(textLength, selection.location + 1)
+        }
+
+        return text.index(after: cursor).utf16Offset(in: text)
+    }
+
+    private static func clampedSelection(_ selection: CFRange?, textLength: Int) -> CFRange {
+        guard let selection,
+              selection.location >= 0,
+              selection.length >= 0
+        else {
+            return CFRange(location: textLength, length: 0)
+        }
+
+        let location = min(selection.location, textLength)
+        let length = min(selection.length, textLength - location)
+        return CFRange(location: location, length: length)
+    }
+
+    private static func deletionRangeBeforeSelection(_ selection: CFRange, in text: String) -> CFRange? {
+        if selection.length > 0 {
+            return selection
+        }
+        guard selection.location > 0,
+              let cursor = self.stringIndex(in: text, utf16Offset: selection.location)
+        else {
+            return nil
+        }
+
+        let previous = text.index(before: cursor)
+        return CFRange(
+            location: previous.utf16Offset(in: text),
+            length: cursor.utf16Offset(in: text) - previous.utf16Offset(in: text))
+    }
+
+    private static func deletionRangeAfterSelection(_ selection: CFRange, in text: String) -> CFRange? {
+        if selection.length > 0 {
+            return selection
+        }
+        guard let cursor = self.stringIndex(in: text, utf16Offset: selection.location),
+              cursor < text.endIndex
+        else {
+            return nil
+        }
+
+        let next = text.index(after: cursor)
+        return CFRange(
+            location: cursor.utf16Offset(in: text),
+            length: next.utf16Offset(in: text) - cursor.utf16Offset(in: text))
+    }
+
+    private static func stringIndex(in text: String, utf16Offset: Int) -> String.Index? {
+        let utf16 = text.utf16
+        guard let utf16Index = utf16.index(
+            utf16.startIndex,
+            offsetBy: utf16Offset,
+            limitedBy: utf16.endIndex)
+        else {
+            return nil
+        }
+        return String.Index(utf16Index, within: text)
+    }
+
+    private static func focusedTextElement(targetProcessIdentifier: pid_t) throws -> AXUIElement? {
+        let application = AXUIElementCreateApplication(targetProcessIdentifier)
+        AXUIElementSetMessagingTimeout(application, 0.05)
+        var focusedValue: CFTypeRef?
+        let focusedError = AXUIElementCopyAttributeValue(
+            application,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedValue)
+
+        guard focusedError != .apiDisabled else {
+            throw PeekabooError.permissionDeniedAccessibility
+        }
+        guard focusedError == .success,
+              let focusedValue,
+              CFGetTypeID(focusedValue) == AXUIElementGetTypeID()
+        else {
+            return nil
+        }
+
+        return unsafeDowncast(focusedValue, to: AXUIElement.self)
+    }
+
+    private static func isValueSettable(_ element: AXUIElement) -> Bool {
+        var settable = DarwinBoolean(false)
+        let error = AXUIElementIsAttributeSettable(
+            element,
+            kAXValueAttribute as CFString,
+            &settable)
+        return error == .success && settable.boolValue
+    }
+
+    private static func isSecureTextElement(_ element: AXUIElement) -> Bool {
+        let role = self.stringAttribute(kAXRoleAttribute as CFString, from: element)
+        let subrole = self.stringAttribute(kAXSubroleAttribute as CFString, from: element)
+        return role == "AXSecureTextField" || subrole == "AXSecureTextField"
+    }
+
+    private static func textValue(from element: AXUIElement) throws -> String? {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(
+            element,
+            kAXValueAttribute as CFString,
+            &value)
+        guard error != .apiDisabled else {
+            throw PeekabooError.permissionDeniedAccessibility
+        }
+        guard error == .success else {
+            return nil
+        }
+        return value as? String
+    }
+
+    @MainActor
+    private static func setText(
+        _ text: String,
+        on element: AXUIElement,
+        beforeMutation: @MainActor () throws -> Void) async throws -> FocusedTextValueResult
+    {
+        try await self.performFocusedTextValueMutation(
+            text,
+            on: AutomationElement(Element(element)),
+            observer: ActionInputDriver(nativeReader: DetachedAXMutationReader.readFocused),
+            beforeMutation: beforeMutation,
+            mutation: {
+                try self.textMutationAccepted(AXUIElementSetAttributeValue(
+                    element,
+                    kAXValueAttribute as CFString,
+                    text as CFTypeRef)) ? .accessibilityValue : .unsupported
+            })
+    }
+
+    private static func selectedTextRange(from element: AXUIElement) -> CFRange? {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            &value)
+        guard error == .success else { return nil }
+        return TextSelectionRange(nativeValue: value)?.nativeRange
+    }
+
+    @discardableResult
+    private static func setSelectedTextRange(
+        _ range: CFRange,
+        on element: AXUIElement,
+        operation: InputDeliveryIndeterminateError.Operation = .type) throws -> Bool
+    {
+        var range = range
+        guard let value = AXValueCreate(.cfRange, &range) else {
+            return false
+        }
+        return try self.textMutationAccepted(AXUIElementSetAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            value), operation: operation)
+    }
+
+    private static func stringAttribute(_ attributeName: CFString, from element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(element, attributeName, &value)
+        guard error == .success else { return nil }
+        return value as? String
+    }
+
+    static func resolveTargetWindowID(
+        at point: CGPoint,
+        targetProcessIdentifier: pid_t,
+        exactWindowID: CGWindowID?,
+        candidates: [MouseWindowRouteCandidate]) throws -> CGWindowID?
+    {
+        if let exactWindowID {
+            guard let candidate = candidates.first(where: { $0.windowID == exactWindowID }) else {
+                throw PeekabooError.snapshotStale("Target window \(exactWindowID) no longer exists")
+            }
+            guard candidate.processIdentifier == targetProcessIdentifier else {
+                throw PeekabooError.snapshotStale(
+                    "Target window \(exactWindowID) is now owned by another process")
+            }
+            guard candidate.layer == 0 else {
+                throw PeekabooError.snapshotStale("Target window \(exactWindowID) is no longer interactive")
+            }
+            guard candidate.bounds.contains(point) else {
+                throw PeekabooError.snapshotStale(
+                    "Resolved click point is outside target window \(exactWindowID); capture a fresh snapshot")
+            }
+            return exactWindowID
+        }
+
+        return candidates.first {
+            $0.processIdentifier == targetProcessIdentifier &&
+                $0.layer == 0 &&
+                $0.bounds.contains(point)
+        }?.windowID
+    }
+
+    static func mouseWindowRouteCandidates(
+        exactWindowID: CGWindowID?,
+        copyWindowInfo: (CGWindowListOption, CGWindowID) -> [[String: Any]]? = { options, relativeToWindow in
+            CGWindowListCopyWindowInfo(options, relativeToWindow) as? [[String: Any]]
+        }) -> [MouseWindowRouteCandidate]
+    {
+        let windows: [[String: Any]]
+        if let exactWindowID {
+            guard case let .found(window) = SystemIdentityResolver.exactWindowCatalogObservation(
+                exactWindowID,
+                windowListProvider: copyWindowInfo)
+            else { return [] }
+            windows = [window]
+        } else {
+            guard let onScreenWindows = copyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements],
+                kCGNullWindowID)
+            else { return [] }
+            windows = onScreenWindows
+        }
+
+        return windows.compactMap { window in
+            guard let processIdentifier = self.pid(from: window[kCGWindowOwnerPID as String]),
+                  let layer = self.intValue(from: window[kCGWindowLayer as String]),
+                  let windowID = self.windowID(from: window[kCGWindowNumber as String]),
+                  let boundsValue = window[kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(dictionaryRepresentation: boundsValue as CFDictionary)
+            else { return nil }
+
+            return MouseWindowRouteCandidate(
+                windowID: windowID,
+                processIdentifier: processIdentifier,
+                layer: layer,
+                bounds: bounds,
+                alpha: (window[kCGWindowAlpha as String] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 1,
+                isOnScreen: (window[kCGWindowIsOnscreen as String] as? Bool) ?? (exactWindowID == nil))
+        }
+    }
+
+    /// Finds the requested exact target in the current on-screen WindowServer catalog.
+    ///
+    /// Catalog order cannot identify the pointer receiver: macOS publishes click-through Dock and
+    /// Nameplate rows ahead of ordinary application windows. The system-wide Accessibility hit test
+    /// is authoritative for receiver identity; this lookup independently proves only that the exact
+    /// requested WindowServer row remains visible and contains the dispatch point.
+    static func exactOnScreenWindowRoute(
+        at point: CGPoint,
+        windowID: CGWindowID,
+        candidates: [MouseWindowRouteCandidate]) -> MouseWindowRouteCandidate?
+    {
+        guard point.x.isFinite,
+              point.y.isFinite,
+              windowID != kCGNullWindowID
+        else { return nil }
+        return candidates.first { candidate in
+            candidate.windowID == windowID &&
+                candidate.isOnScreen &&
+                candidate.alpha.isFinite &&
+                candidate.alpha > 0 &&
+                candidate.bounds.minX.isFinite &&
+                candidate.bounds.minY.isFinite &&
+                candidate.bounds.maxX.isFinite &&
+                candidate.bounds.maxY.isFinite &&
+                candidate.bounds.width > 0 &&
+                candidate.bounds.height > 0 &&
+                candidate.bounds.contains(point)
+        }
+    }
+
+    static func exactOnScreenWindowRoute(
+        at point: CGPoint,
+        windowID: CGWindowID) -> MouseWindowRouteCandidate?
+    {
+        self.exactOnScreenWindowRoute(
+            at: point,
+            windowID: windowID,
+            candidates: self.mouseWindowRouteCandidates(exactWindowID: nil))
+    }
+
+    /// Resolves the system-wide Accessibility hit-test receiver and its exact containing window.
+    @MainActor
+    static func accessibilityPointerReceiver(at point: CGPoint) -> PointerReceiverIdentity? {
+        guard point.x.isFinite,
+              point.y.isFinite,
+              let element = Element.elementAtPoint(point)
+        else { return nil }
+        let axElement = element.underlyingElement
+        guard let windowID = AXWindowIDResolver.owningWindowID(of: axElement) else { return nil }
+        var processIdentifier: pid_t = 0
+        guard AXUIElementGetPid(axElement, &processIdentifier) == .success else { return nil }
+        return self.pointerReceiverIdentity(
+            accessibilityProcessIdentifier: processIdentifier,
+            windowID: windowID,
+            windowIdentity: SystemIdentityResolver.windowIdentity(windowID))
+    }
+
+    static func pointerReceiverIdentity(
+        accessibilityProcessIdentifier: pid_t?,
+        windowID: CGWindowID?,
+        windowIdentity: SystemWindowIdentity?) -> PointerReceiverIdentity?
+    {
+        guard let accessibilityProcessIdentifier,
+              accessibilityProcessIdentifier > 0,
+              let windowID,
+              windowID != kCGNullWindowID,
+              let windowIdentity,
+              windowIdentity.windowID == windowID,
+              windowIdentity.ownerProcessIdentifier > 0
+        else { return nil }
+        return PointerReceiverIdentity(
+            processIdentifier: windowIdentity.ownerProcessIdentifier,
+            windowID: windowID,
+            accessibilityProcessIdentifier: accessibilityProcessIdentifier)
+    }
+
+    private static func windowID(from value: Any?) -> CGWindowID? {
+        self.intValue(from: value).map(CGWindowID.init)
+    }
+
+    private static func pid(from value: Any?) -> pid_t? {
+        self.intValue(from: value).map(pid_t.init)
+    }
+
+    private static func intValue(from value: Any?) -> Int? {
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        if let int = value as? Int {
+            return int
+        }
+        if let int32 = value as? Int32 {
+            return Int(int32)
+        }
+        if let uint32 = value as? UInt32 {
+            return Int(uint32)
+        }
+        return nil
+    }
+
+    private static func isProcessAlive(_ processIdentifier: pid_t) -> Bool {
+        errno = 0
+        if kill(processIdentifier, 0) == 0 {
+            return true
+        }
+        return errno == EPERM
+    }
+}
+
+extension BackgroundInputDriver {
+    @MainActor
+    private static func setSelectedTextRangeAndObserve(
+        _ range: CFRange,
+        on element: AXUIElement,
+        beforeMutation: @MainActor () throws -> Bool) async throws -> FocusedTextKeyDispatch
+    {
+        let matches = {
+            guard let actual = self.selectedTextRange(from: element) else { return false }
+            return actual.location == range.location && actual.length == range.length
+        }
+        return try await ActionInputDriver().performObservedMutation(
+            on: AutomationElement(Element(element)),
+            attribute: .selectedTextRange,
+            mutation: {
+                if try beforeMutation() {
+                    return .noChange
+                }
+                return try self.setSelectedTextRange(range, on: element) ? .accessibilityValue : .unsupported
+            },
+            matches: { sample in
+                if let sample {
+                    guard let expected = TextSelectionRange(location: range.location, length: range.length) else {
+                        return false
+                    }
+                    return sample.selectedTextRange == expected
+                }
+                return matches()
+            })
+    }
+
+    @MainActor
+    struct FocusedTextEditAccess<Receiver> {
+        let focusedElement: () throws -> Receiver?
+        let isEditable: (Receiver) throws -> Bool
+        let textValue: (Receiver) throws -> String?
+        let selectedRange: (Receiver) -> CFRange?
+        let focusSnapshot: (Receiver) -> ExactWindowFocusSnapshot?
+        let setText: (String, Receiver, FocusedTextEditState) async throws -> FocusedTextValueResult
+        let selectRange: (CFRange, Receiver, FocusedTextEditState) async throws -> FocusedTextKeyDispatch
+
+        func state(of receiver: Receiver) throws -> FocusedTextEditState {
+            try FocusedTextEditState(text: self.textValue(receiver), selection: self.selectedRange(receiver))
+        }
+
+        private static func readBeforeMutation<Value>(_ read: () throws -> Value) throws -> Value {
+            try Task.checkCancellation()
+            do {
+                let value = try read()
+                try Task.checkCancellation()
+                return value
+            } catch let cancellation as CancellationError {
+                throw cancellation
+            } catch let failure as DesktopActionFailure {
+                throw failure
+            } catch {
+                try Task.checkCancellation()
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "The focused receiver state could not be read before mutation.")
+            }
+        }
+
+        init(
+            focusedElement: @escaping () throws -> Receiver?,
+            sameReceiver: @escaping (Receiver, Receiver) -> Bool,
+            isEditable: @escaping (Receiver) throws -> Bool,
+            textValue: @escaping (Receiver) throws -> String?,
+            selectedRange: @escaping (Receiver) -> CFRange?,
+            focusSnapshot: @escaping (Receiver) -> ExactWindowFocusSnapshot?,
+            validateReceiver: @escaping (Receiver) throws -> Void,
+            setText: @escaping (String, Receiver, @MainActor () throws -> Void) async throws -> FocusedTextValueResult,
+            selectRange: @escaping (CFRange, Receiver, @MainActor () throws -> Bool) async throws
+                -> FocusedTextKeyDispatch)
+        {
+            let readFocusedElement = { try Self.readBeforeMutation(focusedElement) }
+            let readTextValue = { (receiver: Receiver) in try Self.readBeforeMutation { try textValue(receiver) } }
+            self.focusedElement = readFocusedElement
+            self.isEditable = isEditable
+            self.textValue = readTextValue
+            self.selectedRange = selectedRange
+            self.focusSnapshot = focusSnapshot
+            let beforeMutation = { (receiver: Receiver, expected: FocusedTextEditState, selection: CFRange?) in
+                try Task.checkCancellation()
+                try validateReceiver(receiver)
+                let currentState = try FocusedTextEditState(
+                    text: readTextValue(receiver),
+                    selection: selectedRange(receiver))
+                try Task.checkCancellation()
+                let alreadySelected = selection.map {
+                    currentState == FocusedTextEditState(text: expected.text, selection: $0)
+                } ?? false
+                guard currentState == expected || alreadySelected else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "The focused text or selection changed before mutation; observe it again.")
+                }
+                guard let current = try readFocusedElement(), sameReceiver(current, receiver) else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "The focused Accessibility text receiver changed before mutation.")
+                }
+                try Task.checkCancellation()
+                return alreadySelected
+            }
+            self.setText = { text, receiver, expectedState in
+                _ = try beforeMutation(receiver, expectedState, nil)
+                guard !BackgroundInputDriver.exactTextMatches(expectedState.text, text) else { return .noChange }
+                return try await setText(text, receiver) { _ = try beforeMutation(receiver, expectedState, nil) }
+            }
+            self.selectRange = { range, receiver, expectedState in
+                if try beforeMutation(receiver, expectedState, range) {
+                    return .noChange
+                }
+                // A range reached during preflight permits a no-op, never a rebased selection write.
+                return try await selectRange(range, receiver) { try beforeMutation(receiver, expectedState, range) }
+            }
+        }
+    }
+
+    @MainActor
+    private static func focusedTextEditAccess(
+        targetProcessIdentifier: pid_t,
+        exactWindow: UIAutomationTarget.ExactWindow?) -> FocusedTextEditAccess<AXUIElement>
+    {
+        let expectedGeneration = exactWindow?.identity.ownerProcessStartIdentity ??
+            SystemIdentityResolver.processStartIdentity(targetProcessIdentifier)
+        let validateReceiver = { (element: AXUIElement) throws in
+            guard let expectedGeneration,
+                  SystemIdentityResolver.processStartIdentity(targetProcessIdentifier) == expectedGeneration
+            else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "The Accessibility text receiver process changed before mutation.")
+            }
+            if let exactWindow {
+                let focused = DetachedExactWindowFocusReader.read(
+                    element: element, processIdentifier: targetProcessIdentifier)
+                try self.validateExactWindowTextReceiver(focused, exactWindow: exactWindow, phase: .continuation)
+                guard let focused, let keyWindow = DetachedExactWindowFocusReader.readKeyWindow(
+                    processIdentifier: targetProcessIdentifier),
+                    keyWindow.isKey(
+                        processIdentifier: targetProcessIdentifier,
+                        windowID: exactWindow.identity.windowID,
+                        focused: focused),
+                    !keyWindow.hasAttachedSheet
+                else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "The exact text receiver window lost keyboard authority before mutation.")
+                }
+            }
+            AXUIElementSetMessagingTimeout(element, 0.05)
+            defer { AXUIElementSetMessagingTimeout(element, 0) }
+            guard Element(element).isFocused() == true else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "The Accessibility text receiver no longer confirms keyboard focus.")
+            }
+        }
+        return FocusedTextEditAccess(
+            focusedElement: { try self.focusedTextElement(targetProcessIdentifier: targetProcessIdentifier) },
+            sameReceiver: { CFEqual($0, $1) },
+            isEditable: { element in
+                guard !self.isSecureTextElement(element), self.isValueSettable(element) else { return false }
+                return try self.permitsAccessibilityTextEditing(
+                    element,
+                    targetProcessIdentifier: targetProcessIdentifier)
+            },
+            textValue: { try self.textValue(from: $0) },
+            selectedRange: { self.selectedTextRange(from: $0) },
+            focusSnapshot: {
+                DetachedExactWindowFocusReader.read(element: $0, processIdentifier: targetProcessIdentifier)
+            },
+            validateReceiver: validateReceiver,
+            setText: { text, element, beforeMutation in
+                try await self.setText(text, on: element, beforeMutation: beforeMutation)
+            },
+            selectRange: { range, element, beforeMutation in
+                try await self.setSelectedTextRangeAndObserve(range, on: element, beforeMutation: beforeMutation)
+            })
+    }
+
+    private static func permitsAccessibilityTextEditing(
+        _ element: AXUIElement,
+        targetProcessIdentifier: pid_t) throws -> Bool
+    {
+        // Ownership validation precedes this route gate; never retry accepted web AX writes as events.
+        try TextInputRoute.resolve(
+            focusedElement: element,
+            application: AXUIElementCreateApplication(targetProcessIdentifier),
+            targetProcessIdentifier: targetProcessIdentifier).permitsAccessibilityEditing()
+    }
+
+    @MainActor
+    private static func focusedEditableTextElement<Receiver>(
+        exactWindow: UIAutomationTarget.ExactWindow?,
+        phase: KeyboardFocusValidationPhase,
+        validatedReceiver: Element?,
+        access: FocusedTextEditAccess<Receiver>) throws -> Receiver?
+    {
+        guard let element = try access.focusedElement() else {
+            if let exactWindow {
+                try self.validateExactWindowTextReceiver(nil, exactWindow: exactWindow, phase: phase)
+            }
+            return nil
+        }
+        if let exactWindow {
+            let focused = access.focusSnapshot(element)
+            let validatedNativeElement = validatedReceiver.map { RetainedFocusElement(element: $0.underlyingElement) }
+            // Continuation permits reflow, but a different native receiver must never inherit that permission.
+            let receiverMatches = exactWindow.focusedElement == nil ||
+                (validatedNativeElement != nil && focused?.nativeElement == validatedNativeElement)
+            try self.validateExactWindowTextReceiver(
+                receiverMatches ? focused : nil, exactWindow: exactWindow, phase: phase)
+        }
+        guard try access.isEditable(element) else { return nil }
+        return element
+    }
+
+    @MainActor
+    static func replaceFocusedText(
+        with text: String,
+        exactWindow: UIAutomationTarget.ExactWindow?,
+        phase: KeyboardFocusValidationPhase = .initial,
+        validatedReceiver: Element? = nil,
+        access: FocusedTextEditAccess<some Any>) async throws -> FocusedTextKeyDispatch
+    {
+        guard let element = try self.focusedEditableTextElement(
+            exactWindow: exactWindow, phase: phase, validatedReceiver: validatedReceiver, access: access)
+        else { return .unsupported }
+        let state = try access.state(of: element)
+        let valueDispatch = try await access.setText(text, element, state)
+        return try await self.completeTextEdit(
+            CFRange(location: text.utf16.count, length: 0),
+            element: element,
+            valueDispatch: valueDispatch,
+            sourceState: state,
+            access: access)
+    }
+
+    @MainActor
+    static func insertTextIntoFocusedText(
+        _ text: String,
+        exactWindow: UIAutomationTarget.ExactWindow?,
+        phase: KeyboardFocusValidationPhase = .initial,
+        validatedReceiver: Element? = nil,
+        access: FocusedTextEditAccess<some Any>) async throws -> FocusedTextKeyDispatch
+    {
+        guard let element = try self.focusedEditableTextElement(
+            exactWindow: exactWindow, phase: phase, validatedReceiver: validatedReceiver, access: access)
+        else { return .unsupported }
+        let state = try access.state(of: element)
+        guard let currentText = state.text else { return .unsupported }
+        let edit = self.textByReplacingSelection(
+            in: currentText, selection: state.selection, replacement: text)
+        let valueDispatch = try await access.setText(edit.text, element, state)
+        return try await self.completeTextEdit(
+            CFRange(location: edit.cursorLocation, length: 0),
+            element: element,
+            valueDispatch: valueDispatch,
+            sourceState: state,
+            access: access)
+    }
+
+    struct FocusedTextHotkeyAccess<Receiver> {
+        let focusedElement: () throws -> Receiver?
+        let textValue: (Receiver) throws -> String?
+        let focusSnapshot: (Receiver) -> ExactWindowFocusSnapshot?
+        let selectRange: (CFRange, Receiver) throws -> Bool
+    }
+
+    @discardableResult
+    static func performFocusedTextHotkey(
+        primaryKey: String,
+        modifierFlags: CGEventFlags,
+        targetProcessIdentifier: pid_t,
+        exactWindow: UIAutomationTarget.ExactWindow? = nil) throws -> Bool
+    {
+        try self.validateLiveTarget(targetProcessIdentifier)
+        return try self.performFocusedTextHotkey(
+            primaryKey: primaryKey,
+            modifierFlags: modifierFlags,
+            exactWindow: exactWindow,
+            access: FocusedTextHotkeyAccess(
+                focusedElement: { try self.focusedTextElement(targetProcessIdentifier: targetProcessIdentifier) },
+                textValue: { element in
+                    guard !self.isSecureTextElement(element), self.isValueSettable(element) else { return nil }
+                    guard try self.permitsAccessibilityTextEditing(
+                        element, targetProcessIdentifier: targetProcessIdentifier)
+                    else { return nil }
+                    return try self.textValue(from: element)
+                },
+                focusSnapshot: {
+                    DetachedExactWindowFocusReader.read(element: $0, processIdentifier: targetProcessIdentifier)
+                },
+                selectRange: { try self.setSelectedTextRange($0, on: $1, operation: .hotkey) }))
+    }
+
+    static func performFocusedTextHotkey(
+        primaryKey: String,
+        modifierFlags: CGEventFlags,
+        exactWindow: UIAutomationTarget.ExactWindow?,
+        access: FocusedTextHotkeyAccess<some Any>) throws -> Bool
+    {
+        guard HotkeyService.isSelectAllShortcut(primaryKey: primaryKey, flags: modifierFlags) else { return false }
+        guard let element = try access.focusedElement() else {
+            if let exactWindow {
+                try self.validateExactWindowTextReceiver(nil, exactWindow: exactWindow)
+            }
+            return false
+        }
+        if let exactWindow {
+            // Validate the retained object before AX eligibility can trigger an unsupported fallback.
+            try self.validateExactWindowTextReceiver(access.focusSnapshot(element), exactWindow: exactWindow)
+        }
+        guard let currentText = try access.textValue(element) else { return false }
+        return try access.selectRange(
+            CFRange(location: 0, length: currentText.utf16.count),
+            element)
+    }
+
+    static func validateExactWindowTextReceiver(
+        _ focused: ExactWindowFocusSnapshot?,
+        exactWindow: UIAutomationTarget.ExactWindow,
+        phase: KeyboardFocusValidationPhase = .initial) throws
+    {
+        let refusal = DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "The Accessibility text receiver no longer matches the exact target; observe it again.")
+        guard let focused,
+              focused.processIdentifier == exactWindow.identity.ownerProcessIdentifier,
+              focused.windowID == exactWindow.identity.windowID,
+              !focused.frame.isEmpty,
+              exactWindow.bounds.contains(CGPoint(x: focused.frame.midX, y: focused.frame.midY))
+        else {
+            throw refusal
+        }
+        if let expected = exactWindow.focusedElement {
+            guard let windowID = focused.windowID,
+                  let role = focused.role,
+                  FocusedElementReceiptResolver.matches(
+                      FocusedElementIdentity(
+                          processIdentifier: focused.processIdentifier,
+                          windowID: windowID,
+                          role: role,
+                          title: focused.title,
+                          identifier: focused.identifier,
+                          frame: focused.frame),
+                      expected: expected,
+                      phase: phase)
+            else {
+                throw refusal
+            }
+        }
+    }
+
+    static func textMutationAccepted(
+        _ error: AXError,
+        operation: InputDeliveryIndeterminateError.Operation = .type) throws -> Bool
+    {
+        if error == .success {
+            return true
+        }
+        switch ActionInputDriver.classify(error) {
+        case .unsupported:
+            return false
+        case .permissionDenied:
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .permissionDenied,
+                message: "Accessibility permission is denied for the text edit.")
+        case .staleElement:
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The accessibility text receiver is stale; observe it again.")
+        case .targetUnavailable, .failed:
+            throw InputDeliveryIndeterminateError(
+                operation: operation,
+                causeDescription: "Accessibility text mutation returned AX error \(error.rawValue).",
+                delivery: .init(mechanism: .accessibilityValue, mode: .background))
+        }
+    }
+
+    @MainActor
+    static func performFocusedTextKey(
+        _ key: PeekabooFoundation.SpecialKey,
+        targetProcessIdentifier: pid_t,
+        exactWindow: UIAutomationTarget.ExactWindow? = nil,
+        phase: KeyboardFocusValidationPhase = .initial,
+        validatedReceiver: Element? = nil) async throws -> FocusedTextKeyDispatch
+    {
+        guard key.mayUseAccessibilityValueDelivery else { return .unsupported }
+        try self.validateLiveTarget(targetProcessIdentifier)
+        return try await self.performFocusedTextKey(
+            key,
+            exactWindow: exactWindow,
+            phase: phase,
+            validatedReceiver: validatedReceiver,
+            access: self.focusedTextEditAccess(
+                targetProcessIdentifier: targetProcessIdentifier,
+                exactWindow: exactWindow))
+    }
+
+    @MainActor
+    static func performFocusedTextKey(
+        _ key: PeekabooFoundation.SpecialKey,
+        exactWindow: UIAutomationTarget.ExactWindow?,
+        phase: KeyboardFocusValidationPhase = .initial,
+        validatedReceiver: Element? = nil,
+        access: FocusedTextEditAccess<some Any>) async throws -> FocusedTextKeyDispatch
+    {
+        guard let element = try self.focusedEditableTextElement(
+            exactWindow: exactWindow, phase: phase, validatedReceiver: validatedReceiver, access: access)
+        else {
+            return .unsupported
+        }
+        let state = try access.state(of: element)
+        guard let currentText = state.text else { return .unsupported }
+
+        let textLength = currentText.utf16.count
+        let selection = self.clampedSelection(state.selection, textLength: textLength)
+
+        switch key {
+        case .leftArrow:
+            let location = self.cursorLocationMovingLeft(from: selection, in: currentText)
+            return try await access.selectRange(CFRange(location: location, length: 0), element, state)
+
+        case .rightArrow:
+            let location = self.cursorLocationMovingRight(from: selection, in: currentText)
+            return try await access.selectRange(CFRange(location: location, length: 0), element, state)
+
+        case .home:
+            return try await access.selectRange(CFRange(location: 0, length: 0), element, state)
+
+        case .end:
+            return try await access.selectRange(CFRange(location: textLength, length: 0), element, state)
+
+        case .delete:
+            guard let editRange = self.deletionRangeBeforeSelection(selection, in: currentText) else {
+                return .noChange
+            }
+            let edit = self.textByReplacingSelection(in: currentText, selection: editRange, replacement: "")
+            let valueDispatch = try await access.setText(edit.text, element, state)
+            return try await self.completeTextEdit(
+                CFRange(location: edit.cursorLocation, length: 0),
+                element: element,
+                valueDispatch: valueDispatch,
+                sourceState: state,
+                access: access)
+
+        case .forwardDelete:
+            guard let editRange = self.deletionRangeAfterSelection(selection, in: currentText) else {
+                return .noChange
+            }
+            let edit = self.textByReplacingSelection(in: currentText, selection: editRange, replacement: "")
+            let valueDispatch = try await access.setText(edit.text, element, state)
+            return try await self.completeTextEdit(
+                CFRange(location: edit.cursorLocation, length: 0),
+                element: element,
+                valueDispatch: valueDispatch,
+                sourceState: state,
+                access: access)
+
+        case .space:
+            let edit = self.textByReplacingSelection(in: currentText, selection: selection, replacement: " ")
+            let valueDispatch = try await access.setText(edit.text, element, state)
+            return try await self.completeTextEdit(
+                CFRange(location: edit.cursorLocation, length: 0),
+                element: element,
+                valueDispatch: valueDispatch,
+                sourceState: state,
+                access: access)
+
+        default:
+            return .unsupported
+        }
+    }
+
+    @MainActor
+    static func performPositionalClickAction(
+        _ action: PositionalClickAction,
+        on element: any AutomationElementRepresenting,
+        allowsAccessibilityValueDelivery: Bool = true,
+        beforeMutation: @MainActor () throws -> Void = {}) async throws -> DesktopActionOutcome
+    {
+        if !allowsAccessibilityValueDelivery, action == .select || action == .focus {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "Targeted click Accessibility-value delivery is disabled.",
+                hint: "Use an allowed Accessibility action or explicitly admit value delivery.")
+        }
+        switch action {
+        case .press:
+            return try await self.performDetachedAction(
+                AXActionNames.kAXPressAction,
+                on: element,
+                gracePeriod: nil,
+                beforeMutation: beforeMutation)
+        case .showMenu:
+            return try await self.performDetachedAction(
+                AXActionNames.kAXShowMenuAction,
+                on: element,
+                gracePeriod: DetachedAXActionRunner.showMenuGracePeriod,
+                beforeMutation: beforeMutation)
+        case .select:
+            try Task.checkCancellation()
+            try beforeMutation()
+            try element.setAutomationSelected(true)
+            return .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                evidence: .deliveryAccepted)
+        case .focus:
+            return try await ActionInputDriver().tryFocus(
+                element: element,
+                beforeMutation: beforeMutation).outcome
+        }
+    }
+
+    /// Establishes background focus at one exact-window point without pressing or selecting it.
+    @MainActor
+    static func focus(
+        at point: CGPoint,
+        exactWindow: UIAutomationTarget.ExactWindow) async throws -> UIInputExecutionResult.Action
+    {
+        let targetProcessIdentifier = exactWindow.identity.ownerProcessIdentifier
+        guard targetProcessIdentifier > 0, self.isProcessAlive(targetProcessIdentifier) else {
+            throw PeekabooError.invalidInput("Target process identifier is not running: \(targetProcessIdentifier)")
+        }
+        guard point.x.isFinite, point.y.isFinite, exactWindow.bounds.contains(point) else {
+            throw PeekabooError.invalidInput("Background pixel-focus point is outside the exact target window")
+        }
+        guard AXIsProcessTrusted() else {
+            throw PeekabooError.permissionDeniedAccessibility
+        }
+
+        guard let targetWindowID = CGWindowID(exactly: exactWindow.identity.windowID) else {
+            throw PeekabooError.snapshotStale("Exact-window pixel focus has an invalid window identifier")
+        }
+        _ = try self.resolveTargetWindowID(
+            at: point,
+            targetProcessIdentifier: targetProcessIdentifier,
+            exactWindowID: targetWindowID,
+            candidates: self.mouseWindowRouteCandidates(exactWindowID: targetWindowID))
+
+        let candidates = try await self.hitTestCandidates(
+            at: point,
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetProcessStartIdentity: exactWindow.identity.ownerProcessStartIdentity)
+        guard let element = self.positionalFocusTarget(inCandidates: candidates, at: point) else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "Background pixel focus is unavailable at the requested point.",
+                hint: "Target a writable text field or use explicit foreground typing.")
+        }
+        try self.assertBelongsToTargetWindow(element, targetWindowID: targetWindowID, at: point)
+
+        return try await self.performExactWindowFocusAction(
+            on: element,
+            exactWindow: exactWindow)
+    }
+
+    /// Revalidates the complete capture-time identity immediately before the AX focus write.
+    ///
+    /// The earlier point/window lookup proves where the hit test ran, but a process generation or
+    /// window bounds can still change while Accessibility resolves the editable element.
+    @MainActor
+    static func performExactWindowFocusAction(
+        on element: any AutomationElementRepresenting,
+        exactWindow: UIAutomationTarget.ExactWindow,
+        exactWindowIdentityValidator: (WindowMutationIdentity, CGRect) -> Bool = {
+            SystemIdentityResolver.validateWindowMutationIdentity($0, expectedBounds: $1)
+        }) async throws -> UIInputExecutionResult.Action
+    {
+        guard exactWindowIdentityValidator(exactWindow.identity, exactWindow.bounds) else {
+            throw PeekabooError.snapshotStale(
+                "Exact-window pixel-focus receipt changed before the Accessibility focus write")
+        }
+
+        let outcome = try await self.performPositionalClickAction(.focus, on: element) {
+            guard exactWindowIdentityValidator(exactWindow.identity, exactWindow.bounds) else {
+                throw PeekabooError.snapshotStale(
+                    "Exact-window pixel-focus receipt changed before the Accessibility focus write")
+            }
+            if let axElement = element.underlyingAXElement {
+                guard let windowID = CGWindowID(exactly: exactWindow.identity.windowID),
+                      AXWindowIDResolver.owningWindowID(of: axElement) == windowID else {
+                    throw PeekabooError.snapshotStale(
+                        "Exact-window pixel-focus element changed windows before the Accessibility focus write")
+                }
+            }
+        }
+        guard element.focusedState == true,
+              let focusedElement = element.focusedElementIdentity
+        else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: outcome.delivery,
+                evidence: .completionUnknown,
+                unitCount: outcome.dispatchState.unitCount ?? .one,
+                message: "Background pixel focus was dispatched but could not be confirmed.",
+                hint: "Observe the exact target before deciding whether to retry typing.")
+        }
+        return UIInputExecutionResult.Action(
+            outcome: outcome,
+            actionName: AXAttributeNames.kAXFocusedAttribute,
+            anchorPoint: element.anchorPoint,
+            elementRole: element.role,
+            focusedElement: focusedElement)
+    }
+
+    @MainActor
+    private static func selectableRow(
+        in elements: [any AutomationElementRepresenting]) -> (any AutomationElementRepresenting)?
+    {
+        guard let row = elements.first(where: {
+            $0.isEnabled && $0.role == AXRoleNames.kAXRowRole && $0.isSelectedSettable
+        }) else {
+            return nil
+        }
+        let frame = String(describing: row.frame)
+        self.logger.debug(
+            "Resolved background positional click to role=AXRow action=select frame=\(frame, privacy: .public)")
+        return row
+    }
+
+    static let unprovenWindowRouteMessage = """
+    Background pixel click refused because Peekaboo could not prove an exact target window for the \
+    requested PID and point. Capture or select a specific window, or use --foreground explicitly.
+    """
+
+    static let unverifiedPressMessage = """
+    The accessibility press did not complete, so Peekaboo cannot verify that the click was delivered. \
+    Re-run with --foreground --input-strategy synthOnly to focus the app and send a real mouse click.
+    """
+
+    fileprivate static let nonPressableContainerRoles: Set<String> = [
+        "AXApplication",
+        "AXGroup",
+        "AXLayoutArea",
+        "AXRadioGroup",
+        "AXScrollArea",
+        "AXWebArea",
+        "AXWindow",
+    ]
+
+    static func noActionableElementMessage(at point: CGPoint, targetProcessIdentifier: pid_t) -> String {
+        """
+        No pressable accessibility element was found at (\(Int(point.x)), \(Int(point.y))) in \
+        PID \(targetProcessIdentifier). Background clicks press the accessibility element at the \
+        target point, and nothing pressable was found there — the point may be empty, a \
+        custom-drawn view, or an element that exposes no press action. Nothing was clicked. Inspect \
+        again and click an element, or click with a modifier to send a real pointer click in the foreground.
+        """
+    }
+
+    static func occludedWindowMessage(
+        at point: CGPoint,
+        targetWindowID: CGWindowID,
+        resolvedWindowID: CGWindowID? = nil) -> String
+    {
+        let window = resolvedWindowID.map { "window \($0)" } ?? "a different window"
+        return """
+        Point (\(Int(point.x)), \(Int(point.y))) is occluded for the pinned target window \
+        \(targetWindowID): accessibility hit-testing resolved an element in \(window) of \
+        the same app, and that window is not a sheet attached to the target. Background clicks press \
+        the frontmost element at the point and cannot reach an overlapped window. Nothing was clicked. \
+        Focus the target window, then inspect it again.
+        """
+    }
+}
+
+extension BackgroundInputDriver {
+    /// Deliver a positional click to a background process via accessibility.
+    @MainActor
+    @discardableResult
+    static func click(
+        at point: CGPoint,
+        button: MouseButton,
+        count: Int,
+        targetProcessIdentifier: pid_t,
+        targetWindowID: CGWindowID? = nil,
+        expectedWindowIdentity: WindowMutationIdentity? = nil,
+        expectedWindowBounds: CGRect? = nil,
+        allowsAccessibilityValueDelivery: Bool = true) async throws -> DesktopActionOutcome
+    {
+        guard targetProcessIdentifier > 0, self.isProcessAlive(targetProcessIdentifier) else {
+            throw PeekabooError.invalidInput("Target process identifier is not running: \(targetProcessIdentifier)")
+        }
+        guard targetWindowID != nil else {
+            throw PeekabooError.invalidInput(
+                "Background coordinate clicks require an exact capture-time window receipt; " +
+                    "PID-only coordinate routing is refused")
+        }
+        let resolvedWindowID = try self.resolveTargetWindowID(
+            at: point,
+            targetProcessIdentifier: targetProcessIdentifier,
+            exactWindowID: targetWindowID,
+            candidates: self.mouseWindowRouteCandidates(exactWindowID: targetWindowID))
+        if let targetWindowID {
+            guard let expectedWindowIdentity,
+                  let expectedWindowBounds,
+                  expectedWindowIdentity.windowID == Int(targetWindowID),
+                  expectedWindowIdentity.ownerProcessIdentifier == targetProcessIdentifier,
+                  SystemIdentityResolver.validateWindowMutationIdentity(
+                      expectedWindowIdentity,
+                      expectedBounds: expectedWindowBounds)
+            else {
+                throw PeekabooError.snapshotStale(
+                    "Exact-window background pointer receipt changed before final dispatch")
+            }
+        }
+
+        if count > 1 || button != .left {
+            guard let resolvedWindowID else {
+                throw PeekabooError.serviceUnavailable(self.unprovenWindowRouteMessage)
+            }
+            return try await WindowRoutedPointerDriver().click(
+                at: point,
+                button: button,
+                count: count,
+                targetProcessIdentifier: targetProcessIdentifier,
+                targetWindowID: resolvedWindowID,
+                expectedWindowIdentity: expectedWindowIdentity,
+                expectedWindowBounds: expectedWindowBounds)
+        }
+        guard count == 1 else {
+            throw PeekabooError.invalidInput("Background click count must be between 1 and 3")
+        }
+        guard AXIsProcessTrusted() else {
+            throw PeekabooError.permissionDeniedAccessibility
+        }
+
+        let candidates = try await self.hitTestCandidates(
+            at: point,
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetProcessStartIdentity: expectedWindowIdentity?.ownerProcessStartIdentity)
+        guard let resolved = Self.positionalClickTarget(inCandidates: candidates, at: point, button: button) else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: Self.noActionableElementMessage(at: point, targetProcessIdentifier: targetProcessIdentifier))
+        }
+        let beforeMutation: @MainActor () throws -> Void = {
+            try Task.checkCancellation()
+            guard let targetWindowID,
+                  let expectedWindowIdentity,
+                  let expectedWindowBounds,
+                  SystemIdentityResolver.validateWindowMutationIdentity(
+                      expectedWindowIdentity,
+                      expectedBounds: expectedWindowBounds)
+            else {
+                throw PeekabooError.snapshotStale(
+                    "Exact-window background pointer receipt changed before AX dispatch")
+            }
+            try self.assertBelongsToTargetWindow(resolved.element, targetWindowID: targetWindowID, at: point)
+        }
+        try beforeMutation()
+
+        return try await self.performPositionalClickAction(
+            resolved.action,
+            on: resolved.element,
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery,
+            beforeMutation: beforeMutation)
+    }
+}
+
+private enum SkyLightPerPidEventPost {
+    private typealias PostToPidFn = @convention(c) (pid_t, CGEvent) -> Void
+
+    private static let postToPid: PostToPidFn? = {
+        guard let handle = dlopen(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight",
+            RTLD_LAZY)
+        else {
+            return nil
+        }
+        guard let symbol = dlsym(handle, "SLEventPostToPid") else {
+            return nil
+        }
+        return unsafeBitCast(symbol, to: PostToPidFn.self)
+    }()
+
+    @discardableResult
+    static func post(_ event: CGEvent, to pid: pid_t) -> Bool {
+        guard let postToPid else {
+            return false
+        }
+        postToPid(pid, event)
+        return true
+    }
+}

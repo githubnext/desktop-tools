@@ -1,0 +1,1391 @@
+import AppKit
+import Carbon.HIToolbox
+import CoreGraphics
+import Darwin
+import os
+import PeekabooAutomationKitTestSupport
+import PeekabooFoundation
+import Testing
+@testable import PeekabooAutomationKit
+
+@MainActor
+struct HotkeyServiceTargetingTests {
+    @Test func `clipboard claim loss refuses before the first key`() async throws {
+        var events: [CGEventType] = []
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in events.append(event.type) },
+            processStartIdentityProvider: { _ in 740 },
+            clipboardChangeCountProvider: { 12 },
+            holdSleeper: { _ in })
+        let claim = try #require(GeneralPasteboardWriteClaim(changeCount: 11))
+
+        do {
+            _ = try await service.hotkey(
+                keys: "cmd,v", holdDuration: 50,
+                automationTarget: self.heldHotkeyTarget(generation: 740),
+                clipboardClaim: claim)
+            Issue.record("Expected ownership-loss refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.retrySafety == .safe)
+        }
+        #expect(events.isEmpty)
+    }
+
+    @Test func `clipboard claim loss after modifier down releases without typing V`() async throws {
+        var events: [CGEventType] = []
+        var clipboardGeneration = 11
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in
+                events.append(event.type)
+                clipboardGeneration = 12
+            },
+            processStartIdentityProvider: { _ in 741 },
+            clipboardChangeCountProvider: { clipboardGeneration },
+            holdSleeper: { _ in })
+        let claim = try #require(GeneralPasteboardWriteClaim(changeCount: 11))
+
+        do {
+            _ = try await service.hotkey(
+                keys: "cmd,v", holdDuration: 50,
+                automationTarget: self.heldHotkeyTarget(generation: 741),
+                clipboardClaim: claim)
+            Issue.record("Expected a released, retry-unsafe prefix")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.emittedUnitCount == 2)
+            #expect(error.causeDescription?.contains("superseded") == true)
+        }
+        #expect(events == [.flagsChanged, .flagsChanged])
+    }
+
+    @Test func `clipboard change after V down does not suppress required key releases`() async throws {
+        var events: [CGEventType] = []
+        var clipboardGeneration = 11
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in
+                events.append(event.type)
+                if event.type == .keyDown {
+                    clipboardGeneration = 12
+                }
+            },
+            processStartIdentityProvider: { _ in 742 },
+            clipboardChangeCountProvider: { clipboardGeneration },
+            holdSleeper: { _ in })
+        let claim = try #require(GeneralPasteboardWriteClaim(changeCount: 11))
+        let result = try await service.hotkey(
+            keys: "command+v", holdDuration: 50,
+            automationTarget: self.heldHotkeyTarget(generation: 742),
+            clipboardClaim: claim)
+        #expect(events == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
+        #expect(result.outcome?.dispatchState.unitCount?.rawValue == 4)
+        #expect(result.outcome?.state == .dispatchedUnverified)
+    }
+
+    @Test(arguments: ["cmd,c", "cmd,shift,v", "v"])
+    func `clipboard claims do not authorize another chord`(_ keys: String) async throws {
+        var events = 0
+        var clipboardReads = 0
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in events += 1 },
+            processStartIdentityProvider: { _ in 743 },
+            clipboardChangeCountProvider: { clipboardReads += 1; return 11 })
+        let claim = try #require(GeneralPasteboardWriteClaim(changeCount: 11))
+        await #expect(throws: DesktopActionFailure.self) {
+            try await service.hotkey(
+                keys: keys, holdDuration: 50,
+                automationTarget: self.heldHotkeyTarget(generation: 743),
+                clipboardClaim: claim)
+        }
+        #expect(events == 0)
+        #expect(clipboardReads == 0)
+    }
+
+    @Test(arguments: [(exact: false, hold: 0), (exact: false, hold: 50), (exact: true, hold: 0)])
+    func `clipboard claims require exact targeting and a held chord`(input: (exact: Bool, hold: Int)) async throws {
+        var events = 0
+        var clipboardReads = 0
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in events += 1 },
+            processStartIdentityProvider: { _ in 744 },
+            clipboardChangeCountProvider: { clipboardReads += 1; return 11 })
+        let target: UIAutomationTarget = try input.exact
+            ? self.heldHotkeyTarget(generation: 744)
+            : .process(.init(processIdentifier: getpid()))
+        let claim = try #require(GeneralPasteboardWriteClaim(changeCount: 11))
+        await #expect(throws: DesktopActionFailure.self) {
+            try await service.hotkey(
+                keys: "cmd,v", holdDuration: input.hold, automationTarget: target, clipboardClaim: claim)
+        }
+        #expect(events == 0)
+        #expect(clipboardReads == 0)
+    }
+
+    @Test func `targeted hotkey planner accepts one primary key with modifiers`() throws {
+        let service = HotkeyService()
+
+        let plan = try service.targetedHotkeyPlanForTesting(["command", "shift", "p"])
+
+        #expect(plan.primaryKey == "p")
+        #expect(plan.keyCode == 0x23)
+        #expect(plan.flags.contains(.maskCommand))
+        #expect(plan.flags.contains(.maskShift))
+    }
+
+    @Test func `targeted hotkey planner rejects modifier-only input`() throws {
+        let service = HotkeyService()
+
+        #expect(throws: PeekabooError.self) {
+            _ = try service.targetedHotkeyPlanForTesting(["cmd", "shift"])
+        }
+    }
+
+    @Test func `targeted hotkey planner rejects multiple primary keys`() throws {
+        let service = HotkeyService()
+
+        #expect(throws: PeekabooError.self) {
+            _ = try service.targetedHotkeyPlanForTesting(["cmd", "k", "c"])
+        }
+    }
+
+    @Test func `targeted hotkey planner accepts foreground modifier aliases`() throws {
+        let service = HotkeyService()
+
+        let plan = try service.targetedHotkeyPlanForTesting(["function", "f1"])
+
+        #expect(plan.primaryKey == "f1")
+        #expect(plan.keyCode == 0x7A)
+        #expect(plan.flags.contains(.maskSecondaryFn))
+    }
+
+    @Test func `targeted hotkey planner accepts AXorcist key aliases`() throws {
+        let service = HotkeyService()
+
+        let targetedPlan = try service.targetedHotkeyPlanForTesting(["cmd", "arrow_up"])
+
+        #expect(targetedPlan.primaryKey == "up")
+        #expect(targetedPlan.keyCode == 0x7E)
+        #expect(targetedPlan.flags.contains(.maskCommand))
+    }
+
+    @Test func `targeted hotkey planner accepts documented punctuation key names`() throws {
+        let service = HotkeyService()
+
+        let commaPlan = try service.targetedHotkeyPlanForTesting(["cmd", "comma"])
+        let slashPlan = try service.targetedHotkeyPlanForTesting(["cmd", "slash"])
+
+        #expect(commaPlan.primaryKey == "comma")
+        #expect(commaPlan.keyCode == 0x2B)
+        #expect(slashPlan.primaryKey == "slash")
+        #expect(slashPlan.keyCode == 0x2C)
+    }
+
+    @Test func `layout characters resolve through the current layout`() throws {
+        // AZERTY puts "a" on the ANSI Q key and "," on the ANSI M key.
+        let azerty = Self.layout([0x0C: "a", 0x2E: ",", 0x2B: ";"], shifted: [0x2B: "."])
+
+        let a = try HotkeyService.HotkeyChord(keys: ["cmd", "char:61"], layout: azerty).plan
+        let comma = try HotkeyService.HotkeyChord(keys: ["char:2c"], layout: azerty).plan
+
+        #expect(a.primaryKey == "a")
+        #expect(a.keyCode == 0x0C)
+        #expect(a.modifierFlags == .maskCommand)
+        #expect(comma.primaryKey == ",")
+        #expect(comma.keyCode == 0x2E)
+    }
+
+    @Test func `layout characters keep named-key policies`() throws {
+        let qwerty = Self.layout([0x0D: "w", 0x09: "v"])
+
+        let plan = try HotkeyService.HotkeyChord(keys: ["cmd", "char:76"], layout: qwerty).plan
+
+        #expect(HotkeyService.isPasteShortcut(primaryKey: plan.primaryKey, flags: plan.modifierFlags))
+    }
+
+    @Test func `layout characters use the command layout while command is held`() throws {
+        // "Dvorak - QWERTY ⌘" types Dvorak keys until Command selects QWERTY positions.
+        let layout = HotkeyService.KeyboardLayoutTranslator { keyCode, modifiers in
+            switch (keyCode, modifiers & UInt32(cmdKey) != 0) {
+            case (0x2F, false): "v"
+            case (0x09, true): "v"
+            default: nil
+            }
+        }
+
+        let plain = try HotkeyService.HotkeyChord(keys: ["char:76"], layout: layout).plan
+        let command = try HotkeyService.HotkeyChord(keys: ["cmd", "char:76"], layout: layout).plan
+
+        #expect(plain.keyCode == 0x2F)
+        #expect(command.keyCode == 0x09)
+    }
+
+    @Test func `layout characters that need shift refuse with the unmodified key`() throws {
+        let qwerty = Self.layout([0x2C: "/"], shifted: [0x2C: "?"])
+
+        do {
+            _ = try HotkeyService.HotkeyChord(keys: ["cmd", "char:3f"], layout: qwerty)
+            Issue.record("A shifted character must not add Shift implicitly")
+        } catch let failure as DesktopActionFailure {
+            #expect(!failure.outcome.dispatchState.mutationDispatched)
+            #expect(failure.message.contains("needs Shift with the key that types \"/\""))
+        }
+    }
+
+    @Test func `layout characters refuse missing keys and skip the keypad`() throws {
+        let layout = Self.layout([0x41: ".", 0x52: "0"])
+
+        #expect(throws: DesktopActionFailure.self) {
+            _ = try HotkeyService.HotkeyChord(keys: ["char:2e"], layout: layout)
+        }
+        #expect(throws: DesktopActionFailure.self) {
+            _ = try HotkeyService.HotkeyChord(keys: ["char:2e"], layout: nil)
+        }
+        let decimal = try HotkeyService.HotkeyChord(keys: ["keypaddecimal"], layout: layout).plan
+        #expect(decimal.keyCode == 0x41)
+    }
+
+    @Test func `layout character names accept one printable scalar`() {
+        #expect(HotkeyService.LayoutCharacter("char:2c")?.character == ",")
+        #expect(HotkeyService.LayoutCharacter("char:e9")?.character == "é")
+        for name in ["char:", "char:a", "char:20", "char:7f", "char:+2c", "char:1234567", "char:zz", "comma"] {
+            #expect(HotkeyService.LayoutCharacter(name) == nil, "\(name)")
+        }
+    }
+
+    @Test func `targeted hotkey planner accepts extended function and keypad keys`() throws {
+        let service = HotkeyService()
+
+        #expect(try service.targetedHotkeyPlanForTesting(["f13"]).keyCode == 0x69)
+        #expect(try service.targetedHotkeyPlanForTesting(["f20"]).keyCode == 0x5A)
+        #expect(try service.targetedHotkeyPlanForTesting(["keypadenter"]).keyCode == 0x4C)
+        #expect(try service.targetedHotkeyPlanForTesting(["keypad9"]).keyCode == 0x5C)
+    }
+
+    private static func layout(
+        _ plain: [CGKeyCode: String], shifted: [CGKeyCode: String] = [:]) -> HotkeyService.KeyboardLayoutTranslator
+    {
+        HotkeyService.KeyboardLayoutTranslator { keyCode, modifiers in
+            modifiers & UInt32(shiftKey) != 0 ? shifted[keyCode] : plain[keyCode]
+        }
+    }
+
+    @Test func `targeted hotkey planner normalizes foreground key aliases`() throws {
+        let service = HotkeyService()
+
+        let returnPlan = try service.targetedHotkeyPlanForTesting(["enter"])
+        #expect(returnPlan.primaryKey == "return")
+        #expect(returnPlan.keyCode == 0x24)
+
+        for name in ["delete", "Delete", "backspace", "del"] {
+            let plan = try service.targetedHotkeyPlanForTesting([name])
+            #expect(plan.primaryKey == "delete")
+            #expect(plan.keyCode == 0x33)
+        }
+        for name in ["forwarddelete", "forward_delete"] {
+            let plan = try service.targetedHotkeyPlanForTesting([name])
+            #expect(plan.primaryKey == "forwarddelete")
+            #expect(plan.keyCode == 0x75)
+        }
+    }
+
+    @Test func `background text insertion replaces selected UTF16 range`() {
+        let edit = BackgroundInputDriver.textByReplacingSelection(
+            in: "prefix suffix",
+            selection: CFRange(location: 7, length: 6),
+            replacement: "value")
+
+        #expect(edit.text == "prefix value")
+        #expect(edit.cursorLocation == 12)
+    }
+
+    @Test func `background text insertion handles emoji UTF16 offsets`() {
+        let edit = BackgroundInputDriver.textByReplacingSelection(
+            in: "a😀c",
+            selection: CFRange(location: 1, length: 2),
+            replacement: "b")
+
+        #expect(edit.text == "abc")
+        #expect(edit.cursorLocation == 2)
+    }
+
+    @Test func `background text insertion appends when selection is unavailable`() {
+        let edit = BackgroundInputDriver.textByReplacingSelection(
+            in: "base",
+            selection: nil,
+            replacement: " tail")
+
+        #expect(edit.text == "base tail")
+        #expect(edit.cursorLocation == 9)
+    }
+
+    @Test func `background text cursor movement respects UTF16 character boundaries`() {
+        let text = "a😀c"
+
+        #expect(BackgroundInputDriver.cursorLocationMovingLeft(
+            from: CFRange(location: 3, length: 0),
+            in: text) == 1)
+        #expect(BackgroundInputDriver.cursorLocationMovingRight(
+            from: CFRange(location: 1, length: 0),
+            in: text) == 3)
+        #expect(BackgroundInputDriver.cursorLocationMovingLeft(
+            from: CFRange(location: 1, length: 2),
+            in: text) == 1)
+        #expect(BackgroundInputDriver.cursorLocationMovingRight(
+            from: CFRange(location: 1, length: 2),
+            in: text) == 3)
+    }
+
+    @Test func `foreground hotkey parser trims and normalizes aliases before AXorcist delivery`() throws {
+        let service = HotkeyService()
+
+        let keys = try service.parsedKeysForTesting(" meta, SPACEBAR , backspace, cmdOrCtrl, del ")
+
+        #expect(keys == ["cmd", "space", "delete", "cmd", "delete"])
+    }
+
+    @Test func `hold duration conversion rejects overflow before posting events`() throws {
+        #expect(throws: PeekabooError.self) {
+            _ = try HotkeyService.holdNanosecondsForTesting(Int.max)
+        }
+    }
+
+    @Test func `targeted hotkey reports event synthesizing permission failures`() async throws {
+        let service = HotkeyService(postEventAccessEvaluator: { false })
+
+        do {
+            try await service.hotkey(
+                keys: "cmd,l",
+                holdDuration: 50,
+                targetProcessIdentifier: getpid())
+            Issue.record("Expected event-synthesizing permission error")
+        } catch PeekabooError.permissionDeniedEventSynthesizing {
+            // Expected.
+        } catch {
+            Issue.record("Expected event-synthesizing permission error, got \(error)")
+        }
+    }
+
+    @Test func `generation pinned hotkey validates its receipt without an external validator`() async throws {
+        var postedEventCount = 0
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in postedEventCount += 1 },
+            processStartIdentityProvider: { _ in 12 })
+
+        await #expect(throws: PeekabooError.self) {
+            try await service.hotkey(
+                keys: "cmd,l",
+                holdDuration: 0,
+                targetProcessIdentifier: getpid(),
+                expectedProcessIdentity: ApplicationProcessIdentity(
+                    processIdentifier: getpid(),
+                    processStartIdentity: 11))
+        }
+        #expect(postedEventCount == 0)
+    }
+
+    @Test func `targeted lifecycle hotkeys fail before posting unverifiable events`() async throws {
+        var postedEventCount = 0
+        let service = HotkeyService(
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in postedEventCount += 1 })
+        let cases = [
+            (keys: "command+w", chord: "Cmd+W", alternative: "peekaboo window close"),
+            (keys: "CMD,Q", chord: "Cmd+Q", alternative: "peekaboo app quit"),
+            (keys: "cmd h", chord: "Cmd+H", alternative: "peekaboo app hide"),
+            (keys: "cmd,m", chord: "Cmd+M", alternative: "peekaboo window minimize"),
+        ]
+
+        for testCase in cases {
+            do {
+                try await service.hotkey(
+                    keys: testCase.keys,
+                    holdDuration: 0,
+                    targetProcessIdentifier: getpid())
+                Issue.record("Expected background \(testCase.chord) to fail closed")
+            } catch {
+                #expect(error.localizedDescription.contains(testCase.chord))
+                #expect(error.localizedDescription.contains(testCase.alternative))
+                #expect(error.localizedDescription.contains("--foreground"))
+            }
+        }
+
+        #expect(postedEventCount == 0)
+    }
+
+    @Test func `targeted policy does not mistake modified app shortcuts for lifecycle commands`() async throws {
+        var postedEvents: [CGEventType] = []
+        let service = HotkeyService(
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in postedEvents.append(event.type) })
+
+        try await service.hotkey(
+            keys: "cmd,shift,h",
+            holdDuration: 0,
+            targetProcessIdentifier: getpid())
+
+        #expect(postedEvents == [.flagsChanged, .flagsChanged, .keyDown, .keyUp, .flagsChanged, .flagsChanged])
+    }
+
+    @Test func `targeted hotkey posts key down and key up to target process`() async throws {
+        var postedEvents: [PostedKeyboardEvent] = []
+        let service = HotkeyService(
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, pid in
+                postedEvents.append(PostedKeyboardEvent(
+                    type: event.type,
+                    keyCode: event.getIntegerValueField(.keyboardEventKeycode),
+                    flags: event.flags,
+                    targetPID: event.getIntegerValueField(.eventTargetUnixProcessID),
+                    pid: pid))
+            })
+
+        try await service.hotkey(keys: "cmd,shift,l", holdDuration: 0, targetProcessIdentifier: getpid())
+
+        #expect(postedEvents.count == 6)
+        #expect(postedEvents.map(\.type) == [
+            .flagsChanged,
+            .flagsChanged,
+            .keyDown,
+            .keyUp,
+            .flagsChanged,
+            .flagsChanged,
+        ])
+        #expect(postedEvents.map(\.keyCode) == [0x37, 0x38, 0x25, 0x25, 0x38, 0x37])
+        #expect(postedEvents[0].flags.contains(.maskCommand))
+        #expect(postedEvents[1].flags.contains(.maskCommand) && postedEvents[1].flags.contains(.maskShift))
+        #expect(postedEvents[2].flags.contains(.maskCommand) && postedEvents[2].flags.contains(.maskShift))
+        #expect(postedEvents[3].flags.contains(.maskCommand) && postedEvents[3].flags.contains(.maskShift))
+        #expect(postedEvents[4].flags.contains(.maskCommand) && !postedEvents[4].flags.contains(.maskShift))
+        #expect(!postedEvents[5].flags.contains(.maskCommand) && !postedEvents[5].flags.contains(.maskShift))
+        #expect(postedEvents.allSatisfy { $0.targetPID == Int64(getpid()) })
+        #expect(postedEvents.allSatisfy { $0.pid == getpid() })
+    }
+
+    @Test func `exact window held hotkey reports cleanup units`() async throws {
+        var postedEvents: [CGEventType] = []
+        let identity = ApplicationProcessIdentity(
+            processIdentifier: getpid(),
+            processStartIdentity: 700)
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in postedEvents.append(event.type) },
+            processStartIdentityProvider: { _ in 700 },
+            holdSleeper: { _ in })
+        let target = try UIAutomationTarget.exactWindow(.init(
+            identity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: identity.processIdentifier,
+                ownerProcessStartIdentity: identity.processStartIdentity),
+            bounds: CGRect(x: 0, y: 0, width: 100, height: 100)))
+
+        let result = try await service.hotkey(
+            keys: "cmd,l",
+            holdDuration: 50,
+            automationTarget: target).payload
+
+        #expect(postedEvents == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
+        #expect(result.outcome.dispatchState.unitCount?.rawValue == 4)
+        #expect(result.outcome.delivery == .init(mechanism: .windowTargetedEvents, mode: .background))
+    }
+
+    @Test func `cancelling exact window hold releases only to original generation and counts cleanup`() async throws {
+        var postedEvents: [CGEventType] = []
+        let target = try self.heldHotkeyTarget(generation: 701)
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in postedEvents.append(event.type) },
+            processStartIdentityProvider: { _ in 701 },
+            holdSleeper: { _ in try await Task.sleep(for: .seconds(30)) })
+        let task = Task { @MainActor in
+            try await service.hotkey(
+                keys: "cmd,l",
+                holdDuration: 30000,
+                automationTarget: target)
+        }
+        while postedEvents.count < 2 {
+            await Task.yield()
+        }
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            Issue.record("Expected held hotkey cancellation to be retry-unsafe")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.emittedUnitCount == 4)
+            #expect(error.causeDescription?.contains("released to the original process generation") == true)
+        }
+        #expect(postedEvents == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
+    }
+
+    @Test func `recycled PID receives no held hotkey cleanup`() async throws {
+        var postedEvents: [CGEventType] = []
+        let generation = OSAllocatedUnfairLock<UInt64?>(initialState: 702)
+        let target = try self.heldHotkeyTarget(generation: 702)
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in
+                postedEvents.append(event.type)
+                if event.type == .keyDown {
+                    generation.withLock { $0 = 703 }
+                }
+            },
+            processStartIdentityProvider: { _ in generation.withLock { $0 } },
+            holdSleeper: { _ in throw CancellationError() })
+
+        do {
+            _ = try await service.hotkey(
+                keys: "cmd,l",
+                holdDuration: 50,
+                automationTarget: target)
+            Issue.record("Expected recycled PID cleanup refusal")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.emittedUnitCount == 2)
+            #expect(error.causeDescription?.contains("recycled PID") == true)
+        }
+        #expect(postedEvents == [.flagsChanged, .keyDown])
+    }
+
+    @Test func `PID recycle between held modifier downs blocks later modifier and cleanup`() async throws {
+        var delayCount = 0
+        var postedEvents: [(type: CGEventType, keyCode: Int64)] = []
+        let generation = OSAllocatedUnfairLock<UInt64?>(initialState: 706)
+        let target = try self.heldHotkeyTarget(generation: 706)
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in
+                postedEvents.append((
+                    event.type,
+                    event.getIntegerValueField(.keyboardEventKeycode)))
+            },
+            processStartIdentityProvider: { _ in generation.withLock { $0 } },
+            holdSleeper: { _ in },
+            heldInterEventDelay: {
+                delayCount += 1
+                if delayCount == 1 {
+                    generation.withLock { $0 = 707 }
+                }
+            })
+
+        do {
+            _ = try await service.hotkey(
+                keys: "cmd,shift,l",
+                holdDuration: 50,
+                automationTarget: target)
+            Issue.record("Expected modifier-down generation drift")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.emittedUnitCount == 1)
+            #expect(error.causeDescription?.contains("recycled PID") == true)
+        }
+
+        #expect(postedEvents.map(\.type) == [.flagsChanged])
+        #expect(postedEvents.map(\.keyCode) == [0x37])
+    }
+
+    @Test func `PID recycle during held release delay blocks modifier release`() async throws {
+        var delayCount = 0
+        var postedEvents: [(type: CGEventType, keyCode: Int64)] = []
+        let generation = OSAllocatedUnfairLock<UInt64?>(initialState: 708)
+        let target = try self.heldHotkeyTarget(generation: 708)
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in
+                postedEvents.append((
+                    event.type,
+                    event.getIntegerValueField(.keyboardEventKeycode)))
+            },
+            processStartIdentityProvider: { _ in generation.withLock { $0 } },
+            holdSleeper: { _ in },
+            heldInterEventDelay: {
+                delayCount += 1
+                if delayCount == 3 {
+                    generation.withLock { $0 = 709 }
+                }
+            })
+
+        do {
+            _ = try await service.hotkey(
+                keys: "cmd,shift,l",
+                holdDuration: 50,
+                automationTarget: target)
+            Issue.record("Expected modifier-release generation drift")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.emittedUnitCount == 4)
+            #expect(error.causeDescription?.contains("recycled PID") == true)
+        }
+
+        #expect(postedEvents.map(\.type) == [.flagsChanged, .flagsChanged, .keyDown, .keyUp])
+        #expect(postedEvents.map(\.keyCode) == [0x37, 0x38, 0x25, 0x25])
+    }
+
+    @Test(arguments: [0, 50])
+    func `generation drift during cleanup counts completed key up and stops modifier cleanup`(
+        holdDuration: Int) async throws
+    {
+        var postedEvents: [CGEventType] = []
+        let generation = OSAllocatedUnfairLock<UInt64?>(initialState: 704)
+        let target = try self.heldHotkeyTarget(generation: 704)
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in
+                postedEvents.append(event.type)
+                if event.type == .keyUp {
+                    generation.withLock { $0 = 705 }
+                }
+            },
+            processStartIdentityProvider: { _ in generation.withLock { $0 } },
+            holdSleeper: { _ in })
+
+        do {
+            _ = try await service.hotkey(
+                keys: "cmd,l",
+                holdDuration: holdDuration,
+                automationTarget: target)
+            Issue.record("Expected cleanup generation drift")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.emittedUnitCount == 3)
+            #expect(!error.retrySafe)
+        }
+        #expect(postedEvents == [.flagsChanged, .keyDown, .keyUp])
+    }
+
+    @Test func `exact window validator failure before modifiers posts no events`() async throws {
+        var validationCount = 0
+        var postedEventCount = 0
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in postedEventCount += 1 },
+            processStartIdentityProvider: { _ in 711 })
+
+        do {
+            try await service.hotkey(
+                keys: "cmd,shift,l",
+                holdDuration: 0,
+                automationTarget: self.heldHotkeyTarget(generation: 711),
+                deliveryValidator: {
+                    validationCount += 1
+                    if validationCount == 2 {
+                        throw HotkeyDeliveryTestError.focusChanged
+                    }
+                })
+            Issue.record("Expected exact-window validation to fail")
+        } catch HotkeyDeliveryTestError.focusChanged {
+            // Expected.
+        } catch {
+            Issue.record("Expected focus-changed error, got \(error)")
+        }
+
+        #expect(validationCount == 2)
+        #expect(postedEventCount == 0)
+    }
+
+    @Test func `exact window focus change blocks primary hotkey event`() async {
+        let events = await self.targetedFocusChangeEvents()
+        let primaryEvents = events.filter { event in
+            event.type == .keyDown || event.type == .keyUp
+        }
+
+        #expect(primaryEvents.isEmpty)
+    }
+
+    @Test func `exact window focus change releases every pressed modifier`() async {
+        let events = await self.targetedFocusChangeEvents()
+
+        #expect(events.map(\.type) == [.flagsChanged, .flagsChanged, .flagsChanged, .flagsChanged])
+        #expect(events.map(\.keyCode) == [0x37, 0x38, 0x38, 0x37])
+    }
+
+    @Test(arguments: [0, 50], [3, 6])
+    func `chord that changes focus after full delivery is dispatched-unverified`(
+        holdDuration: Int,
+        driftAfterEvent: Int) async throws
+    {
+        var destinationIsValid = true
+        var validationCount = 0
+        var postedEvents: [CGEventType] = []
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in
+                postedEvents.append(event.type)
+                if postedEvents.count == driftAfterEvent {
+                    destinationIsValid = false
+                }
+            },
+            processStartIdentityProvider: { _ in 710 },
+            holdSleeper: { _ in })
+
+        let result = try await service.hotkey(
+            keys: "cmd,shift,l",
+            holdDuration: holdDuration,
+            automationTarget: self.heldHotkeyTarget(generation: 710),
+            deliveryValidator: {
+                validationCount += 1
+                guard destinationIsValid else {
+                    throw HotkeyDeliveryTestError.focusChanged
+                }
+            }).payload
+
+        #expect(validationCount == 4)
+        #expect(!destinationIsValid)
+        #expect(result.outcome.state == .dispatchedUnverified)
+        #expect(result.outcome.delivery == .init(mechanism: .windowTargetedEvents, mode: .background))
+        #expect(postedEvents == [
+            .flagsChanged,
+            .flagsChanged,
+            .keyDown,
+            .keyUp,
+            .flagsChanged,
+            .flagsChanged,
+        ])
+    }
+
+    @Test func `process liveness check rejects stale pids`() {
+        #expect(HotkeyService.isProcessAliveForTesting(getpid()))
+        #expect(!HotkeyService.isProcessAliveForTesting(pid_t(Int32.max)))
+    }
+
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly])
+    func `process hotkey uses action driver when menu shortcut resolves`(_ strategy: UIInputStrategy) async throws {
+        var postedEvents: [(type: CGEventType, keyCode: Int64)] = []
+        let driver = RecordingHotkeyActionDriver(
+            result: AutomationTestFixtures.uiActionReceipt(actionName: "AXPress"))
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: strategy),
+            actionInputDriver: driver,
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in
+                postedEvents.append((event.type, event.getIntegerValueField(.keyboardEventKeycode)))
+            },
+            runningApplicationResolver: { _ in NSRunningApplication.current })
+
+        try await service.hotkey(keys: "cmd,s", holdDuration: 0, targetProcessIdentifier: getpid())
+
+        #expect(driver.hotkeyCalls == [["cmd", "s"]])
+        #expect(postedEvents.isEmpty)
+    }
+
+    @Test func `action first targeted hotkey falls back to synth when menu shortcut is unavailable`() async throws {
+        var postedEvents: [(type: CGEventType, keyCode: Int64)] = []
+        let driver = RecordingHotkeyActionDriver(error: .unsupported(.menuShortcutUnavailable))
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
+            actionInputDriver: driver,
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in
+                postedEvents.append((event.type, event.getIntegerValueField(.keyboardEventKeycode)))
+            },
+            runningApplicationResolver: { _ in NSRunningApplication.current })
+
+        try await service.hotkey(keys: "cmd,s", holdDuration: 0, targetProcessIdentifier: getpid())
+
+        #expect(driver.hotkeyCalls == [["cmd", "s"]])
+        #expect(postedEvents.map(\.type) == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
+        #expect(postedEvents.map(\.keyCode) == [0x37, 0x01, 0x01, 0x37])
+    }
+
+    @Test(arguments: [ActionInputError.targetUnavailable, .permissionDenied, .staleElement])
+    func `action first does not synthesize after unreadable menu metadata`(_ error: ActionInputError) async {
+        var postedEventCount = 0
+        let driver = RecordingHotkeyActionDriver(error: error)
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
+            actionInputDriver: driver,
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in postedEventCount += 1 },
+            runningApplicationResolver: { _ in NSRunningApplication.current })
+
+        await #expect(throws: (any Error).self) {
+            try await service.hotkey(keys: "cmd,s", holdDuration: 0, targetProcessIdentifier: getpid())
+        }
+        #expect(driver.hotkeyCalls == [["cmd", "s"]])
+        #expect(postedEventCount == 0)
+    }
+
+    private func targetedFocusChangeEvents() async -> [PostedKeyboardEvent] {
+        var exactWindowHasFocus = true
+        var postedEvents: [PostedKeyboardEvent] = []
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, pid in
+                postedEvents.append(PostedKeyboardEvent(
+                    type: event.type,
+                    keyCode: event.getIntegerValueField(.keyboardEventKeycode),
+                    flags: event.flags,
+                    targetPID: event.getIntegerValueField(.eventTargetUnixProcessID),
+                    pid: pid))
+                if postedEvents.count == 2 {
+                    exactWindowHasFocus = false
+                }
+            },
+            processStartIdentityProvider: { _ in 712 })
+
+        do {
+            try await service.hotkey(
+                keys: "cmd,shift,l",
+                holdDuration: 0,
+                automationTarget: self.heldHotkeyTarget(generation: 712),
+                deliveryValidator: {
+                    guard exactWindowHasFocus else {
+                        throw HotkeyDeliveryTestError.focusChanged
+                    }
+                })
+            Issue.record("Expected focus change to stop hotkey delivery")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.operation == .hotkey)
+            #expect(error.emittedUnitCount == 4)
+            #expect(error.operationMayHaveCompleted)
+            #expect(!error.retrySafe)
+            #expect(error.causeDescription?.contains("focus changed") == true)
+        } catch {
+            Issue.record("Expected indeterminate delivery error, got \(error)")
+        }
+
+        return postedEvents
+    }
+}
+
+extension HotkeyServiceTargetingTests {
+    @Test(arguments: HotkeySelectionTestPolicies.synthetic, [false, true])
+    func `synthetic select all never takes the focused selection route`(
+        policy: UIInputPolicy, exact: Bool) async throws
+    {
+        let driver = RecordingHotkeyActionDriver()
+        var textCalls = 0
+        var events: [CGEventType] = []
+        var holds: [UInt64] = []
+        let service = HotkeyService(
+            inputPolicy: policy,
+            actionInputDriver: driver,
+            focusedTextHotkey: { _, _, _, _ in textCalls += 1; return true },
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in events.append(event.type) },
+            runningApplicationResolver: { _ in NSRunningApplication.current },
+            processStartIdentityProvider: { _ in 717 },
+            holdSleeper: { holds.append($0) })
+        let target = try exact
+            ? self.heldHotkeyTarget(generation: 717)
+            : .process(.init(processIdentifier: getpid()))
+
+        let execution = try await service.hotkey(keys: "cmd,a", holdDuration: 50, automationTarget: target)
+        let result = execution.payload
+        #expect(execution.targetIdentity?.exactWindow == target.exactWindow)
+        #expect(execution.targetIdentity?.processIdentity == target.processIdentity)
+
+        #expect(textCalls == 0)
+        #expect(driver.hotkeyCalls.isEmpty)
+        #expect(events == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
+        if exact {
+            #expect(holds == [50_000_000])
+        }
+        #expect(result.path == .synth)
+        #expect(result.strategy == (policy.hotkey ?? policy.defaultStrategy))
+        #expect(result.fallbackReason == nil)
+        #expect(result.outcome.delivery == target.keyboardDelivery)
+    }
+
+    @Test(arguments: HotkeySelectionTestPolicies.synthetic, [false, true])
+    func `synthetic select all cannot bypass event permission through AX`(
+        policy: UIInputPolicy, exact: Bool) async throws
+    {
+        let driver = RecordingHotkeyActionDriver()
+        var textCalls = 0
+        var eventCalls = 0
+        let service = HotkeyService(
+            inputPolicy: policy,
+            actionInputDriver: driver,
+            focusedTextHotkey: { _, _, _, _ in textCalls += 1; return true },
+            postEventAccessEvaluator: { false },
+            eventPoster: { _, _ in eventCalls += 1 },
+            runningApplicationResolver: { _ in NSRunningApplication.current },
+            processStartIdentityProvider: { _ in 718 })
+        let target = try exact
+            ? self.heldHotkeyTarget(generation: 718)
+            : .process(.init(processIdentifier: getpid()))
+
+        do {
+            try await service.hotkey(keys: "cmd,a", holdDuration: 50, automationTarget: target)
+            Issue.record("Expected event permission refusal")
+        } catch PeekabooError.permissionDeniedEventSynthesizing {
+            // Expected: a synthetic policy must not substitute an AX write.
+        }
+        #expect(textCalls == 0)
+        #expect(driver.hotkeyCalls.isEmpty)
+        #expect(eventCalls == 0)
+    }
+
+    @Test(arguments: [
+        UIInputPolicy(defaultStrategy: .actionOnly),
+        UIInputPolicy(defaultStrategy: .actionFirst, hotkey: .actionOnly),
+    ], ["cmd,v", "cmd,a"])
+    func `exact action only refuses before menu or keyboard dispatch`(
+        _ policy: UIInputPolicy, keys: String) async throws
+    {
+        let driver = RecordingHotkeyActionDriver()
+        var textCalls = 0
+        var eventCalls = 0
+        var finalized = 0
+        let service = HotkeyService(
+            inputPolicy: policy,
+            actionInputDriver: driver,
+            focusedTextHotkey: { _, _, _, _ in textCalls += 1; return false },
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in eventCalls += 1 },
+            runningApplicationResolver: { _ in NSRunningApplication.current },
+            processStartIdentityProvider: { _ in 713 },
+            operationFinalizer: { finalized += 1 })
+
+        do {
+            try await service.hotkey(
+                keys: keys,
+                holdDuration: 50,
+                automationTarget: self.heldHotkeyTarget(generation: 713))
+            Issue.record("Expected exact-window menu refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == .refused(reason: .operationUnsupported))
+        }
+        #expect(driver.hotkeyCalls.isEmpty)
+        #expect(textCalls == (keys == "cmd,a" ? 1 : 0))
+        #expect(eventCalls == 0)
+        #expect(finalized == 1)
+    }
+
+    @Test(arguments: [
+        UIInputPolicy.currentBehavior,
+        UIInputPolicy(defaultStrategy: .synthFirst),
+        UIInputPolicy(defaultStrategy: .synthOnly),
+        UIInputPolicy(defaultStrategy: .actionFirst),
+        UIInputPolicy(defaultStrategy: .actionOnly, hotkey: .actionFirst),
+    ])
+    func `exact hotkey uses only window event delivery when synthesis is allowed`(
+        _ policy: UIInputPolicy) async throws
+    {
+        let driver = RecordingHotkeyActionDriver()
+        var textCalls = 0
+        var events: [CGEventType] = []
+        let service = HotkeyService(
+            inputPolicy: policy,
+            actionInputDriver: driver,
+            focusedTextHotkey: { _, _, _, _ in textCalls += 1; return false },
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in events.append(event.type) },
+            runningApplicationResolver: { _ in NSRunningApplication.current },
+            processStartIdentityProvider: { _ in 714 },
+            holdSleeper: { _ in })
+
+        let result = try await service.hotkey(
+            keys: "cmd,v",
+            holdDuration: 50,
+            automationTarget: self.heldHotkeyTarget(generation: 714)).payload
+
+        #expect(driver.hotkeyCalls.isEmpty)
+        #expect(textCalls == 0)
+        #expect(events == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
+        #expect(result.path == .synth)
+        #expect(result.strategy == policy.strategy(for: .hotkey))
+        #expect(result.fallbackReason == (result.strategy == .actionFirst ? .actionUnsupported : nil))
+        #expect(result.outcome.delivery == .init(mechanism: .windowTargetedEvents, mode: .background))
+        #expect(result.outcome.dispatchState.unitCount?.rawValue == 4)
+    }
+
+    @Test(arguments: [UIInputStrategy.actionOnly, .actionFirst])
+    func `exact select all retains focused field selection without menu dispatch`(
+        _ strategy: UIInputStrategy) async throws
+    {
+        let driver = RecordingHotkeyActionDriver()
+        var textCalls = 0
+        var eventCalls = 0
+        let target = try self.heldHotkeyTarget(generation: 715)
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: strategy),
+            actionInputDriver: driver,
+            focusedTextHotkey: { key, flags, pid, exactWindow in
+                #expect(key == "a")
+                #expect(flags == .maskCommand)
+                #expect(pid == getpid())
+                #expect(exactWindow == target.exactWindow)
+                textCalls += 1
+                return true
+            },
+            postEventAccessEvaluator: { false },
+            eventPoster: { _, _ in eventCalls += 1 },
+            runningApplicationResolver: { _ in NSRunningApplication.current },
+            processStartIdentityProvider: { _ in 715 })
+
+        let execution = try await service.hotkey(keys: "cmd,a", holdDuration: 50, automationTarget: target)
+        let result = execution.payload
+        #expect(execution.targetIdentity?.exactWindow == target.exactWindow)
+        #expect(execution.targetIdentity?.processIdentity == target.processIdentity)
+
+        #expect(driver.hotkeyCalls.isEmpty)
+        #expect(textCalls == 1)
+        #expect(eventCalls == 0)
+        #expect(result.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
+        #expect(result.outcome.dispatchState.unitCount?.rawValue == 1)
+        #expect(result.strategy == strategy)
+        #expect(result.path == .action)
+        #expect(result.fallbackReason == nil)
+    }
+
+    @Test(arguments: ["builtin", "actionFirst", "actionOnly"], [false, true])
+    func `uncertain selection errors never fall through to menus or events`(
+        selection: String, exact: Bool) async throws
+    {
+        let driver = RecordingHotkeyActionDriver()
+        var textCalls = 0
+        var eventCalls = 0
+        let policy: UIInputPolicy = switch selection {
+        case "actionFirst": .init(defaultStrategy: .actionFirst)
+        case "actionOnly": .init(defaultStrategy: .actionOnly)
+        default: .currentBehavior
+        }
+        let service = HotkeyService(
+            inputPolicy: policy,
+            actionInputDriver: driver,
+            focusedTextHotkey: { _, _, _, _ in
+                textCalls += 1
+                throw InputDeliveryIndeterminateError(
+                    operation: .hotkey,
+                    emittedUnitCount: 1,
+                    causeDescription: "Selection completion is unknown",
+                    delivery: .init(mechanism: .accessibilityValue, mode: .background))
+            },
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in eventCalls += 1 },
+            runningApplicationResolver: { _ in NSRunningApplication.current },
+            processStartIdentityProvider: { _ in 716 })
+
+        let target = try exact
+            ? self.heldHotkeyTarget(generation: 716)
+            : .process(.init(processIdentifier: getpid()))
+        await #expect(throws: InputDeliveryIndeterminateError.self) {
+            try await service.hotkey(
+                keys: "cmd,a",
+                holdDuration: 50,
+                automationTarget: target)
+        }
+        #expect(driver.hotkeyCalls.isEmpty)
+        #expect(textCalls == 1)
+        #expect(eventCalls == 0)
+    }
+
+    @Test(arguments: [false, true])
+    func `default select all keeps focused AX selection without requiring event permission`(exact: Bool) async throws {
+        let driver = RecordingHotkeyActionDriver()
+        var selectionCalls = 0
+        var eventCalls = 0
+        let service = HotkeyService(
+            actionInputDriver: driver,
+            focusedTextHotkey: { _, _, _, _ in selectionCalls += 1; return true },
+            postEventAccessEvaluator: { false },
+            eventPoster: { _, _ in eventCalls += 1 },
+            runningApplicationResolver: { _ in NSRunningApplication.current },
+            processStartIdentityProvider: { _ in 719 })
+        let target = try exact
+            ? self.heldHotkeyTarget(generation: 719)
+            : .process(.init(processIdentifier: getpid()))
+
+        let result = try await service.hotkey(keys: "cmd,a", holdDuration: 50, automationTarget: target).payload
+
+        #expect(selectionCalls == 1)
+        #expect(driver.hotkeyCalls.isEmpty)
+        #expect(eventCalls == 0)
+        #expect(result.path == .action)
+        #expect(result.strategy == .actionFirst)
+        #expect(result.fallbackReason == nil)
+        #expect(result.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
+        #expect(result.outcome.dispatchState.unitCount?.rawValue == 1)
+    }
+
+    @Test(arguments: ["builtin", "actionFirst", "actionOnly"], [false, true])
+    func `unsupported selection preserves the default event fallback and explicit process menus`(
+        selection: String, exact: Bool) async throws
+    {
+        let policy: UIInputPolicy = switch selection {
+        case "actionFirst": .init(defaultStrategy: .actionFirst)
+        case "actionOnly": .init(defaultStrategy: .actionOnly)
+        default: .currentBehavior
+        }
+        let driver = RecordingHotkeyActionDriver()
+        var selectionCalls = 0
+        var events: [CGEventType] = []
+        let service = HotkeyService(
+            inputPolicy: policy,
+            actionInputDriver: driver,
+            focusedTextHotkey: { _, _, _, _ in selectionCalls += 1; return false },
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in events.append(event.type) },
+            runningApplicationResolver: { _ in NSRunningApplication.current },
+            processStartIdentityProvider: { _ in 720 },
+            holdSleeper: { _ in })
+        let target = try exact
+            ? self.heldHotkeyTarget(generation: 720)
+            : .process(.init(processIdentifier: getpid()))
+        let expectsRefusal = exact && selection == "actionOnly"
+        let expectsMenu = !exact && selection != "builtin"
+
+        do {
+            let result = try await service.hotkey(keys: "cmd,a", holdDuration: 50, automationTarget: target).payload
+            #expect(!expectsRefusal)
+            #expect(result.path == (expectsMenu ? .action : .synth))
+            #expect(result.strategy == (selection == "actionOnly" ? .actionOnly : .actionFirst))
+            #expect(result.fallbackReason == (expectsMenu ? nil : .actionUnsupported))
+        } catch let failure as DesktopActionFailure {
+            #expect(expectsRefusal)
+            #expect(failure.outcome == .refused(reason: .operationUnsupported))
+        }
+        #expect(selectionCalls == 1)
+        #expect(driver.hotkeyCalls == (expectsMenu ? [["cmd", "a"]] : []))
+        #expect(events == (expectsMenu || expectsRefusal ? [] : [.flagsChanged, .keyDown, .keyUp, .flagsChanged]))
+    }
+
+    @Test(arguments: [UIInputStrategy.synthOnly, .actionOnly])
+    func `resolved application policy owns select all routing`(_ strategy: UIInputStrategy) async throws {
+        let application = HotkeyPolicyApplication()
+        let policy = UIInputPolicy.applicationDefaults(
+            resolving: .init(hotkey: strategy == .synthOnly ? .actionOnly : .synthOnly),
+            perApp: ["com.example.hotkey-policy": .init(hotkey: strategy)])
+        let driver = RecordingHotkeyActionDriver()
+        var selectionCalls = 0
+        var events: [CGEventType] = []
+        let service = HotkeyService(
+            inputPolicy: policy,
+            actionInputDriver: driver,
+            focusedTextHotkey: { _, _, _, _ in selectionCalls += 1; return true },
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in events.append(event.type) },
+            runningApplicationResolver: { _ in application },
+            processStartIdentityProvider: { _ in 722 },
+            holdSleeper: { _ in })
+
+        let result = try await service.hotkey(
+            keys: "cmd,a", holdDuration: 50, automationTarget: self.heldHotkeyTarget(generation: 722)).payload
+
+        #expect(result.strategy == strategy)
+        #expect(result.path == (strategy == .synthOnly ? .synth : .action))
+        #expect(result.fallbackReason == nil)
+        #expect(selectionCalls == (strategy == .synthOnly ? 0 : 1))
+        #expect(driver.hotkeyCalls.isEmpty)
+        #expect(events == (strategy == .synthOnly ? [.flagsChanged, .keyDown, .keyUp, .flagsChanged] : []))
+    }
+
+    @Test func `default foreground select all remains synthetic`() async throws {
+        let driver = RecordingHotkeyActionDriver()
+        var selectionCalls = 0
+        var events: [CGEventType] = []
+        let service = HotkeyService(
+            actionInputDriver: driver,
+            focusedTextHotkey: { _, _, _, _ in selectionCalls += 1; return true },
+            foregroundEventPoster: { events.append($0.type) },
+            frontmostApplicationResolver: { NSRunningApplication.current },
+            holdSleeper: { _ in })
+
+        let result = try await service.hotkey(keys: "cmd,a", holdDuration: 50)
+
+        #expect(selectionCalls == 0)
+        #expect(driver.hotkeyCalls.isEmpty)
+        #expect(events == [.keyDown, .keyUp])
+        #expect(result.strategy == .synthFirst)
+        #expect(result.path == .synth)
+        #expect(result.fallbackReason == nil)
+        #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+    }
+
+    @Test(arguments: [UIInputStrategy.actionFirst, .actionOnly])
+    func `unsupported process selection and menu obey the explicit action strategy`(
+        _ strategy: UIInputStrategy) async throws
+    {
+        let driver = RecordingHotkeyActionDriver(error: .unsupported(.actionUnsupported))
+        var selectionCalls = 0
+        var events: [CGEventType] = []
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: strategy),
+            actionInputDriver: driver,
+            focusedTextHotkey: { _, _, _, _ in selectionCalls += 1; return false },
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in events.append(event.type) },
+            runningApplicationResolver: { _ in NSRunningApplication.current },
+            processStartIdentityProvider: { _ in 721 },
+            holdSleeper: { _ in })
+
+        do {
+            let result = try await service.hotkey(keys: "cmd,a", holdDuration: 50, targetProcessIdentifier: getpid())
+            #expect(strategy == .actionFirst)
+            #expect(result.strategy == strategy)
+            #expect(result.path == .synth)
+            #expect(result.fallbackReason == .actionUnsupported)
+        } catch let error as ActionInputError {
+            #expect(strategy == .actionOnly)
+            #expect(error == .unsupported(.actionUnsupported))
+        }
+        #expect(selectionCalls == 1)
+        #expect(driver.hotkeyCalls == [["cmd", "a"]])
+        #expect(events == (strategy == .actionFirst ? [.flagsChanged, .keyDown, .keyUp, .flagsChanged] : []))
+    }
+
+    private func heldHotkeyTarget(generation: UInt64) throws -> UIAutomationTarget {
+        try .exactWindow(.init(
+            identity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: getpid(),
+                ownerProcessStartIdentity: generation),
+            bounds: CGRect(x: 0, y: 0, width: 100, height: 100)))
+    }
+
+    @Test(arguments: [false, true])
+    func `post action validation retains the accepted action delivery`(menu: Bool) async throws {
+        var validations = 0
+        var eventCalls = 0
+        let driver = RecordingHotkeyActionDriver()
+        let service = HotkeyService(
+            inputPolicy: menu ? UIInputPolicy(defaultStrategy: .actionOnly) : .currentBehavior,
+            actionInputDriver: driver,
+            focusedTextHotkey: { _, _, _, _ in true },
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in eventCalls += 1 },
+            runningApplicationResolver: { _ in NSRunningApplication.current })
+
+        do {
+            try await service.hotkey(
+                keys: menu ? "cmd,v" : "cmd,a",
+                holdDuration: 50,
+                targetProcessIdentifier: getpid(),
+                deliveryValidator: {
+                    validations += 1
+                    if validations > 1 {
+                        throw HotkeyDeliveryTestError.focusChanged
+                    }
+                })
+            Issue.record("Expected post-action validation failure")
+        } catch let failure as InputDeliveryIndeterminateError {
+            #expect(failure.delivery == .init(
+                mechanism: menu ? .accessibilityAction : .accessibilityValue,
+                mode: .background))
+            #expect(failure.emittedUnitCount == 1)
+            #expect(!failure.retrySafe)
+        }
+        #expect(validations == 2)
+        #expect(eventCalls == 0)
+        #expect(driver.hotkeyCalls.count == (menu ? 1 : 0))
+    }
+}
+
+private final class HotkeyPolicyApplication: NSRunningApplication, @unchecked Sendable {
+    override var bundleIdentifier: String? {
+        "com.example.hotkey-policy"
+    }
+}
+
+private enum HotkeySelectionTestPolicies {
+    static let synthetic: [UIInputPolicy] = [
+        .init(defaultStrategy: .synthFirst),
+        .init(defaultStrategy: .synthOnly),
+        .init(defaultStrategy: .actionOnly, hotkey: .synthFirst),
+        .init(defaultStrategy: .actionOnly, hotkey: .synthOnly),
+        .applicationDefaults(resolving: AppUIInputPolicy(hotkey: .synthFirst)),
+        .applicationDefaults(resolving: AppUIInputPolicy(hotkey: .synthOnly)),
+    ]
+}
+
+private enum HotkeyDeliveryTestError: LocalizedError {
+    case focusChanged
+
+    var errorDescription: String? {
+        "focus changed"
+    }
+}
+
+private struct PostedKeyboardEvent {
+    let type: CGEventType
+    let keyCode: Int64
+    let flags: CGEventFlags
+    let targetPID: Int64
+    let pid: pid_t
+}
+
+@MainActor
+private final class RecordingHotkeyActionDriver: ActionInputDriving {
+    private let result: UIInputExecutionResult.Action?
+    private let error: ActionInputError?
+    private(set) var hotkeyCalls: [[String]] = []
+
+    init(result: UIInputExecutionResult.Action? = nil, error: ActionInputError? = nil) {
+        self.result = result
+        self.error = error
+    }
+
+    func tryClick(
+        element _: AutomationElement,
+        beforeMutation _: @MainActor () throws -> Void) throws -> UIInputExecutionResult.Action
+    {
+        throw ActionInputError.unsupported(.actionUnsupported)
+    }
+
+    func tryRightClick(element _: any AutomationElementRepresenting) async throws
+        -> UIInputExecutionResult.Action
+    {
+        throw ActionInputError.unsupported(.actionUnsupported)
+    }
+
+    func tryScroll(
+        element _: AutomationElement,
+        direction _: ScrollDirection,
+        pages _: Int,
+        scrollBarScope _: ScrollBarSearchScope) throws -> UIInputExecutionResult.Action
+    {
+        throw ActionInputError.unsupported(.actionUnsupported)
+    }
+
+    func trySetText(
+        element _: AutomationElement,
+        text _: String,
+        replace _: Bool,
+        beforeMutation _: @MainActor () throws -> Void) throws
+        -> UIInputExecutionResult.Action
+    {
+        throw ActionInputError.unsupported(.attributeUnsupported)
+    }
+
+    func tryHotkey(application _: NSRunningApplication, keys: [String]) throws
+        -> UIInputExecutionResult.Action
+    {
+        self.hotkeyCalls.append(keys)
+        if let error {
+            throw error
+        }
+        return self.result ?? AutomationTestFixtures.uiActionReceipt(actionName: "AXPress")
+    }
+
+    func trySetValue(
+        element _: AutomationElement,
+        value _: UIElementValue,
+        beforeMutation _: @MainActor () throws -> Void) throws
+        -> UIInputExecutionResult.Action
+    {
+        throw ActionInputError.unsupported(.valueNotSettable)
+    }
+
+    func tryPerformAction(element _: AutomationElement, actionName _: String) throws
+        -> UIInputExecutionResult.Action
+    {
+        throw ActionInputError.unsupported(.actionUnsupported)
+    }
+}

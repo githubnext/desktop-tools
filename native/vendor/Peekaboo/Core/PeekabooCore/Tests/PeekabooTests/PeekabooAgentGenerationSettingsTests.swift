@@ -1,0 +1,294 @@
+import Foundation
+import Tachikoma
+import Testing
+@testable import PeekabooAgentRuntime
+@testable import PeekabooAutomation
+@testable import PeekabooCore
+
+@Suite(.serialized)
+struct PeekabooAgentGenerationSettingsTests {
+    @Test
+    @MainActor
+    func `Configured custom Anthropic provider clamps temperature to Anthropic range`() throws {
+        try self.withTemporaryConfig(
+            """
+            {
+              "aiProviders": { "providers": "local-anthropic/claude-opus-4-7" },
+              "agent": { "temperature": 1.8, "maxTokens": 128000 },
+              "customProviders": {
+                "local-anthropic": {
+                  "name": "Local Anthropic",
+                  "type": "anthropic",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "https://anthropic-compatible.example",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "claude-opus-4-7": {
+                      "name": "Claude Opus 4.7",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let configuration = ConfigurationManager.shared
+                _ = configuration.loadConfiguration()
+                let aiService = PeekabooAIService(configuration: configuration)
+                let model = try #require(aiService.availableModels().first)
+                let agentService = try PeekabooAgentService(services: PeekabooServices())
+
+                #expect(model.modelId == "local-anthropic/claude-opus-4-7")
+                #expect(agentService.generationSettings(for: model).temperature == 1.0)
+                #expect(agentService.generationSettings(for: model).maxTokens == 128_000)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Anthropic compatible current Claude models clamp max tokens to inferred provider caps`() throws {
+        try self.withTemporaryConfig(
+            """
+            {
+              "agent": { "maxTokens": 128000 }
+            }
+            """) {
+                let agentService = try PeekabooAgentService(services: PeekabooServices())
+
+                #expect(agentService.generationSettings(for: .anthropicCompatible(
+                    modelId: "claude-opus-4-7",
+                    baseURL: "https://anthropic-compatible.example")).maxTokens == 128_000)
+                #expect(agentService.generationSettings(for: .anthropicCompatible(
+                    modelId: "claude-sonnet-4-6",
+                    baseURL: "https://anthropic-compatible.example")).maxTokens == 64000)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `OpenAI compatible GPT 5 provider-qualified model omits unsupported temperature`() throws {
+        try self.withTemporaryConfig(
+            """
+            {
+              "agent": { "temperature": 0.7 }
+            }
+            """) {
+                let agentService = try PeekabooAgentService(services: PeekabooServices())
+                let settings = agentService.generationSettings(for: .openaiCompatible(
+                    modelId: "openai/gpt-5.5",
+                    baseURL: "https://openai-compatible.example"))
+
+                #expect(settings.temperature == nil)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `GPT-5_6 compatible routes preserve limits and omit unsupported temperature`() throws {
+        try self.withTemporaryConfig(
+            """
+            {
+              "agent": { "temperature": 0.7, "maxTokens": 128000 }
+            }
+            """) {
+                let agentService = try PeekabooAgentService(services: PeekabooServices())
+                let models: [LanguageModel] = [
+                    .openaiCompatible(
+                        modelId: "gpt-5.6-sol",
+                        baseURL: "https://openai-compatible.example"),
+                    .openaiCompatible(
+                        modelId: "openai/gpt-5.6-terra",
+                        baseURL: "https://openai-compatible.example"),
+                    .openRouter(modelId: "openai/gpt-5.6-terra:online"),
+                    .together(modelId: "openai/gpt-5.6-luna"),
+                ]
+
+                for model in models {
+                    let settings = agentService.generationSettings(for: model)
+                    #expect(settings.temperature == nil)
+                    #expect(settings.maxTokens == 128_000)
+                }
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Configured custom OpenAI GPT-5_6 model infers current limits`() throws {
+        try self.withTemporaryConfig(
+            """
+            {
+              "aiProviders": { "providers": "local-openai/openai/gpt-5.6-sol" },
+              "agent": { "temperature": 0.7, "maxTokens": 128000 },
+              "customProviders": {
+                "local-openai": {
+                  "name": "Local OpenAI",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "https://openai-compatible.example",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "openai/gpt-5.6-sol": {
+                      "name": "GPT-5.6 Sol",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let configuration = ConfigurationManager.shared
+                _ = configuration.loadConfiguration()
+                let aiService = PeekabooAIService(configuration: configuration)
+                let model = try #require(aiService.availableModels().first)
+                let agentService = try PeekabooAgentService(services: PeekabooServices())
+                let settings = agentService.generationSettings(for: model)
+
+                #expect(model.modelId == "local-openai/openai/gpt-5.6-sol")
+                #expect(model.contextLength == 372_000)
+                #expect(settings.maxTokens == 128_000)
+                #expect(settings.temperature == nil)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Configured custom OpenAI GPT 5 provider omits unsupported temperature`() throws {
+        try self.withTemporaryConfig(
+            """
+            {
+              "aiProviders": { "providers": "local-openai/gpt-5.5" },
+              "agent": { "temperature": 0.7 },
+              "customProviders": {
+                "local-openai": {
+                  "name": "Local OpenAI",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "https://openai-compatible.example",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "gpt-5.5": {
+                      "name": "GPT-5.5",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let configuration = ConfigurationManager.shared
+                _ = configuration.loadConfiguration()
+                let aiService = PeekabooAIService(configuration: configuration)
+                let model = try #require(aiService.availableModels().first)
+                let agentService = try PeekabooAgentService(services: PeekabooServices())
+
+                #expect(model.modelId == "local-openai/gpt-5.5")
+                #expect(agentService.generationSettings(for: model).temperature == nil)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Configured custom OpenAI provider-qualified GPT 5 model omits unsupported temperature`() throws {
+        try self.withTemporaryConfig(
+            """
+            {
+              "aiProviders": { "providers": "local-openai/openai/gpt-5.5" },
+              "agent": { "temperature": 0.7 },
+              "customProviders": {
+                "local-openai": {
+                  "name": "Local OpenAI",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "https://openai-compatible.example",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "openai/gpt-5.5": {
+                      "name": "GPT-5.5",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let configuration = ConfigurationManager.shared
+                _ = configuration.loadConfiguration()
+                let aiService = PeekabooAIService(configuration: configuration)
+                let model = try #require(aiService.availableModels().first)
+                let agentService = try PeekabooAgentService(services: PeekabooServices())
+
+                #expect(model.modelId == "local-openai/openai/gpt-5.5")
+                #expect(agentService.generationSettings(for: model).temperature == nil)
+            }
+    }
+
+    @Test(arguments: [9, 200, 100_000])
+    @MainActor
+    func `Nested OpenAI prefixes preserve GPT 5 settings without recursive growth`(depth: Int) throws {
+        try self.withTemporaryConfig(#"{"agent":{"temperature":0.7}}"#) {
+            let agentService = try PeekabooAgentService(services: PeekabooServices())
+            let nestedID = String(repeating: "openai/", count: depth) + "gpt-5"
+            #expect(agentService.generationSettings(for: .openRouter(modelId: nestedID)).temperature == nil)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Nested prefix normalization preserves whitespace and invalid suffix behavior`() throws {
+        try self.withTemporaryConfig(#"{"agent":{"temperature":0.7}}"#) {
+            let agentService = try PeekabooAgentService(services: PeekabooServices())
+            let spacedID = " \n OPENAI \t/\u{00A0}ChatGPT / \tgpt-5 \n"
+            #expect(agentService.generationSettings(for: .openRouter(modelId: spacedID)).temperature == nil)
+
+            for modelID in ["openai/", "openai/other/gpt-5", "/gpt-5"] {
+                #expect(agentService.generationSettings(for: .openRouter(modelId: modelID)).temperature == 0.7)
+            }
+        }
+    }
+
+    private func withTemporaryConfig(_ configurationJSON: String, body: () throws -> Void) throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-config-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        try configurationJSON.write(
+            to: tempDir.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8)
+
+        let keys = [
+            "PEEKABOO_CONFIG_DIR",
+            "PEEKABOO_CONFIG_DISABLE_MIGRATION",
+            "PEEKABOO_AI_PROVIDERS",
+        ]
+        let previous = Dictionary(uniqueKeysWithValues: keys.map { key in
+            (key, getenv(key).map { String(cString: $0) })
+        })
+
+        setenv("PEEKABOO_CONFIG_DIR", tempDir.path, 1)
+        setenv("PEEKABOO_CONFIG_DISABLE_MIGRATION", "1", 1)
+        unsetenv("PEEKABOO_AI_PROVIDERS")
+        ConfigurationManager.shared.resetForTesting()
+
+        defer {
+            for key in keys {
+                if case let value?? = previous[key] {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
+            ConfigurationManager.shared.resetForTesting()
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+
+        try body()
+    }
+}
