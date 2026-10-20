@@ -250,6 +250,49 @@ struct UIAutomationActionOutcomeProvidingTests {
         #expect(legacyDriver.performActionCount == 1)
     }
 
+    @Test
+    func `exact element mutations refuse a live element that is not the observed one before dispatch`() async throws {
+        let driver = OutcomeActionInputDriver(outcome: Self.outcome(mechanism: .accessibilityAction, mode: .background))
+        let service = try await self.makeElementActionService(
+            actionDriver: driver,
+            exactSnapshotElementMatcher: nil)
+
+        for operation in [
+            { try await service.setValueWithOutcome(target: "E1", value: .string("new"), snapshotId: Self.elementSnapshotID) },
+            { try await service.performActionWithOutcome(
+                target: "E1", actionName: "AXPress", snapshotId: Self.elementSnapshotID) },
+        ] {
+            let failure = await #expect(throws: DesktopActionFailure.self) {
+                _ = try await operation()
+            }
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.standardErrorCode == .snapshotStale)
+            #expect(failure?.message.contains("exact element") == true)
+        }
+        #expect(driver.setValueCount == 0)
+        #expect(driver.performActionCount == 0)
+    }
+
+    @Test
+    func `exact element mutations refuse a label query instead of fuzzy matching`() async throws {
+        let driver = OutcomeActionInputDriver(outcome: Self.outcome(mechanism: .accessibilityAction, mode: .background))
+        let service = try await self.makeElementActionService(actionDriver: driver)
+
+        for operation in [
+            { try await service.setValueWithOutcome(target: "Value", value: .string("new"), snapshotId: Self.elementSnapshotID) },
+            { try await service.performActionWithOutcome(
+                target: "Value", actionName: "AXPress", snapshotId: Self.elementSnapshotID) },
+        ] {
+            let failure = await #expect(throws: DesktopActionFailure.self) {
+                _ = try await operation()
+            }
+            #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+            #expect(failure?.standardErrorCode == .elementNotFound)
+        }
+        #expect(driver.setValueCount == 0)
+        #expect(driver.performActionCount == 0)
+    }
+
     @Test(arguments: [false, true], [11, 12])
     func `public guarded paste binds the retained receiver and forwards its claim`(
         retainsFocusedElement: Bool,
@@ -462,7 +505,12 @@ struct UIAutomationActionOutcomeProvidingTests {
     private static let elementSnapshotID = SnapshotReferenceFixtures.first.rawValue
     private static let targetedSnapshotID = SnapshotReferenceFixtures.second.rawValue
 
-    private func makeElementActionService(actionDriver: OutcomeActionInputDriver) async throws -> UIAutomationService {
+    /// The fixed resolver returns a stand-in AX element, so these fixtures accept it as the observed element by default.
+    private func makeElementActionService(
+        actionDriver: OutcomeActionInputDriver,
+        exactSnapshotElementMatcher: (@MainActor @Sendable (AutomationElement, DetectedElement, WindowContext?) throws
+            -> FocusedElementIdentity?)? = { _, _, _ in nil }) async throws -> UIAutomationService
+    {
         let detected = AutomationTestFixtures.detectedElement(
             id: "E1",
             type: .textField,
@@ -483,6 +531,7 @@ struct UIAutomationActionOutcomeProvidingTests {
             actionInputDriver: actionDriver,
             automationElementResolver: FixedOutcomeAutomationElementResolver(),
             elementMutationValueReader: { _ in actionDriver.storedValue },
+            exactSnapshotElementMatcher: exactSnapshotElementMatcher,
             exactWindowIdentityValidator: { identity, bounds in
                 identity == window.mutationIdentity && bounds == window.bounds
             },

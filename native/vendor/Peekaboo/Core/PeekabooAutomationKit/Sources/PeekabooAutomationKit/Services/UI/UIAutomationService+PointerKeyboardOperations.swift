@@ -30,6 +30,7 @@ extension UIAutomationService {
                 request,
                 lanePreparation: {
                     visualizerTarget = await self.visualizerTargetWindow(snapshotId: request.snapshotId)
+                    if !request.foreground { await self.showAgentCursorScroll(request) }
                 },
                 laneCompletion: { result in
                     await self.visualizeScroll(

@@ -529,12 +529,14 @@ struct ApplicationServiceLifecycleTests {
         let service = ApplicationService(applicationOpenHandler: recorder.open)
         let targetURL = try #require(URL(string: "https://example.com"))
 
-        await #expect(throws: PeekabooError.self) {
+        let failure = await #expect(throws: DesktopActionFailure.self) {
             try await service.launchApplication(request: ApplicationLaunchRequest(
                 applicationIdentifier: "PID:\(recorder.runningApplication.processIdentifier)",
                 openURLs: [targetURL],
                 activates: true))
         }
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.outcome.refusalReason == .invalidRequest)
 
         #expect(recorder.calls.isEmpty)
     }

@@ -213,8 +213,12 @@ enum ScreenCaptureKitCallbackBridge<Value: Sendable> {
 
 /// Owns the complete lifetime of one ScreenCaptureKit call, including an SCK call that ignores caller cancellation.
 /// A timed-out call quarantines this coordinator until that exact call finishes, preventing orphan accumulation.
+/// New calls wait a short grace period for that late completion before refusing; nothing falls back around a
+/// quarantine, because every capture path left would start ScreenCaptureKit beside the abandoned call.
 @MainActor
 final class ScreenCaptureKitOperationCoordinator {
+    static let defaultQuarantineGraceSeconds: TimeInterval = 2
+
     private enum LeasePhase: Equatable {
         case acquiring
         case running
@@ -235,10 +239,12 @@ final class ScreenCaptureKitOperationCoordinator {
     }
 
     private let lockFilePath: String?
+    private let quarantineGraceSeconds: TimeInterval
     private var activeLease: Lease?
 
-    init(lockFilePath: String?) {
+    init(lockFilePath: String?, quarantineGraceSeconds: TimeInterval = defaultQuarantineGraceSeconds) {
         self.lockFilePath = lockFilePath
+        self.quarantineGraceSeconds = quarantineGraceSeconds
     }
 
     func run<T: Sendable>(
@@ -246,6 +252,8 @@ final class ScreenCaptureKitOperationCoordinator {
         operationName: String,
         operation: @escaping @MainActor @Sendable () async throws -> T) async throws -> T
     {
+        // The grace period is not part of this call's own budget, so a late completion leaves it a full window.
+        try await self.waitForQuarantineToClear()
         let deadline = ContinuousClock.now.advanced(by: .seconds(max(seconds, 0)))
         let lease = try await self.reserveLease(
             operationName: operationName,
@@ -285,8 +293,7 @@ final class ScreenCaptureKitOperationCoordinator {
     {
         while let activeLease = self.activeLease {
             if activeLease.phase == .quarantined {
-                throw OperationError.captureFailed(
-                    reason: "ScreenCaptureKit is quarantined after an abandoned \(activeLease.operationName) call")
+                throw Self.quarantineError(abandonedOperation: activeLease.operationName)
             }
 
             try Task.checkCancellation()
@@ -305,6 +312,24 @@ final class ScreenCaptureKitOperationCoordinator {
         let lease = Lease(operationName: operationName)
         self.activeLease = lease
         return lease
+    }
+
+    private func waitForQuarantineToClear() async throws {
+        let graceDeadline = ContinuousClock.now.advanced(by: .seconds(max(self.quarantineGraceSeconds, 0)))
+        while let activeLease = self.activeLease, activeLease.phase == .quarantined {
+            try Task.checkCancellation()
+            guard ContinuousClock.now < graceDeadline else {
+                throw Self.quarantineError(abandonedOperation: activeLease.operationName)
+            }
+            try await Self.sleepBeforeRetry(deadline: graceDeadline)
+        }
+    }
+
+    nonisolated static func quarantineError(abandonedOperation: String) -> PeekabooError {
+        OperationError.captureFailed(
+            reason: "ScreenCaptureKit is quarantined for now: an earlier \(abandonedOperation) call in this " +
+                "process timed out and has not returned, usually because another capture on this Mac is busy. " +
+                "This is temporary and clears when that call returns; wait a few seconds and retry")
     }
 
     private func acquireCrossProcessLock(
@@ -441,10 +466,13 @@ final class ScreenCaptureKitOperationCoordinator {
         waitingForCrossProcessGate: Bool = false) throws
     {
         guard ContinuousClock.now < deadline else {
-            let operation = waitingForCrossProcessGate
-                ? "\(operationName) waiting for the ScreenCaptureKit gate; another process may be quarantined"
-                : operationName
-            throw OperationError.timeout(operation: operation, duration: timeoutSeconds)
+            guard waitingForCrossProcessGate else {
+                throw OperationError.timeout(operation: operationName, duration: timeoutSeconds)
+            }
+            throw PeekabooError.timeout(
+                "\(operationName) waited \(String(format: "%.1f", timeoutSeconds))s for another process's " +
+                    "ScreenCaptureKit capture to finish; another process may be quarantined. This is temporary; " +
+                    "wait a few seconds and retry")
         }
     }
 

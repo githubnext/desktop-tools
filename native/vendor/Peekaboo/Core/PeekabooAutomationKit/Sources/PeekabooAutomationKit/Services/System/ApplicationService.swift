@@ -196,7 +196,8 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
     /// Metadata has eight concurrent waits per inventory, each limited by the remaining budget. The separate
     /// process-wide metadata pool retains at most eight native operations through autorelease cleanup.
     static let applicationMetadataTimeout: TimeInterval = 0.25
-    static let applicationInventoryOverallTimeout: TimeInterval = 1
+    /// One second left no headroom: a healthy inventory took 0.95s, and a loaded Mac refused it outright.
+    static let applicationInventoryOverallTimeout: TimeInterval = 2.5
     static let maximumConcurrentApplicationMetadataReads = 8
 
     public convenience init(

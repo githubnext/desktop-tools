@@ -174,6 +174,15 @@ extension ApplicationService {
                     "Launched application process generation changed before its receipt could be returned")
             }
             let boundApplication = try await self.bindSelectorResolution(application, launch: launch)
+            if !launch.openURLs.isEmpty {
+                // LaunchServices acceptance does not establish the receiving app's document or URL effect.
+                return DesktopActionResult(
+                    payload: boundApplication,
+                    outcome: .dispatchedUnverified(
+                        delivery: Self.applicationDelivery(mode: .foreground),
+                        evidence: .deliveryAccepted,
+                        unitCount: DesktopActionOutcome.DispatchUnitCount(acceptedNativeDispatchCount) ?? .one))
+            }
             return DesktopActionResult(
                 payload: boundApplication,
                 outcome: .confirmedChange(

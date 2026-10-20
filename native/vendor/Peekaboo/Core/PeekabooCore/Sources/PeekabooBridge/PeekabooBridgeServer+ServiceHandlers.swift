@@ -380,6 +380,17 @@ extension PeekabooBridgeServer {
         case .listFrontmostMenus:
             let menus = try await self.services.menu.listFrontmostMenus()
             return .init(response: .menuStructure(menus))
+        case let .menuCommand(payload):
+            guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics,
+                  let service = self.services.menu as? any MenuCommandProviding else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .runtimeIncompatible,
+                    message: "The native runtime cannot attest exact literal menu commands.")
+            }
+            let result = try await service.menuCommand(payload)
+            return try Self.pinnedMenuMutationResponse(
+                .ok, result: result, expectedIdentity: payload.expectedIdentity,
+                expectedDeliveryMode: .background, operation: "literal menu command")
         case let .clickMenuItem(payload):
             guard PeekabooBridgeRequestContext.usesAttestedOperationResultSemantics else {
                 try await self.services.menu.clickMenuItem(
@@ -860,6 +871,8 @@ extension PeekabooBridgeServer {
             return try await self.handleExactDialogEnterText(payload)
         case let .exactDialogForceDismiss(payload):
             return try await self.handleExactDialogForceDismiss(payload)
+        case let .exactFileDialogPath(payload):
+            return try await self.handleExactFileDialogPath(payload)
         default:
             throw Self.invalidRequest(for: request)
         }
@@ -1153,6 +1166,38 @@ extension PeekabooBridgeServer {
                 evidence: .completionUnknown,
                 unitCount: result.outcome?.dispatchState.unitCount,
                 message: "Exact forced dialog dismissal returned invalid outcome or target evidence.",
+                hint: "Observe the dialog before retrying and update the execution host.")
+        }
+        return .init(
+            response: .dialogResult(result),
+            mutation: .init(outcome: outcome, target: .responseResolved))
+    }
+
+    private func handleExactFileDialogPath(
+        _ payload: FileDialogPathRequest) async throws -> PeekabooBridgeHandledResponse
+    {
+        guard let service = self.services.dialogs as? any FileDialogPathProviding else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .runtimeIncompatible,
+                message: "This runtime host cannot choose exact file-dialog paths; no path was entered.",
+                hint: "Update the runtime host before retrying.")
+        }
+        let result = try await service.chooseFileDialogPath(payload)
+        try Self.throwExactDialogRefusalIfReported(result, operation: "Exact file-dialog path")
+        guard result.success,
+              result.action == .handleFileDialog,
+              let outcome = result.outcome,
+              outcome.state == .confirmedChange || outcome.state == .dispatchedUnverified,
+              outcome.delivery?.mode == .foreground,
+              let targetReceipt = result.targetReceipt,
+              payload.target.processIdentifier.map({ $0 == targetReceipt.processIdentifier }) ?? true,
+              payload.target.windowID.map({ $0 == targetReceipt.windowID }) ?? true
+        else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: result.outcome?.delivery,
+                evidence: .completionUnknown,
+                unitCount: result.outcome?.dispatchState.unitCount,
+                message: "Exact file-dialog path returned invalid outcome or target evidence.",
                 hint: "Observe the dialog before retrying and update the execution host.")
         }
         return .init(

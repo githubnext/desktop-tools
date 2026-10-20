@@ -132,8 +132,10 @@ extension UIAutomationService {
               focused.processIdentifier == targetProcessIdentifier,
               focused.windowID == expectedWindowIdentity.windowID,
               let keyWindow,
-              keyWindow.processIdentifier == targetProcessIdentifier,
-              keyWindow.windowID == expectedWindowIdentity.windowID
+              keyWindow.isKey(
+                  processIdentifier: targetProcessIdentifier,
+                  windowID: expectedWindowIdentity.windowID,
+                  focused: focused)
         else {
             throw self.exactWindowKeyboardFocusChangedError()
         }

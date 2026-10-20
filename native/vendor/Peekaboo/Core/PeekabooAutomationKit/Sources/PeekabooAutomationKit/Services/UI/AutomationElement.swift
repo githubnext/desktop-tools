@@ -39,6 +39,10 @@ protocol AutomationElementRepresenting: Sendable {
     /// (e.g. non-blocking `AXShowMenu`). In-memory test elements return `nil`.
     var underlyingAXElement: AXUIElement? { get }
     var focusedElementIdentity: FocusedElementIdentity? { get }
+    /// How text reaches this element, from its ancestry: web content needs key events.
+    var textInputRoute: TextInputRoute { get }
+    /// Text markers through the element's web area, for text that has no settable selected range.
+    var webTextMarkers: (any WebTextMarkerAccess)? { get }
 
     /// Whether the element advertises `actionName`.
     ///
@@ -50,7 +54,11 @@ protocol AutomationElementRepresenting: Sendable {
 
     func performAutomationAction(_ actionName: String) throws
     func setAutomationValue(_ value: UIElementValue) throws
+    /// Writes an NSDate as AXValue, as date and time controls take it.
+    func setAutomationDate(_ date: Date) throws
     func setAutomationFocused(_ focused: Bool) throws
+    /// Writes AXFocused=true and returns only when the write does, without occupying MainActor meanwhile.
+    func focusAutomationElement() async throws
     func setAutomationSelected(_ selected: Bool) throws
     func setAutomationTextSelection(_ range: TextSelectionRange) throws -> Bool
     func stringAttribute(_ name: String) -> String?
@@ -91,6 +99,18 @@ extension AutomationElementRepresenting {
         nil
     }
 
+    var textInputRoute: TextInputRoute {
+        .nativeAX
+    }
+
+    var webTextMarkers: (any WebTextMarkerAccess)? {
+        nil
+    }
+
+    func setAutomationDate(_: Date) throws {
+        throw ActionInputError.unsupported(.valueNotSettable)
+    }
+
     func supportsAction(_ actionName: String) -> Bool {
         self.actionNames.contains(actionName)
     }
@@ -105,6 +125,10 @@ extension AutomationElementRepresenting {
 
     func setAutomationSelected(_: Bool) throws {
         throw AccessibilitySystemError(.attributeUnsupported)
+    }
+
+    func focusAutomationElement() async throws {
+        try self.setAutomationFocused(true)
     }
 
     func doubleAttribute(_: String) -> Double? {
@@ -283,6 +307,16 @@ struct AutomationElement: AutomationElementRepresenting {
     }
 
     @MainActor
+    var textInputRoute: TextInputRoute {
+        TextInputRoute.resolve(container: self.element.underlyingElement)
+    }
+
+    @MainActor
+    var webTextMarkers: (any WebTextMarkerAccess)? {
+        AXWebTextMarkers(element: self.element.underlyingElement)
+    }
+
+    @MainActor
     var focusedElementIdentity: FocusedElementIdentity? {
         var processIdentifier: pid_t = 0
         guard AXUIElementGetPid(self.element.underlyingElement, &processIdentifier) == .success,
@@ -335,6 +369,17 @@ struct AutomationElement: AutomationElementRepresenting {
     }
 
     @MainActor
+    func setAutomationDate(_ date: Date) throws {
+        let error = AXUIElementSetAttributeValue(
+            self.element.underlyingElement,
+            AXAttributeNames.kAXValueAttribute as CFString,
+            date as NSDate)
+        guard error == .success else {
+            throw AccessibilitySystemError(error)
+        }
+    }
+
+    @MainActor
     func setAutomationFocused(_ focused: Bool) throws {
         let error = AXUIElementSetAttributeValue(
             self.element.underlyingElement,
@@ -343,6 +388,12 @@ struct AutomationElement: AutomationElementRepresenting {
         guard error == .success else {
             throw AccessibilitySystemError(error)
         }
+    }
+
+    // A self-targeted app answers its own AX focus write only while MainActor is free.
+    @MainActor
+    func focusAutomationElement() async throws {
+        try await DetachedAXActionRunner.focus(on: self.element.underlyingElement)
     }
 
     @MainActor

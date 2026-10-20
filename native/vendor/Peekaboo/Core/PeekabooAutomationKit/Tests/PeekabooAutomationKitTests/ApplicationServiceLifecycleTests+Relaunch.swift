@@ -74,9 +74,11 @@ extension ApplicationServiceLifecycleTests {
         ]
 
         for request in requests {
-            await #expect(throws: PeekabooError.self) {
+            let failure = await #expect(throws: DesktopActionFailure.self) {
                 try await service.launchApplication(request: request)
             }
+            #expect(failure?.outcome.state == .refused)
+            #expect(failure?.outcome.refusalReason == .invalidRequest)
         }
         #expect(recorder.calls.isEmpty)
     }
@@ -799,9 +801,11 @@ extension ApplicationServiceLifecycleTests {
         }
     }
 
-    @Test
+    @Test(arguments: [false, true])
     @MainActor
-    func `accepted quit with no observed effect preserves false payload and suspected no-op`() async throws {
+    func `accepted quit with no observed effect preserves false payload and its retry safety`(
+        force: Bool) async throws
+    {
         let runningApplication = try self.runningApplication()
         let processIdentifier = runningApplication.processIdentifier
         let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(processIdentifier))
@@ -812,12 +816,15 @@ extension ApplicationServiceLifecycleTests {
             applicationQuitTimeout: 0)
 
         let result = try await service.quitApplicationResult(request: ApplicationQuitRequest(
-            identifier: "PID:\(processIdentifier)"))
+            identifier: "PID:\(processIdentifier)",
+            force: force))
 
         #expect(!result.payload)
-        #expect(result.outcome?.state == .suspectedNoop)
+        // A normal quit can still be waiting on unsaved work; only force quit is a repeatable no-op.
+        #expect(result.outcome?.state == (force ? .suspectedNoop : .dispatchedUnverified))
+        #expect(result.outcome?.evidence == (force ? .observedNoChange : .operationStillRunning))
         #expect(result.outcome?.dispatchState == .dispatched(unitCount: .one))
-        #expect(result.outcome?.retrySafety == .safe)
+        #expect(result.outcome?.retrySafety == (force ? .safe : .unsafe))
     }
 
     @Test

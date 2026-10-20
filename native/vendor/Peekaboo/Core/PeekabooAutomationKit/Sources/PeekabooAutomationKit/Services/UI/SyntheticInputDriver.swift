@@ -241,11 +241,16 @@ enum CursorRestorationOwnership {
         let activityToken: SharedInputActivityToken
     }
 
+    /// How long a posted move may take to reach the window server before its readback counts as failed.
+    nonisolated static let readbackAttempts = 20
+    nonisolated static let readbackInterval: TimeInterval = 0.01
+
     static func restore(
         _ receipt: Receipt,
         currentActivity: () -> SharedInputActivityToken,
         currentLocation: () -> CGPoint?,
-        move: (CGPoint) throws -> Void) throws -> SharedDesktopRestorationStatus
+        move: (CGPoint) throws -> Void,
+        pause: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) throws -> SharedDesktopRestorationStatus
     {
         let original = receipt.original
         let lastWritten = receipt.lastWritten
@@ -268,7 +273,17 @@ enum CursorRestorationOwnership {
             return .preservedNewerState
         }
         try move(original)
-        guard currentLocation().map({ self.pointsMatch($0, original) }) == true else {
+        // The move is posted to the HID event tap, and the window server applies it after the post returns, so
+        // an immediate read still finds the click point. Only a pointer that never arrives is unverified.
+        var arrived = false
+        for attempt in 0..<self.readbackAttempts {
+            if attempt > 0 { pause(self.readbackInterval) }
+            if currentLocation().map({ self.pointsMatch($0, original) }) == true {
+                arrived = true
+                break
+            }
+        }
+        guard arrived else {
             throw DesktopActionFailure.indeterminate(
                 delivery: .init(mechanism: .globalEvents, mode: .foreground),
                 evidence: .completionUnknown,

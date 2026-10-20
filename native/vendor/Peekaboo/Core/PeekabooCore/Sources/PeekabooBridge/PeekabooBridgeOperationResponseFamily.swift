@@ -3,7 +3,14 @@ import Foundation
 extension PeekabooBridgeOperationResultSemantics.ResponseFamily {
     func matches(_ response: PeekabooBridgeResponse) -> Bool {
         switch (self, response) {
-        case (.agentExecutionTrace, .agentExecutionTrace),
+        case (.clipboardFiles, .clipboardFiles),
+             (.clipboardImage, .clipboardImage),
+             (.clipboardText, .clipboardText),
+             (.clipboardTextWrite, .clipboardTextWrite),
+             (.clipboardImageWrite, .clipboardImageWrite),
+             (.clipboardFilesWrite, .clipboardFilesWrite),
+             (.literalInsert, .literalInsert),
+             (.agentExecutionTrace, .agentExecutionTrace),
              (.application, .application),
              (.applicationMutationInventory, .applicationMutationInventory),
              (.applications, .applications),

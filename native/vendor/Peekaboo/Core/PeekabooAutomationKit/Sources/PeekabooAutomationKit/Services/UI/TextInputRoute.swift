@@ -39,6 +39,20 @@ enum TextInputRoute: Equatable {
             targetProcessIdentifier: processIdentifier)
     }
 
+    /// The route for an element by its ancestry alone, whether or not it has keyboard focus.
+    static func resolve(container element: AXUIElement) -> Self {
+        var processIdentifier: pid_t = 0
+        guard AXUIElementGetPid(element, &processIdentifier) == .success, processIdentifier > 0 else {
+            return .unproven
+        }
+        return self.resolve(
+            from: element,
+            targetProcessIdentifier: processIdentifier,
+            readNode: self.readNode,
+            sameElement: { CFEqual($0, $1) },
+            validateReceiver: { _ in true })
+    }
+
     static func resolve(
         focusedElement: AXUIElement,
         application: AXUIElement,

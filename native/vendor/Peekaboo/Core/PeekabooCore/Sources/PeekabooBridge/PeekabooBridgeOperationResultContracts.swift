@@ -54,6 +54,13 @@ enum PeekabooBridgeOperationResultSemantics {
     }
 
     enum ResponseFamily: Hashable, Sendable {
+        case literalInsert
+        case clipboardText
+        case clipboardImage
+        case clipboardFiles
+        case clipboardTextWrite
+        case clipboardImageWrite
+        case clipboardFilesWrite
         case agentExecutionTrace
         case application
         case applicationMutationInventory

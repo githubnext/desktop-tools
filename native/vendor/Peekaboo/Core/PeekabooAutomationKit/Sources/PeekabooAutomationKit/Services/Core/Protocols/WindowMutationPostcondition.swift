@@ -80,13 +80,17 @@ public enum WindowMutationGeometryPostcondition {
 public struct WindowMutationPostconditionEvidence: Codable, Equatable, Sendable {
     public let isMaximized: Bool?
     public let verifiedVisibleWorkArea: CGRect?
+    /// AXFullScreen read back from the exact window after a full screen change.
+    public let isFullScreen: Bool?
 
     public init(
         isMaximized: Bool? = nil,
-        verifiedVisibleWorkArea: CGRect? = nil)
+        verifiedVisibleWorkArea: CGRect? = nil,
+        isFullScreen: Bool? = nil)
     {
         self.isMaximized = isMaximized
         self.verifiedVisibleWorkArea = verifiedVisibleWorkArea
+        self.isFullScreen = isFullScreen
     }
 }
 

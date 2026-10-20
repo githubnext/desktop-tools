@@ -448,13 +448,9 @@ final class ExactWindowHeldPointerLifecycle {
             let termination: ExactWindowHeldPointerTermination
             do {
                 termination = try await withTaskCancellationHandler {
-                    for index in 1...request.steps {
+                    for point in request.samplePoints {
                         try await self.dragSleeper(.seconds(
                             Double(request.durationMilliseconds) / 1000 / Double(request.steps)))
-                        let fraction = CGFloat(index) / CGFloat(request.steps)
-                        let point = CGPoint(
-                            x: request.from.x + (request.to.x - request.from.x) * fraction,
-                            y: request.from.y + (request.to.y - request.from.y) * fraction)
                         try self.move(owner: owner, receipt: receipt, to: point)
                     }
                     try Task.checkCancellation()
@@ -857,7 +853,8 @@ extension UIAutomationService: ExactWindowHeldPointerLifecycleServiceProtocol {
         request: ExactWindowHeldPointerRequest) async throws
         -> UIAutomationActionResult<ExactWindowHeldPointerReceipt>
     {
-        try await self.heldPointerLifecycle.begin(owner: owner, request: request)
+        await self.showAgentCursorHold(request)
+        return try await self.heldPointerLifecycle.begin(owner: owner, request: request)
     }
 
     public func releaseExactWindowPointerHold(
@@ -866,6 +863,7 @@ extension UIAutomationService: ExactWindowHeldPointerLifecycleServiceProtocol {
         -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
     {
         let termination = try await self.heldPointerLifecycle.release(owner: owner, receipt: receipt)
+        await self.showAgentCursorRelease(termination)
         return try UIAutomationActionResult(
             payload: termination,
             outcome: termination.cleanupOutcome,
@@ -880,6 +878,7 @@ extension UIAutomationService: ExactWindowHeldPointerLifecycleServiceProtocol {
         -> UIAutomationActionResult<ExactWindowHeldPointerTermination>
     {
         let termination = try await self.heldPointerLifecycle.revoke(owner: owner, receipt: receipt)
+        await self.showAgentCursorRelease(termination)
         return try UIAutomationActionResult(
             payload: termination,
             outcome: termination.cleanupOutcome,
@@ -893,6 +892,7 @@ extension UIAutomationService: ExactWindowHeldPointerLifecycleServiceProtocol {
         -> UIAutomationActionResult<ExactWindowHeldPointerTermination?>
     {
         let termination = try await self.heldPointerLifecycle.disconnect(owner: owner)
+        await self.showAgentCursorRelease(termination)
         let identity = try termination.map {
             try DesktopTargetIdentity(exactWindow: UIAutomationTarget.ExactWindow(
                 identity: $0.receipt.windowIdentity,

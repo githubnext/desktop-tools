@@ -304,6 +304,8 @@ extension PeekabooBridgeOperationResultSemantics {
              let .restoreWindow(payload),
              let .maximizeWindow(payload):
             payload.expectedIdentity.map(DesktopOperationScope.window) ?? .global
+        case let .setWindowFullScreen(payload):
+            payload.expectedIdentity.map(DesktopOperationScope.window) ?? .global
         case let .moveWindow(payload):
             payload.expectedIdentity.map(DesktopOperationScope.window) ?? .global
         case let .resizeWindow(payload):
@@ -320,6 +322,12 @@ extension PeekabooBridgeOperationResultSemantics {
             } else {
                 .global
             }
+        case let .menuCommand(payload):
+            .process(payload.expectedIdentity)
+        case let .enableWebAccessibility(payload):
+            .process(payload.expectedIdentity)
+        case let .secureTextFill(payload):
+            .process(payload.expectedWindowIdentity.processIdentity)
         case let .clickMenuItem(payload):
             payload.expectedIdentity.map(DesktopOperationScope.process) ?? .global
         case let .clickMenuItemByName(payload):
@@ -410,6 +418,8 @@ extension PeekabooBridgeOperationResultSemantics {
              let .restoreWindow(payload),
              let .maximizeWindow(payload):
             payload.expectedIdentity.map { .init(target: payload.target, identity: $0) }
+        case let .setWindowFullScreen(payload):
+            payload.expectedIdentity.map { .init(target: payload.target, identity: $0) }
         default:
             nil
         }
@@ -446,7 +456,8 @@ extension PeekabooBridgeOperationResultSemantics {
             .performAction(target: payload.target, actionName: payload.actionName)
         case let .selectText(payload):
             .selectText(target: payload.target, request: payload.request)
-        case .attestedOperation,
+        case .clipboardFilesRead, .clipboardImageRead, .clipboardImageExport, .clipboardTextRead, .clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite, .literalInsert, .attachmentInsert,
+             .attestedOperation,
              .projectedAction,
              .handshake,
              .permissionsStatus,
@@ -486,6 +497,10 @@ extension PeekabooBridgeOperationResultSemantics {
              .swipe,
              .drag,
              .moveMouse,
+             .systemDefinedKey,
+             .selectInputSource,
+             .enableWebAccessibility,
+             .secureTextFill,
              .waitForElement,
              .listWindows,
              .listWindowMutationInventory,
@@ -498,6 +513,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .minimizeWindow,
              .restoreWindow,
              .maximizeWindow,
+             .setWindowFullScreen,
              .getFocusedWindow,
              .listApplications,
              .listApplicationMutationInventory,
@@ -515,6 +531,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .showAllApplications,
              .listMenus,
              .listFrontmostMenus,
+             .menuCommand,
              .clickMenuItem,
              .clickMenuItemByName,
              .listMenuExtras,
@@ -543,6 +560,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .exactDialogDismiss,
              .exactDialogEnterText,
              .exactDialogForceDismiss,
+             .exactFileDialogPath,
              .createSnapshot,
              .storeDetectionResult,
              .getDetectionResult,
@@ -596,10 +614,11 @@ extension PeekabooBridgeOperationResultSemantics {
             .suspectedNoop,
         ]
         switch request.operation {
-        case .agentExecutionTrace:
+        case .clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite, .literalInsert, .attachmentInsert, .agentExecutionTrace:
             return [.dispatchedUnverified]
-        case .requestPostEventPermission, .browserExecute, .swipe, .drag, .moveMouse,
-             .clickMenuItem, .clickMenuItemByName, .clickMenuExtra,
+        case .requestPostEventPermission, .browserExecute, .swipe, .drag, .moveMouse, .systemDefinedKey,
+             .selectInputSource,
+             .menuCommand, .clickMenuItem, .clickMenuItemByName, .clickMenuExtra,
              .clickMenuBarItemNamed, .clickMenuBarItemIndex,
              .launchDockItem, .rightClickDockItem,
              .detectElements, .inspectAccessibilityTree,
@@ -615,6 +634,8 @@ extension PeekabooBridgeOperationResultSemantics {
             return [.confirmedChange]
         case .exactDialogEnterText:
             return [.confirmedNoChange, .dispatchedUnverified]
+        case .exactFileDialogPath:
+            return [.confirmedChange, .dispatchedUnverified]
         case .relaunchApplicationWithOptions:
             return [.confirmedChange, .dispatchedUnverified]
         case .launchApplication, .launchApplicationWithOptions, .activateApplication, .hideApplication:
@@ -623,6 +644,10 @@ extension PeekabooBridgeOperationResultSemantics {
             return [.confirmedNoChange, .dispatchedUnverified]
         case .quitApplication:
             return [.confirmedChange, .dispatchedUnverified, .suspectedNoop]
+        case .enableWebAccessibility:
+            return [.confirmedChange, .confirmedNoChange, .dispatchedUnverified]
+        case .secureTextFill:
+            return [.confirmedChange, .dispatchedUnverified]
         case .hideDock, .showDock:
             return [.confirmedChange, .confirmedNoChange, .dispatchedUnverified, .suspectedNoop]
         case .unhideApplication, .dialogClickButton, .backgroundDialogClickButton,
@@ -634,7 +659,7 @@ extension PeekabooBridgeOperationResultSemantics {
              .setValue, .selectText, .performAction, .scroll, .targetedScroll, .hotkey, .targetedHotkey,
              .exactWindowTargetedHotkey, .targetedClick, .exactWindowTargetedClick,
              .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
-             .backgroundCloseWindow, .minimizeWindow, .restoreWindow, .maximizeWindow:
+             .backgroundCloseWindow, .minimizeWindow, .restoreWindow, .maximizeWindow, .setWindowFullScreen:
             return verifiedOrAccepted
         case .desktopObservation:
             if case let .desktopObservation(payload) = request,
@@ -648,7 +673,7 @@ extension PeekabooBridgeOperationResultSemantics {
             return [.dispatchedUnverified]
         case .browserConnect:
             return [.confirmedNoChange, .dispatchedUnverified]
-        case .permissionsStatus, .observeProcessGeneration, .certificationProducerAttestation,
+        case .clipboardFilesRead, .clipboardImageRead, .clipboardImageExport, .clipboardTextRead, .permissionsStatus, .observeProcessGeneration, .certificationProducerAttestation,
              .createExactWindowHeldPointerOwner,
              .daemonStatus, .daemonStop, .browserStatus,
              .browserDisconnect,
@@ -877,9 +902,12 @@ extension PeekabooBridgeOperationResultSemantics {
             ]
         case .typeActions, .hotkey:
             return [rule(globalForeground, .variable)]
-        case .swipe, .drag, .moveMouse:
+        case .swipe, .drag, .moveMouse, .systemDefinedKey:
             return [rule(globalForeground, .exact(1))]
-        case .setValue, .selectText:
+        case .setValue:
+            // A toggle without a settable value is set by one verified press.
+            return [rule(valueBackground, .exact(1)), rule(axBackground, .exact(1))]
+        case .selectText:
             return [rule(valueBackground, .exact(1))]
         case .performAction:
             return [rule(axBackground, .exact(1))]
@@ -908,6 +936,8 @@ extension PeekabooBridgeOperationResultSemantics {
             return [rule(axBackground, .oneOf([1, 2]))]
         case .minimizeWindow, .restoreWindow:
             return [rule(valueBackground, .exact(1))]
+        case .setWindowFullScreen:
+            return [rule(valueBackground, .exact(1)), rule(axBackground, .exact(1))]
         case .launchApplication, .activateApplication:
             return [rule(nativeForeground, .variable), rule(axForeground, .variable)]
         case let .launchApplicationWithOptions(payload):
@@ -926,6 +956,13 @@ extension PeekabooBridgeOperationResultSemantics {
             return [rule(nativeBackground, .exact(1)), rule(axBackground, .exact(1))]
         case .hideOtherApplications, .showAllApplications:
             return [rule(axBackground, .variable), rule(nativeBackground, .variable)]
+        case .menuCommand:
+            return [rule(axBackground, .exact(1))]
+        case .enableWebAccessibility:
+            return [rule(valueBackground, .exact(1))]
+        case .secureTextFill:
+            // No unit count is reported: it would be the secret's length.
+            return [rule(windowBackground, .variable)]
         case let .clickMenuItem(payload):
             return [rule(
                 payload.deliveryMode == .background ? axBackground : axForeground,
@@ -974,6 +1011,8 @@ extension PeekabooBridgeOperationResultSemantics {
             return [rule(axBackground, .exact(1))]
         case .exactDialogForceDismiss:
             return [rule(globalForeground, .exact(1))]
+        case .exactFileDialogPath:
+            return [rule(globalForeground, .variable), rule(compositeForeground, .variable)]
         case let .desktopObservation(payload):
             if case let .menubarPopover(_, openIfNeeded) = payload.target,
                openIfNeeded != nil

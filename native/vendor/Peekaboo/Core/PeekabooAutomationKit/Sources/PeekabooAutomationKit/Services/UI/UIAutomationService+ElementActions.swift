@@ -121,7 +121,8 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 let target = try await self.resolveActionTarget(
                     target,
                     snapshotId: requiredSnapshotId,
-                    targetProcessIdentifier: captureReceipt.processIdentifier)
+                    targetProcessIdentifier: captureReceipt.processIdentifier,
+                    requireExactSnapshotElement: true)
                 try self.validateElementMutationTarget(target, receipt: captureReceipt)
                 resolved = target
                 oldValue = self.elementMutationValueReader(target.element)
@@ -226,6 +227,8 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         let requiredSnapshotId = try Self.requireElementActionSnapshotID(snapshotId)
         let captureReceipt = try await self.elementMutationCaptureReceipt(snapshotId: requiredSnapshotId)
         var resolved: ResolvedElementMutationTarget?
+        // The advertised action to perform: the name itself, or a listed custom action's full descriptor.
+        var advertisedAction = actionName
         let plan = try DesktopOperationPlan(
             verb: .performAction,
             selector: .element(target),
@@ -241,8 +244,16 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 let target = try await self.resolveActionTarget(
                     target,
                     snapshotId: requiredSnapshotId,
-                    targetProcessIdentifier: captureReceipt.processIdentifier)
+                    targetProcessIdentifier: captureReceipt.processIdentifier,
+                    requireExactSnapshotElement: true)
                 try self.validateElementMutationTarget(target, receipt: captureReceipt)
+                if let name = NotificationCenterCustomActions.requestedName(actionName) {
+                    advertisedAction = try self.customActionDescriptor(
+                        named: name,
+                        actionName: actionName,
+                        target: target,
+                        processIdentifier: captureReceipt.processIdentifier)
+                }
                 resolved = target
             },
             routing: {
@@ -257,14 +268,27 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 }
                 try self.validateElementMutationTarget(resolved, receipt: captureReceipt)
                 do {
-                    return try self.actionInputDriver.tryPerformAction(
+                    let result = try await self.actionInputDriver.tryPerformExactAction(
                         element: resolved.element,
-                        actionName: actionName)
+                        actionName: advertisedAction,
+                        beforeMutation: {
+                            try self.validateElementMutationTarget(resolved, receipt: captureReceipt)
+                        })
+                    guard advertisedAction != actionName else { return result }
+                    // A custom action reports the name it was requested by, never its descriptor.
+                    return UIInputExecutionResult.Action(
+                        outcome: result.outcome,
+                        actionName: actionName,
+                        anchorPoint: result.anchorPoint,
+                        elementRole: result.elementRole,
+                        focusedElement: result.focusedElement,
+                        valueVerification: result.valueVerification)
                 } catch let error as ActionInputError where error.isUnsupportedActionInvocation {
                     throw PeekabooError.invalidInput(Self.unsupportedActionMessage(
                         actionName: actionName,
                         target: resolved.description,
-                        advertisedActions: resolved.element.actionNames))
+                        advertisedActions: advertisedAction == actionName ? resolved.element.actionNames
+                            : NotificationCenterCustomActions.listedNames(resolved.element.actionNames)))
                 }
             },
             synthesis: DesktopOperationPlan.SynthesisRoute {
@@ -294,7 +318,8 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         _ target: String,
         snapshotId: String,
         targetProcessIdentifier: pid_t?,
-        requireUniqueMatch: Bool = false) async throws
+        requireUniqueMatch: Bool = false,
+        requireExactSnapshotElement: Bool = false) async throws
         -> ResolvedElementMutationTarget
     {
         let normalized = target.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -318,6 +343,11 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         }
 
         let exact = detectionResult.elements.findById(normalized)
+        if requireExactSnapshotElement, exact == nil {
+            throw Self.elementMutationRefusal(
+                "Element '\(normalized)' is not an element ID in this snapshot.",
+                standardErrorCode: .elementNotFound)
+        }
         let matches = exact.map { [$0] } ?? Self.findDetectedElements(
             matching: normalized, in: detectionResult, limit: requireUniqueMatch ? 2 : 1)
         if requireUniqueMatch, matches.count > 1 {
@@ -344,18 +374,62 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                     "Resolved element belongs to a different process than the snapshot receipt.",
                     standardErrorCode: .snapshotStale)
             }
+            var elementIdentity = element.focusedElementIdentity
+            if requireExactSnapshotElement {
+                do {
+                    elementIdentity = try self.exactSnapshotElementMatcher(
+                        element, detected, detectionResult.metadata.windowContext) ?? elementIdentity
+                } catch {
+                    throw Self.elementMutationRefusal(
+                        "The live element no longer matches the snapshot's exact element; capture a fresh target snapshot.",
+                        standardErrorCode: .snapshotStale,
+                        cause: error)
+                }
+            }
             return ResolvedElementMutationTarget(
                 element: element,
                 description: Self.describe(detected),
                 bundleIdentifier: detectionResult.metadata.windowContext?.applicationBundleId,
                 windowContext: detectionResult.metadata.windowContext,
-                elementIdentity: element.focusedElementIdentity,
+                elementIdentity: elementIdentity,
                 role: element.role)
         }
 
         throw Self.elementMutationRefusal(
             "Element '\(normalized)' was not found in the receipted process generation.",
             standardErrorCode: .elementNotFound)
+    }
+
+    /// The live element must be the observed one: process, window, role, frame, and identifier or title.
+    @MainActor
+    static func exactSnapshotElementIdentity(
+        live element: AutomationElement,
+        detected: DetectedElement,
+        context: WindowContext?) throws -> FocusedElementIdentity?
+    {
+        guard let context else { throw FocusedElementReceiptError.missingWindowIdentifier }
+        let receipt = try FocusedElementReceiptResolver.receipt(element: detected, context: context)
+        guard let live = element.focusedElementIdentity else { throw FocusedElementReceiptError.windowNotFound }
+        let observed = Self.observedIdentifierForm(receipt, live: live)
+        try FocusedElementReceiptResolver.validate(live, matches: observed)
+        return observed
+    }
+
+    /// Observation strips a recovered text field's `group-` identifier prefix; compare the native form.
+    private static func observedIdentifierForm(
+        _ receipt: FocusedElementIdentity,
+        live: FocusedElementIdentity) -> FocusedElementIdentity
+    {
+        guard let identifier = receipt.identifier, !identifier.isEmpty,
+              live.identifier == "group-" + identifier
+        else { return receipt }
+        return FocusedElementIdentity(
+            processIdentifier: receipt.processIdentifier,
+            windowID: receipt.windowID,
+            role: receipt.role,
+            title: receipt.title,
+            identifier: live.identifier,
+            frame: receipt.frame)
     }
 
     private static func requireElementActionSnapshotID(_ snapshotId: String?) throws -> String {
@@ -491,7 +565,30 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             standardErrorCode: standardErrorCode)
     }
 
-    private static func isValidActionName(_ actionName: String) -> Bool {
+    /// The one listed custom action descriptor for the name, on a Notification Center element only.
+    private func customActionDescriptor(
+        named name: String,
+        actionName: String,
+        target: ResolvedElementMutationTarget,
+        processIdentifier: pid_t?) throws -> String
+    {
+        guard let processIdentifier,
+              let descriptors = self.customActionDescriptors(target.element, processIdentifier)
+        else {
+            throw PeekabooError.invalidInput(
+                "Custom action '\(name)' is available only on Notification Center elements.")
+        }
+        guard let descriptor = NotificationCenterCustomActions.descriptor(named: name, in: descriptors) else {
+            throw PeekabooError.invalidInput(Self.unsupportedActionMessage(
+                actionName: actionName,
+                target: target.description,
+                advertisedActions: NotificationCenterCustomActions.listedNames(descriptors)))
+        }
+        return descriptor
+    }
+
+    nonisolated static func isValidActionName(_ actionName: String) -> Bool {
+        if NotificationCenterCustomActions.requestedName(actionName) != nil { return true }
         guard !actionName.isEmpty else { return false }
         guard actionName.count <= 128 else { return false }
         return actionName.allSatisfy { character in

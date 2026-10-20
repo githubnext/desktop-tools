@@ -725,7 +725,7 @@ extension PeekabooBridgeClient {
         return DesktopActionResult(payload: value, outcome: reply.outcome?.outcome)
     }
 
-    private func windowMutationOutcome(_ request: PeekabooBridgeRequest) async throws -> DesktopActionOutcome? {
+    func windowMutationOutcome(_ request: PeekabooBridgeRequest) async throws -> DesktopActionOutcome? {
         let reply = try await self.sendCarryingActionOutcome(request)
         switch reply.response {
         case .ok, .window:

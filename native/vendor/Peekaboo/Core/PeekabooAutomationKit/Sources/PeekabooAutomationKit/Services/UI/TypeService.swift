@@ -788,7 +788,7 @@ public final class TypeService {
     /// Sample the actual delivery scope immediately before each text segment.
     /// This catches focus-changing sequences such as Tab → password → Return,
     /// where before/after samples both observe a non-secure field.
-    static func focusedElementIsSecureField(processIdentifier: pid_t? = nil) -> Bool {
+    public static func focusedElementIsSecureField(processIdentifier: pid_t? = nil) -> Bool {
         let container: AXUIElement = if let processIdentifier {
             AXUIElementCreateApplication(processIdentifier)
         } else {

@@ -161,10 +161,9 @@ struct DetachedExactWindowFocusMetadataTests {
                     element: native,
                     processIdentifier: 4242,
                     metadata: metadata,
-                    resolveWindowID: {
-                        #expect(CFEqual($0, native))
+                    resolveOwner: {
                         events.append("window")
-                        return 42
+                        return .init(windowID: 42)
                     })
             },
             readAttribute: { name, _ in
@@ -183,7 +182,7 @@ struct DetachedExactWindowFocusMetadataTests {
         #expect(events == identityReads + ["value"] + identityReads)
     }
 
-    @Test(arguments: [kAXPositionAttribute, kAXSizeAttribute, kAXWindowAttribute, kAXRoleAttribute], [false, true])
+    @Test(arguments: [kAXPositionAttribute, kAXSizeAttribute, kAXRoleAttribute], [false, true])
     func `invalid native metadata cannot admit a value observation`(attribute: String, embeddedError: Bool) throws {
         let native = AXUIElementCreateApplication(4242)
         var values = try Self.nativeMetadata(window: native)
@@ -202,8 +201,8 @@ struct DetachedExactWindowFocusMetadataTests {
             element: native,
             processIdentifier: 4242,
             metadata: metadata,
-            resolveWindowID: { _ in windowReads += 1; return 42 })
-        #expect(windowReads == (attribute == kAXWindowAttribute ? 0 : 1))
+            resolveOwner: { windowReads += 1; return .init(windowID: 42) })
+        #expect(windowReads == 1)
         let result = DetachedAXMutationReader.readSynchronously(
             request: (
                 target: AXMutationObservationTarget(processIdentifier: 4242, processStartIdentity: 99),
@@ -224,7 +223,7 @@ struct DetachedExactWindowFocusMetadataTests {
             copyAttributes: { _ in (.success, values) },
             copyAttribute: { _ in Issue.record("Unexpected fallback"); return nil }))
         let snapshot = DetachedExactWindowFocusReader.snapshot(
-            element: native, processIdentifier: 4242, metadata: metadata, resolveWindowID: { _ in 42 })
+            element: native, processIdentifier: 4242, metadata: metadata, resolveOwner: { .init(windowID: 42) })
         #expect(snapshot.subrole == nil)
         #expect(snapshot.subroleIsReadable == (error == .noValue || error == .attributeUnsupported))
         #expect(DetachedExactWindowFocusReader.allowsValueRead(snapshot) == snapshot.subroleIsReadable)

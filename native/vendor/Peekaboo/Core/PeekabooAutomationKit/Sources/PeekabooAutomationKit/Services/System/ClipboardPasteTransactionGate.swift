@@ -1,3 +1,4 @@
+import CoreGraphics
 import Darwin
 import Foundation
 import PeekabooFoundation
@@ -79,6 +80,8 @@ public enum ClipboardPasteTransactionGate {
         case unsafeDirectory(path: String)
         case unsafeLockFile(path: String)
         case lockTimeout(path: String)
+        case invalidReservation(path: String)
+        case transactionUnavailable
 
         var errorDescription: String? {
             switch self {
@@ -93,6 +96,10 @@ public enum ClipboardPasteTransactionGate {
                 return "Clipboard paste transaction lock is not a regular file owned by the current user: \(path)"
             case let .lockTimeout(path):
                 return "Timed out waiting for the exclusive clipboard paste transaction lock at \(path)."
+            case let .invalidReservation(path):
+                return "Clipboard paste reservation at \(path) is unreadable or unsupported. No new clipboard mutation was admitted; recover it only after the original receiver has terminated."
+            case .transactionUnavailable:
+                return "Clipboard paste reservation requires the active transaction gate."
             }
         }
     }
@@ -102,6 +109,147 @@ public enum ClipboardPasteTransactionGate {
 
     /// Serializes callers in a shared host before they enter the file-lock wait loop.
     @MainActor private static var isActive = false
+    @TaskLocal private static var transaction: Transaction?
+    @MainActor private static var pendingProof: PendingProof?
+
+    private struct Reservation: Codable, Sendable {
+        let version: Int
+        let id: UUID
+        let pid: Int32
+        let processStartIdentity: UInt64
+        let windowID: Int
+    }
+
+    private struct PendingProof: Sendable {
+        let id: UUID
+        let path: String
+        let canRelease: @MainActor @Sendable () async -> Bool
+    }
+
+    @MainActor
+    private final class Transaction {
+        let descriptor: Int32
+        let path: String
+        var active = true
+        var reservation: Reservation?
+
+        init(descriptor: Int32, path: String) {
+            self.descriptor = descriptor; self.path = path
+        }
+
+        func read() throws -> Reservation? {
+            var info = stat()
+            guard fstat(self.descriptor, &info) == 0 else { throw self.failure("inspect reservation") }
+            if info.st_size == 0 { return nil }
+            guard info.st_size > 0, info.st_size <= 2048 else { throw GateError.invalidReservation(path: self.path) }
+            var data = Data(count: Int(info.st_size))
+            let count = data.withUnsafeMutableBytes { pread(self.descriptor, $0.baseAddress!, $0.count, 0) }
+            guard count == data.count,
+                  let value = try? JSONDecoder().decode(Reservation.self, from: data),
+                  value.version == 1, value.pid > 0, value.processStartIdentity > 0, value.windowID > 0
+            else { throw GateError.invalidReservation(path: self.path) }
+            return value
+        }
+
+        func write(_ value: Reservation?) throws {
+            let data = try value.map { try JSONEncoder().encode($0) } ?? Data()
+            guard ftruncate(self.descriptor, 0) == 0 else { throw self.failure("truncate reservation") }
+            var offset = 0
+            while offset < data.count {
+                let written = data.withUnsafeBytes {
+                    pwrite(self.descriptor, $0.baseAddress!.advanced(by: offset), $0.count - offset, off_t(offset))
+                }
+                if written < 0, errno == EINTR { continue }
+                guard written > 0 else { throw self.failure("write reservation") }
+                offset += written
+            }
+            guard fsync(self.descriptor) == 0 else { throw self.failure("sync reservation") }
+            self.reservation = value
+        }
+
+        private func failure(_ operation: String) -> GateError {
+            .systemCall(operation: operation, path: self.path, code: errno)
+        }
+    }
+
+    /// Called synchronously immediately before primary paste-key delivery, never after it.
+    /// The deferred proof is bounded and read-only; it must not retain the prior clipboard backup.
+    @MainActor
+    public static func reservePaste(
+        process: ApplicationProcessIdentity, windowID: Int,
+        canRelease: @escaping @MainActor @Sendable () async -> Bool) throws -> UUID
+    {
+        guard let transaction, transaction.active, transaction.reservation == nil else {
+            throw GateError.transactionUnavailable
+        }
+        let value = Reservation(version: 1, id: UUID(), pid: process.processIdentifier,
+                                processStartIdentity: process.processStartIdentity, windowID: windowID)
+        // A failed metadata write cannot be followed by V delivery. Preserve uncertain disk state on cleanup failure.
+        transaction.reservation = value
+        do { try transaction.write(value) }
+        catch {
+            try? transaction.write(nil)
+            throw error
+        }
+        self.pendingProof = PendingProof(id: value.id, path: transaction.path, canRelease: canRelease)
+        return value.id
+    }
+
+    @MainActor
+    public static func releasePaste(_ id: UUID) throws {
+        guard let transaction, transaction.active, transaction.reservation?.id == id else {
+            throw GateError.transactionUnavailable
+        }
+        try transaction.write(nil)
+        if self.pendingProof?.id == id { self.pendingProof = nil }
+    }
+
+    @MainActor
+    public static var hasUnresolvedPaste: Bool { self.transaction?.reservation != nil }
+
+    @MainActor
+    private static func admit(_ transaction: Transaction) async throws {
+        transaction.reservation = try transaction.read()
+        guard let reservation = transaction.reservation else {
+            if self.pendingProof?.path == transaction.path { self.pendingProof = nil }
+            return
+        }
+        var resolved = self.processGenerationTerminated(reservation) || self.receiverWindowClosed(reservation)
+        if !resolved, let proof = self.pendingProof,
+           proof.path == transaction.path, proof.id == reservation.id
+        {
+            resolved = await proof.canRelease()
+        }
+        if resolved {
+            try self.releasePaste(reservation.id)
+            return
+        }
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "A previous clipboard paste to process \(reservation.pid), window \(reservation.windowID) remains unresolved.",
+            hint: "No new clipboard mutation was sent. Inspect the original receiver; its observed consumption, closing that window, or the original process quitting resolves ownership.")
+    }
+
+    /// A closed receiver window can no longer consume the pending paste, so it resolves ownership like
+    /// process termination does. An unavailable window list proves nothing.
+    private static func receiverWindowClosed(_ reservation: Reservation) -> Bool {
+        let info = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(reservation.windowID))
+        return self.windowClosed(pid: reservation.pid, windowInfo: info as? [[String: Any]])
+    }
+
+    static func windowClosed(pid: Int32, windowInfo: [[String: Any]]?) -> Bool {
+        guard let windowInfo else { return false }
+        guard let owner = windowInfo.first?[kCGWindowOwnerPID as String] as? Int else { return true }
+        return owner != Int(pid)
+    }
+
+    private static func processGenerationTerminated(_ reservation: Reservation) -> Bool {
+        switch SystemIdentityResolver.processStartIdentityObservation(reservation.pid) {
+        case let .identity(current): current != reservation.processStartIdentity
+        case .absent: true
+        case .permissionDenied, .unavailable: false
+        }
+    }
 
     @MainActor
     public static func withExclusiveTransaction<T: Sendable>(
@@ -164,7 +312,21 @@ public enum ClipboardPasteTransactionGate {
         defer { flock(fd, LOCK_UN) }
 
         try self.checkLockDeadline(deadline, now: now(), path: standardizedLockPath)
-        return try await operation()
+        let transaction = Transaction(descriptor: fd, path: standardizedLockPath)
+        defer { transaction.active = false }
+        return try await Self.$transaction.withValue(transaction) {
+            do { try await self.admit(transaction) }
+            catch is CancellationError { throw CancellationError() }
+            catch let failure as DesktopActionFailure { throw failure }
+            catch {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .targetUnavailable,
+                    message: "Shared clipboard ownership could not be verified before this operation.",
+                    hint: error.localizedDescription)
+            }
+            try Task.checkCancellation()
+            return try await operation()
+        }
     }
 
     @MainActor

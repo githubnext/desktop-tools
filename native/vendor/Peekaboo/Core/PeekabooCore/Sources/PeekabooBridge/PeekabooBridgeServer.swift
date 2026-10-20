@@ -105,6 +105,7 @@ public final class PeekabooBridgeServer {
         }
     }
 
+    let literalInsertClipboard = ClipboardService()
     let services: any PeekabooBridgeServiceProviding
     let hostKind: PeekabooBridgeHostKind
     let allowlistedTeams: Set<String>
@@ -138,6 +139,16 @@ public final class PeekabooBridgeServer {
         Task<ScreenCaptureKitOwnershipPreparationOutcome, Never>?
     private var completedScreenCaptureKitOwnershipPreparation: ScreenCaptureKitOwnershipPreparationOutcome?
     let automationActivityObserver: (@Sendable (pid_t) -> Void)?
+    /// Receives each authorized request's exact target window before dispatch.
+    var targetWindowObserver: (@Sendable (PeekabooBridgeTargetWindow) -> Void)?
+    /// Receives each authorized request once it has finished, with its target and outcome.
+    var operationObserver: (@Sendable (PeekabooBridgeOperationRecord) -> Void)?
+    /// Refuses an authorized request before dispatch when it returns a message, and refuses the handshake too, so a
+    /// refused client gets no operation at all.
+    var operationAdmission: (@Sendable (PeekabooBridgeOperationAdmission) -> String?)?
+    /// Resolves the secret for a secure text field fill, or refuses it; without it, fills are not supported.
+    var secureTextFill: (@Sendable (PeekabooBridgeSecureTextFillContext) async
+        -> PeekabooBridgeSecureTextFillAuthorization)?
     let encoder: JSONEncoder
     let decoder: JSONDecoder
     let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "server")

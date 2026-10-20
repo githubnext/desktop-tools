@@ -643,7 +643,10 @@ enum PeekabooBridgeDesktopObservationBinding {
             if let windowID = context.windowID, windowID != targetWindow.windowID {
                 return "window-context window ID"
             }
-            if let title = context.windowTitle, title != targetWindow.title {
+            // The window ID, receipt, bounds and process generation pin a context to the target.
+            // Its title is read later during traversal and may be newer, so it is evidence only
+            // when the context names no window.
+            if context.windowID == nil, let title = context.windowTitle, title != targetWindow.title {
                 return "window-context window title"
             }
             if let bounds = context.windowBounds, bounds != targetWindow.bounds {

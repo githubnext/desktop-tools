@@ -197,6 +197,8 @@ public final class HotkeyService {
         automationTarget: UIAutomationTarget,
         clipboardClaim: GeneralPasteboardWriteClaim? = nil,
         prepareBackgroundWindow: Bool = false,
+        laneIsOwned: Bool = false,
+        beforePrimaryKeyDown: (@MainActor @Sendable () throws -> Void)? = nil,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil) async throws
         -> UIAutomationActionResult<UIInputExecutionResult>
     {
@@ -209,8 +211,9 @@ public final class HotkeyService {
         try BackgroundHotkeyPolicy.validate(keys: keys)
         let parsedKeys = try Self.parsedKeys(keys)
         let plannedChord = try? self.makeHotkeyPlan(parsedKeys)
-        if clipboardClaim != nil || prepareBackgroundWindow {
+        if clipboardClaim != nil || prepareBackgroundWindow || beforePrimaryKeyDown != nil {
             guard automationTarget.exactWindow != nil, holdDuration > 0,
+                  beforePrimaryKeyDown == nil || clipboardClaim != nil,
                   !prepareBackgroundWindow ||
                   (clipboardClaim != nil && automationTarget.exactWindow?.focusedElement != nil),
                   let plannedChord,
@@ -329,7 +332,8 @@ public final class HotkeyService {
                     let outcome = try await self.performTargetedHotkey(
                         parsedKeys: parsedKeys, plannedChord: plannedChord, holdDuration: holdDuration,
                         holdNanoseconds: holdNanoseconds,
-                        automationTarget: automationTarget, targetValidator: targetValidator)
+                        automationTarget: automationTarget, targetValidator: targetValidator,
+                        beforePrimaryKeyDown: beforePrimaryKeyDown)
                     guard prepareBackgroundWindow else { return outcome }
                     preparation.record(.outcome(outcome))
                     guard let result = preparation.successResolution().outcome else {
@@ -347,7 +351,12 @@ public final class HotkeyService {
             finalize: self.operationFinalizer)
         let result: UIAutomationActionResult<UIInputExecutionResult>
         do {
-            result = try await self.desktopOperationExecutor.executeWithTargetIdentity(plan)
+            if laneIsOwned {
+                let owned = try await self.desktopOperationExecutor.executeOwned(plan)
+                result = UIAutomationActionResult(payload: owned, outcome: owned.outcome, targetIdentity: try plan.targetIdentity())
+            } else {
+                result = try await self.desktopOperationExecutor.executeWithTargetIdentity(plan)
+            }
         } catch let error as ActionInputError where error == .unsupported(.actionUnsupported) &&
             automationTarget.exactWindow != nil &&
             strategy.strategy == .actionOnly
@@ -368,7 +377,8 @@ public final class HotkeyService {
         holdDuration: Int,
         holdNanoseconds: UInt64,
         automationTarget: UIAutomationTarget,
-        targetValidator: @escaping @MainActor @Sendable () async throws -> Void) async throws -> DesktopActionOutcome
+        targetValidator: @escaping @MainActor @Sendable () async throws -> Void,
+        beforePrimaryKeyDown: (@MainActor @Sendable () throws -> Void)?) async throws -> DesktopActionOutcome
     {
         guard let targetProcessIdentifier = automationTarget.processIdentifier else {
             throw PeekabooError.invalidInput("Targeted hotkey requires a process target")
@@ -383,7 +393,8 @@ public final class HotkeyService {
             holdNanoseconds: holdNanoseconds,
             targetProcessIdentifier: targetProcessIdentifier,
             deliveryValidator: targetValidator,
-            cleanupProcessIdentity: automationTarget.exactWindow?.identity.processIdentity)
+            cleanupProcessIdentity: automationTarget.exactWindow?.identity.processIdentity,
+            beforePrimaryKeyDown: beforePrimaryKeyDown)
 
         do {
             if holdDuration <= 0 {
@@ -458,7 +469,8 @@ public final class HotkeyService {
         holdNanoseconds: UInt64,
         targetProcessIdentifier: pid_t,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
-        cleanupProcessIdentity: ApplicationProcessIdentity? = nil) async throws
+        cleanupProcessIdentity: ApplicationProcessIdentity? = nil,
+        beforePrimaryKeyDown: (@MainActor @Sendable () throws -> Void)? = nil) async throws
         -> Int
     {
         guard self.postEventAccessEvaluator() else {
@@ -476,7 +488,8 @@ public final class HotkeyService {
                 holdNanoseconds: holdNanoseconds,
                 targetProcessIdentifier: targetProcessIdentifier,
                 deliveryValidator: deliveryValidator,
-                cleanupProcessIdentity: cleanupProcessIdentity)
+                cleanupProcessIdentity: cleanupProcessIdentity,
+                beforePrimaryKeyDown: beforePrimaryKeyDown)
         }
 
         var pressedModifierKeyCodes: Set<Int64> = []
@@ -544,7 +557,8 @@ public final class HotkeyService {
         holdNanoseconds: UInt64,
         targetProcessIdentifier: pid_t,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)?,
-        cleanupProcessIdentity: ApplicationProcessIdentity) async throws -> Int
+        cleanupProcessIdentity: ApplicationProcessIdentity,
+        beforePrimaryKeyDown: (@MainActor @Sendable () throws -> Void)?) async throws -> Int
     {
         var state = HeldHotkeyState()
 
@@ -567,6 +581,7 @@ public final class HotkeyService {
             try await self.validateDelivery(
                 deliveryValidator,
                 emittedUnitCount: state.emittedUnitCount)
+            try beforePrimaryKeyDown?()
             state.primaryKeyIsDown = true
             self.eventPoster(eventPlan.primaryKeyDownEvent, targetProcessIdentifier)
             state.emittedUnitCount += 1

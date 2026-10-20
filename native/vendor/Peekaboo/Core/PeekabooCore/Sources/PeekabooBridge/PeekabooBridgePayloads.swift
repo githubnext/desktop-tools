@@ -356,6 +356,7 @@ public struct PeekabooBridgeDragRequest: Codable, Sendable {
     public let modifiers: String?
     public let button: String?
     public let profile: MouseMovementProfile
+    public let waypoints: [CGPoint]?
 
     public init(_ request: DragOperationRequest) {
         self.from = request.from
@@ -365,6 +366,7 @@ public struct PeekabooBridgeDragRequest: Codable, Sendable {
         self.modifiers = request.modifiers
         self.button = request.button.rawValue
         self.profile = request.profile
+        self.waypoints = request.waypoints.isEmpty ? nil : request.waypoints
     }
 
     public var automationRequest: DragOperationRequest {
@@ -375,7 +377,8 @@ public struct PeekabooBridgeDragRequest: Codable, Sendable {
             steps: self.steps,
             modifiers: self.modifiers,
             button: self.button.flatMap(DragButton.init(rawValue:)) ?? .left,
-            profile: self.profile)
+            profile: self.profile,
+            waypoints: self.waypoints ?? [])
     }
 }
 
@@ -384,6 +387,35 @@ public struct PeekabooBridgeMoveMouseRequest: Codable, Sendable {
     public let duration: Int
     public let steps: Int
     public let profile: MouseMovementProfile
+}
+
+public struct PeekabooBridgeSystemDefinedKeyRequest: Codable, Sendable {
+    public let key: SystemDefinedKey
+
+    public init(key: SystemDefinedKey) {
+        self.key = key
+    }
+}
+
+public struct PeekabooBridgeSelectInputSourceRequest: Codable, Sendable {
+    /// The `kTISPropertyInputSourceID` of an enabled keyboard input source that can be selected.
+    public let id: String
+
+    public init(id: String) {
+        self.id = id
+    }
+}
+
+public struct PeekabooBridgeEnableWebAccessibilityRequest: Codable, Sendable {
+    /// The exact app generation whose web content should build its Accessibility tree.
+    public let expectedIdentity: ApplicationProcessIdentity
+    /// Whether the host may fall back to `AXEnhancedUserInterface`; only for an app that ships Chromium.
+    public let allowsEnhancedUserInterface: Bool?
+
+    public init(expectedIdentity: ApplicationProcessIdentity, allowsEnhancedUserInterface: Bool = false) {
+        self.expectedIdentity = expectedIdentity
+        self.allowsEnhancedUserInterface = allowsEnhancedUserInterface
+    }
 }
 
 public struct PeekabooBridgeWaitRequest: Codable, Sendable {

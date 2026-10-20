@@ -5,80 +5,99 @@ import Testing
 @testable import PeekabooAutomationKit
 
 struct AXWindowIDResolverTests {
-    private let element = AXUIElementCreateApplication(-101)
-    private let window = AXUIElementCreateApplication(-102)
-
-    @Test
-    func `direct native window identity does not query an owning window`() {
-        var linkedReads = 0
-        let result = AXWindowIDResolver.owningWindowID(
-            of: self.element,
-            windowID: { _ in 42 },
-            windowAttribute: { _ in
-                linkedReads += 1
-                return self.window
-            })
-
-        #expect(result == 42)
-        #expect(linkedReads == 0)
+    private struct Node {
+        var processIdentifier: pid_t = 7
+        var role: String?
+        var windowID: CGWindowID?
+        var window: AXUIElement?
+        var parent: AXUIElement?
     }
 
-    @Test(arguments: [CGWindowID?.none, .some(0)])
-    func `web content with no direct window identifier uses its AXWindow link`(direct: CGWindowID?) {
-        var linkedReads = 0
-        var lookedUpElements: [AXUIElement] = []
-        let result = AXWindowIDResolver.owningWindowID(
-            of: self.element,
-            windowID: { element in
-                lookedUpElements.append(element)
-                return CFEqual(element, self.window) ? 42 : direct
+    private let field = AXUIElementCreateApplication(-101)
+    private let group = AXUIElementCreateApplication(-102)
+    private let sheet = AXUIElementCreateApplication(-103)
+    private let document = AXUIElementCreateApplication(-104)
+    private let panelService = AXUIElementCreateApplication(-105)
+
+    private func tree(_ nodes: [(AXUIElement, Node)]) -> AXWindowIDResolver.Tree {
+        let node = { (element: AXUIElement) in nodes.first { CFEqual($0.0, element) }?.1 }
+        return AXWindowIDResolver.Tree(
+            windowID: { node($0)?.windowID },
+            attribute: { name, element in
+                switch name {
+                case kAXRoleAttribute: node(element)?.role as CFTypeRef?
+                case kAXWindowAttribute: node(element)?.window
+                case kAXParentAttribute: node(element)?.parent
+                default: nil
+                }
             },
-            windowAttribute: { element in
-                #expect(CFEqual(element, self.element))
-                linkedReads += 1
-                return self.window
-            })
+            processIdentifier: { node($0)?.processIdentifier })
+    }
 
-        #expect(result == 42)
-        #expect(linkedReads == 1)
-        #expect(lookedUpElements.count == 2)
-        #expect(CFEqual(lookedUpElements[0], self.element))
-        #expect(CFEqual(lookedUpElements[1], self.window))
+    @Test
+    func `a same-process AXWindow link names the owning window`() {
+        let tree = self.tree([
+            (self.field, Node(role: "AXTextField", windowID: 9, window: self.document, parent: self.group)),
+            (self.document, Node(role: "AXWindow", windowID: 42)),
+        ])
+        #expect(AXWindowIDResolver.owner(of: self.field, tree: tree) == .init(windowID: 42))
+    }
+
+    @Test
+    func `sheet content belongs to the window the sheet is attached to`() {
+        let tree = self.tree([
+            (self.field, Node(role: "AXTextField", windowID: 43, window: self.sheet, parent: self.group)),
+            (self.group, Node(role: "AXGroup", parent: self.sheet)),
+            (self.sheet, Node(role: "AXSheet", windowID: 43, parent: self.document)),
+            (self.document, Node(role: "AXWindow", windowID: 42)),
+        ])
+        #expect(AXWindowIDResolver.owner(of: self.field, tree: tree) == .init(windowID: 42, sheetWindowID: 43))
+        #expect(AXWindowIDResolver.owningWindowID(of: self.field, tree: tree) == 42)
+    }
+
+    @Test
+    func `nested sheet content keeps the innermost sheet`() {
+        let inner = AXUIElementCreateApplication(-106)
+        let tree = self.tree([
+            (self.field, Node(role: "AXTextField", window: inner, parent: inner)),
+            (inner, Node(role: "AXSheet", windowID: 44, parent: self.sheet)),
+            (self.sheet, Node(role: "AXSheet", windowID: 43, parent: self.document)),
+            (self.document, Node(role: "AXWindow", windowID: 42)),
+        ])
+        #expect(AXWindowIDResolver.owner(of: self.field, tree: tree) == .init(windowID: 42, sheetWindowID: 44))
+    }
+
+    @Test(arguments: [true, false])
+    func `remote save panel content belongs to the document window`(linksServiceWindow: Bool) {
+        let tree = self.tree([
+            (self.field, Node(
+                role: "AXTextField",
+                windowID: 173,
+                window: linksServiceWindow ? self.panelService : nil,
+                parent: self.group)),
+            (self.panelService, Node(processIdentifier: 8, role: "AXWindow", windowID: 173)),
+            (self.group, Node(role: "AXSplitGroup", parent: self.sheet)),
+            (self.sheet, Node(role: "AXSheet", windowID: 172, parent: self.document)),
+            (self.document, Node(role: "AXWindow", windowID: 167)),
+        ])
+        #expect(AXWindowIDResolver.owner(of: self.field, tree: tree) == .init(windowID: 167, sheetWindowID: 172))
+    }
+
+    @Test
+    func `an element without a window ancestor keeps its direct identity`() {
+        let tree = self.tree([
+            (self.field, Node(role: "AXMenuItem", windowID: 44, parent: self.group)),
+            (self.group, Node(role: "AXMenu")),
+        ])
+        #expect(AXWindowIDResolver.owningWindowID(of: self.field, tree: tree) == 44)
     }
 
     @Test(arguments: [CGWindowID?.none, .some(0)])
-    func `missing or unresolved AXWindow never fabricates an identity`(linked: CGWindowID?) {
-        #expect(AXWindowIDResolver.owningWindowID(
-            of: self.element,
-            windowID: { element in CFEqual(element, self.window) ? linked : nil },
-            windowAttribute: { _ in self.window }) == nil)
-    }
-
-    @Test
-    func `missing and malformed owning-window attributes are refused`() {
-        for value: CFTypeRef? in [nil, "not an AX element" as CFString, kCFBooleanTrue] {
-            var identifierReads = 0
-            let result = AXWindowIDResolver.owningWindowID(
-                of: self.element,
-                windowID: { _ in
-                    identifierReads += 1
-                    return nil
-                },
-                windowAttribute: { _ in value })
-
-            #expect(result == nil)
-            #expect(identifierReads == 1)
-        }
-    }
-
-    @Test
-    func `owning window identity is not guessed from the expected target`() {
-        let actualWindowID = AXWindowIDResolver.owningWindowID(
-            of: self.element,
-            windowID: { element in CFEqual(element, self.window) ? 99 : nil },
-            windowAttribute: { _ in self.window })
-
-        #expect(actualWindowID == 99)
-        #expect(actualWindowID != 42)
+    func `unresolved windows never fabricate an identity`(windowID: CGWindowID?) {
+        let tree = self.tree([
+            (self.field, Node(role: "AXTextField", windowID: windowID, window: self.document, parent: self.document)),
+            (self.document, Node(role: "AXWindow", windowID: windowID)),
+        ])
+        #expect(AXWindowIDResolver.owningWindowID(of: self.field, tree: tree) == nil)
     }
 }

@@ -268,7 +268,8 @@ struct ClickServiceExactWindowTests {
     @MainActor
     func `Exact click drift after dispatch is indeterminate`() async {
         let synthetic = ClickRecordingSyntheticInputDriver()
-        let validations = ExactClickValidationSequence([true, false])
+        // Preparation, the route's final pre-dispatch check, then drift after dispatch.
+        let validations = ExactClickValidationSequence([true, true, false])
         let identity = WindowMutationIdentity(
             windowID: 42,
             ownerProcessIdentifier: 12345,

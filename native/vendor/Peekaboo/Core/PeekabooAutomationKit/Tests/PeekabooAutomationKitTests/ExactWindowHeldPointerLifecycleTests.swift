@@ -499,7 +499,8 @@ private struct Fixture {
     func dragRequest(
         steps: Int = 5,
         to: CGPoint = CGPoint(x: 180, y: 190),
-        button: ExactWindowHeldPointerButton = .left) throws -> ExactWindowDragRequest
+        button: ExactWindowHeldPointerButton = .left,
+        waypoints: [CGPoint] = []) throws -> ExactWindowDragRequest
     {
         try ExactWindowDragRequest(
             snapshotID: "ps1_0123456789abcdef0123456789abcdef",
@@ -508,7 +509,8 @@ private struct Fixture {
             to: to,
             durationMilliseconds: 100,
             steps: steps,
-            button: button)
+            button: button,
+            waypoints: waypoints)
     }
 }
 
@@ -760,5 +762,71 @@ extension ExactWindowHeldPointerLifecycleTests {
         let terminal = try await fixture.lifecycle.revoke(owner: owner, receipt: started.payload)
         #expect(terminal.lifecycleDispatchedUnitCount == 4)
         #expect(fixture.state.postedPoints.last == CGPoint(x: 100, y: 100))
+    }
+
+    @Test
+    func `waypoint drag lands on each waypoint with the same sample count`() async throws {
+        let fixture = self.makeFixture()
+        let corner = CGPoint(x: 180, y: 90)
+        let request = try fixture.dragRequest(steps: 4, waypoints: [corner])
+        let result = try await fixture.lifecycle.drag(request: request, boundTo: nil)
+        let dragPoints = zip(fixture.state.postedTypes, fixture.state.postedPoints)
+            .filter { $0.0 == .leftMouseDragged }.map(\.1)
+        #expect(dragPoints == [
+            CGPoint(x: 130, y: 90), corner, CGPoint(x: 180, y: 140), request.to,
+        ])
+        #expect(result.outcome?.dispatchState.unitCount?.rawValue == 7)
+    }
+
+    @Test
+    func `waypoint drags refuse outside points, too many waypoints or too few samples`() async throws {
+        let fixture = self.makeFixture()
+        let outside = CGPoint(x: 900, y: 90)
+        let many = (0...DragPolyline.maximumWaypointCount).map { CGPoint(x: 100 + $0, y: 100) }
+        for request in try [
+            fixture.dragRequest(waypoints: [outside]),
+            fixture.dragRequest(steps: 40, waypoints: many),
+            fixture.dragRequest(steps: 2, waypoints: [CGPoint(x: 100, y: 100), CGPoint(x: 120, y: 100)]),
+        ] {
+            await #expect(throws: DesktopActionFailure.self) {
+                _ = try await fixture.lifecycle.drag(request: request, boundTo: nil)
+            }
+        }
+        #expect(fixture.state.postedTypes.isEmpty)
+    }
+
+    @Test
+    func `a closed waypoint loop may end where it started`() throws {
+        let fixture = self.makeFixture()
+        let request = try fixture.dragRequest(to: fixture.request.point, waypoints: [CGPoint(x: 200, y: 200)])
+        try request.validate()
+        #expect(request.samplePoints.last == fixture.request.point)
+    }
+
+    @Test
+    func `drag requests without waypoints still decode`() throws {
+        let fixture = self.makeFixture()
+        let request = try fixture.dragRequest()
+        var object = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+        object.removeValue(forKey: "waypoints")
+        let decoded = try JSONDecoder().decode(
+            ExactWindowDragRequest.self,
+            from: JSONSerialization.data(withJSONObject: object))
+        #expect(decoded == request)
+    }
+
+    @Test
+    func `polyline sampling matches a straight drag and shares samples by length`() {
+        let start = CGPoint(x: 0, y: 0)
+        let end = CGPoint(x: 100, y: 0)
+        #expect(DragPolyline.samples(from: start, through: [], to: end, count: 4) ==
+            (1...4).map { CGPoint(x: 25 * $0, y: 0) })
+        let samples = DragPolyline.samples(
+            from: start, through: [CGPoint(x: 90, y: 0)], to: CGPoint(x: 90, y: 10), count: 10)
+        #expect(samples.count == 10)
+        #expect(samples[7] == CGPoint(x: 90, y: 0))
+        #expect(samples.last == CGPoint(x: 90, y: 10))
+        #expect(DragPolyline.samples(from: start, through: [end, start], to: end, count: 2).isEmpty)
     }
 }

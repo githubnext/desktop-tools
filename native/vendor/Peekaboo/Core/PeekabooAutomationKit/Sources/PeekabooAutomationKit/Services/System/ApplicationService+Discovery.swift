@@ -405,7 +405,7 @@ extension ApplicationService {
             throw PeekabooError.timeout(
                 "Application inventory did not complete within its " +
                     "\(Self.formatInventoryTimeout(self.applicationInventoryOverallTimeout))s observation budget; " +
-                    "native inventory work may still be in progress")
+                    "native inventory work may still be in progress. This usually means the Mac is busy; retry shortly")
         }
     }
 

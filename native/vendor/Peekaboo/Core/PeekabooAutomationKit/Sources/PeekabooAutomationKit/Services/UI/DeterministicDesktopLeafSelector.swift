@@ -53,7 +53,8 @@ public enum DeterministicDesktopLeafSelector {
     public static func select<Value>(
         named selector: String,
         from candidates: [Candidate<Value>],
-        allowPartial: Bool = true) throws -> Selection<Value>
+        allowPartial: Bool = true,
+        exactOnly: Bool = false) throws -> Selection<Value>
     {
         let trimmed = selector.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedSelector = self.normalized(trimmed)
@@ -61,9 +62,14 @@ public enum DeterministicDesktopLeafSelector {
             throw DesktopLeafSelectionError.notFound(selector: selector)
         }
 
-        let permittedKinds: [DesktopSelectedLeafEvidence.MatchKind] = allowPartial
-            ? [.exact, .normalizedExact, .punctuationFolded, .partial]
-            : [.exact, .normalizedExact, .punctuationFolded]
+        // Exact-only callers never fall back to case, whitespace, punctuation or substring matches.
+        let permittedKinds: [DesktopSelectedLeafEvidence.MatchKind] = if exactOnly {
+            [.exact]
+        } else if allowPartial {
+            [.exact, .normalizedExact, .punctuationFolded, .partial]
+        } else {
+            [.exact, .normalizedExact, .punctuationFolded]
+        }
         for kind in permittedKinds {
             let winners = candidates.filter { candidate in
                 candidate.matchFields.contains { field in

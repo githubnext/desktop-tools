@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import CoreGraphics
 import Darwin
 import os
@@ -186,6 +187,95 @@ struct HotkeyServiceTargetingTests {
         #expect(commaPlan.keyCode == 0x2B)
         #expect(slashPlan.primaryKey == "slash")
         #expect(slashPlan.keyCode == 0x2C)
+    }
+
+    @Test func `layout characters resolve through the current layout`() throws {
+        // AZERTY puts "a" on the ANSI Q key and "," on the ANSI M key.
+        let azerty = Self.layout([0x0C: "a", 0x2E: ",", 0x2B: ";"], shifted: [0x2B: "."])
+
+        let a = try HotkeyService.HotkeyChord(keys: ["cmd", "char:61"], layout: azerty).plan
+        let comma = try HotkeyService.HotkeyChord(keys: ["char:2c"], layout: azerty).plan
+
+        #expect(a.primaryKey == "a")
+        #expect(a.keyCode == 0x0C)
+        #expect(a.modifierFlags == .maskCommand)
+        #expect(comma.primaryKey == ",")
+        #expect(comma.keyCode == 0x2E)
+    }
+
+    @Test func `layout characters keep named-key policies`() throws {
+        let qwerty = Self.layout([0x0D: "w", 0x09: "v"])
+
+        let plan = try HotkeyService.HotkeyChord(keys: ["cmd", "char:76"], layout: qwerty).plan
+
+        #expect(HotkeyService.isPasteShortcut(primaryKey: plan.primaryKey, flags: plan.modifierFlags))
+    }
+
+    @Test func `layout characters use the command layout while command is held`() throws {
+        // "Dvorak - QWERTY ⌘" types Dvorak keys until Command selects QWERTY positions.
+        let layout = HotkeyService.KeyboardLayoutTranslator { keyCode, modifiers in
+            switch (keyCode, modifiers & UInt32(cmdKey) != 0) {
+            case (0x2F, false): "v"
+            case (0x09, true): "v"
+            default: nil
+            }
+        }
+
+        let plain = try HotkeyService.HotkeyChord(keys: ["char:76"], layout: layout).plan
+        let command = try HotkeyService.HotkeyChord(keys: ["cmd", "char:76"], layout: layout).plan
+
+        #expect(plain.keyCode == 0x2F)
+        #expect(command.keyCode == 0x09)
+    }
+
+    @Test func `layout characters that need shift refuse with the unmodified key`() throws {
+        let qwerty = Self.layout([0x2C: "/"], shifted: [0x2C: "?"])
+
+        do {
+            _ = try HotkeyService.HotkeyChord(keys: ["cmd", "char:3f"], layout: qwerty)
+            Issue.record("A shifted character must not add Shift implicitly")
+        } catch let failure as DesktopActionFailure {
+            #expect(!failure.outcome.dispatchState.mutationDispatched)
+            #expect(failure.message.contains("needs Shift with the key that types \"/\""))
+        }
+    }
+
+    @Test func `layout characters refuse missing keys and skip the keypad`() throws {
+        let layout = Self.layout([0x41: ".", 0x52: "0"])
+
+        #expect(throws: DesktopActionFailure.self) {
+            _ = try HotkeyService.HotkeyChord(keys: ["char:2e"], layout: layout)
+        }
+        #expect(throws: DesktopActionFailure.self) {
+            _ = try HotkeyService.HotkeyChord(keys: ["char:2e"], layout: nil)
+        }
+        let decimal = try HotkeyService.HotkeyChord(keys: ["keypaddecimal"], layout: layout).plan
+        #expect(decimal.keyCode == 0x41)
+    }
+
+    @Test func `layout character names accept one printable scalar`() {
+        #expect(HotkeyService.LayoutCharacter("char:2c")?.character == ",")
+        #expect(HotkeyService.LayoutCharacter("char:e9")?.character == "é")
+        for name in ["char:", "char:a", "char:20", "char:7f", "char:+2c", "char:1234567", "char:zz", "comma"] {
+            #expect(HotkeyService.LayoutCharacter(name) == nil, "\(name)")
+        }
+    }
+
+    @Test func `targeted hotkey planner accepts extended function and keypad keys`() throws {
+        let service = HotkeyService()
+
+        #expect(try service.targetedHotkeyPlanForTesting(["f13"]).keyCode == 0x69)
+        #expect(try service.targetedHotkeyPlanForTesting(["f20"]).keyCode == 0x5A)
+        #expect(try service.targetedHotkeyPlanForTesting(["keypadenter"]).keyCode == 0x4C)
+        #expect(try service.targetedHotkeyPlanForTesting(["keypad9"]).keyCode == 0x5C)
+    }
+
+    private static func layout(
+        _ plain: [CGKeyCode: String], shifted: [CGKeyCode: String] = [:]) -> HotkeyService.KeyboardLayoutTranslator
+    {
+        HotkeyService.KeyboardLayoutTranslator { keyCode, modifiers in
+            modifiers & UInt32(shiftKey) != 0 ? shifted[keyCode] : plain[keyCode]
+        }
     }
 
     @Test func `targeted hotkey planner normalizes foreground key aliases`() throws {

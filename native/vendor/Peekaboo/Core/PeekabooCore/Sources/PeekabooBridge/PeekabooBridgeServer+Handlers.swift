@@ -11,7 +11,29 @@ extension PeekabooBridgeServer {
         peer: PeekabooBridgePeer?,
         permissions: PermissionsStatus) async throws -> PeekabooBridgeHandledResponse
     {
+        try await self.refuseCharactersIntoSecureFocus(request)
         switch request.operation {
+        case .secureTextFill:
+            guard case let .secureTextFill(payload) = request.unwrappedOperationRequest else {
+                throw Self.invalidRequest(for: request)
+            }
+            return try await self.handleSecureTextFill(payload, peer: peer)
+        case .clipboardFilesRead:
+            return try await self.handleClipboardFilesRead()
+        case .clipboardFilesWrite:
+            return try await self.handleClipboardFilesWrite(request)
+        case .clipboardImageWrite:
+            return try await self.handleClipboardImageWrite(request)
+        case .clipboardImageRead:
+            return try await self.handleClipboardImageRead()
+        case .clipboardImageExport:
+            return try await self.handleClipboardImageRead(includingOriginal: true)
+        case .clipboardTextRead, .clipboardTextWrite:
+            return try await self.handleClipboardTextRequest(request)
+        case .literalInsert:
+            return try await self.handleLiteralInsert(request)
+        case .attachmentInsert:
+            return try await self.handleAttachmentInsert(request)
         case .permissionsStatus, .daemonStatus, .daemonStop:
             return try await .init(
                 response: self.handleCoreRequest(request, peer: peer, permissions: permissions))
@@ -87,7 +109,8 @@ extension PeekabooBridgeServer {
              .foregroundModifierClick,
              .setValue, .selectText, .performAction, .scroll, .targetedScroll, .hotkey, .targetedHotkey,
              .exactWindowTargetedHotkey, .targetedClick,
-             .exactWindowTargetedClick, .swipe, .drag, .moveMouse, .waitForElement:
+             .exactWindowTargetedClick, .swipe, .drag, .moveMouse, .systemDefinedKey, .selectInputSource,
+             .enableWebAccessibility, .waitForElement:
             return try await self.handleAutomationRequest(request)
         case .createExactWindowHeldPointerOwner, .beginExactWindowHeldPointer,
              .releaseExactWindowHeldPointer, .revokeExactWindowHeldPointer,
@@ -98,14 +121,14 @@ extension PeekabooBridgeServer {
             return try await self.handleExactWindowDrag(payload, peer: peer)
         case .listWindows, .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
              .backgroundCloseWindow,
-             .minimizeWindow, .restoreWindow, .maximizeWindow, .getFocusedWindow:
+             .minimizeWindow, .restoreWindow, .maximizeWindow, .setWindowFullScreen, .getFocusedWindow:
             return try await self.handleWindowRequest(request)
         case .listApplications, .findApplication, .getFrontmostApplication, .isApplicationRunning,
              .launchApplication, .launchApplicationWithOptions, .relaunchApplicationWithOptions,
              .activateApplication, .quitApplication,
              .hideApplication, .unhideApplication, .hideOtherApplications, .showAllApplications:
             return try await self.handleApplicationRequest(request)
-        case .listMenus, .listFrontmostMenus, .clickMenuItem, .clickMenuItemByName, .listMenuExtras,
+        case .listMenus, .listFrontmostMenus, .menuCommand, .clickMenuItem, .clickMenuItemByName, .listMenuExtras,
              .clickMenuExtra, .menuExtraOpenMenuFrame, .listMenuBarItems, .clickMenuBarItemNamed,
              .clickMenuBarItemIndex:
             return try await self.handleMenuRequest(request)
@@ -116,7 +139,7 @@ extension PeekabooBridgeServer {
              .dialogHandleFile, .dialogDismiss,
              .dialogListElements, .targetedDialogListElements, .prepareDialogAction,
              .exactDialogClickButton, .exactDialogDismiss, .exactDialogEnterText,
-             .exactDialogForceDismiss:
+             .exactDialogForceDismiss, .exactFileDialogPath:
             return try await self.handleDialogRequest(request)
         case .createSnapshot, .storeDetectionResult, .getDetectionResult, .ownsSnapshot, .storeScreenshot,
              .storeObservationSnapshot, .storeAnnotatedScreenshot, .listSnapshots, .getMostRecentSnapshot,
@@ -328,6 +351,25 @@ extension PeekabooBridgeServer {
                 steps: payload.steps,
                 profile: payload.profile)
             return Self.globalPointerMutationResponse()
+        case let .systemDefinedKey(payload):
+            try SystemDefinedKeyEvents.post(payload.key)
+            return Self.globalPointerMutationResponse()
+        case let .selectInputSource(payload):
+            try InputSourceSelection.select(payload.id)
+            return .init(
+                response: .ok,
+                mutation: .init(
+                    outcome: .dispatchedUnverified(
+                        delivery: .init(mechanism: .nativeFramework, mode: .background),
+                        evidence: .deliveryAccepted,
+                        unitCount: .one),
+                    target: .global))
+        case let .enableWebAccessibility(payload):
+            let changed = try WebAccessibilityActivation.enable(
+                payload.expectedIdentity, allowsEnhancedUserInterface: payload.allowsEnhancedUserInterface == true)
+            return .init(
+                response: .int(changed.change.rawValue),
+                mutation: .init(outcome: changed.outcome, target: .requestPinned))
         case let .waitForElement(payload):
             let result = try await self.services.automation.waitForElement(
                 target: payload.target,
@@ -461,7 +503,7 @@ extension PeekabooBridgeServer {
         }
     }
 
-    private func automationOutcomeService() throws -> (any UIAutomationActionOutcomeProviding)? {
+    func automationOutcomeService() throws -> (any UIAutomationActionOutcomeProviding)? {
         if let service = self.services.automation as? any UIAutomationActionOutcomeProviding {
             return service
         }
@@ -1162,6 +1204,25 @@ extension PeekabooBridgeServer {
             let result = try await self.services.windows.maximizeWindowResult(
                 target: payload.target,
                 expectedIdentity: identity)
+            let response = try await self.windowMutationResponse(
+                request: request, outcome: result.outcome)
+            return try Self.handledActionResponse(
+                response: response,
+                outcome: result.outcome,
+                fallbackTarget: .requestPinned)
+        case let .setWindowFullScreen(payload):
+            let identity = try Self.requireWindowMutationReceipt(
+                payload.expectedIdentity, operation: .setWindowFullScreen)
+            guard let provider = self.services.windows as? any WindowFullScreenProviding else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .runtimeIncompatible,
+                    message: "This runtime host cannot change native full screen; nothing was sent.",
+                    hint: "Update the runtime host before retrying.")
+            }
+            let result = try await provider.setWindowFullScreenActionResult(
+                target: payload.target,
+                expectedIdentity: identity,
+                fullScreen: payload.fullScreen)
             let response = try await self.windowMutationResponse(
                 request: request, outcome: result.outcome)
             return try Self.handledActionResponse(

@@ -29,6 +29,7 @@ extension PeekabooBridgeOperation {
 
     /// Operations enabled by default for remote helper hosts.
     public static let remoteDefaultAllowlist: Set<PeekabooBridgeOperation> = [
+        .literalInsert, .attachmentInsert, .clipboardTextRead, .clipboardImageRead, .clipboardImageExport, .clipboardFilesRead, .clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite,
         .permissionsStatus,
         .requestPostEventPermission,
         .daemonStatus,
@@ -76,6 +77,10 @@ extension PeekabooBridgeOperation {
         .swipe,
         .drag,
         .moveMouse,
+        .systemDefinedKey,
+        .selectInputSource,
+        .enableWebAccessibility,
+        .secureTextFill,
         .waitForElement,
         .listWindows,
         .focusWindow,
@@ -87,6 +92,7 @@ extension PeekabooBridgeOperation {
         .minimizeWindow,
         .restoreWindow,
         .maximizeWindow,
+        .setWindowFullScreen,
         .getFocusedWindow,
         .listApplications,
         .findApplication,
@@ -102,6 +108,7 @@ extension PeekabooBridgeOperation {
         .showAllApplications,
         .listMenus,
         .listFrontmostMenus,
+        .menuCommand,
         .clickMenuItem,
         .clickMenuItemByName,
         .listMenuExtras,
@@ -130,6 +137,7 @@ extension PeekabooBridgeOperation {
         .exactDialogDismiss,
         .exactDialogEnterText,
         .exactDialogForceDismiss,
+        .exactFileDialogPath,
         .createSnapshot,
         .storeDetectionResult,
         .getDetectionResult,

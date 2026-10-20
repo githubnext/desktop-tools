@@ -96,6 +96,55 @@ extension ForegroundModifierClickExecutorTests {
         }
     }
 
+    @Test(arguments: [1, 5, CursorRestorationOwnership.readbackAttempts])
+    func `restoration waits for the posted move to reach the window server`(readsUntilArrival: Int) throws {
+        let token = SharedInputActivityToken.trackedZero
+        let original = CGPoint(x: 10, y: 10)
+        let lastWritten = CGPoint(x: 20, y: 20)
+        var moved = false
+        var readsAfterMove = 0
+        var pauses: [TimeInterval] = []
+
+        let status = try CursorRestorationOwnership.restore(
+            CursorRestorationOwnership.Receipt(original: original, lastWritten: lastWritten, activityToken: token),
+            currentActivity: { token },
+            currentLocation: {
+                guard moved else { return lastWritten }
+                readsAfterMove += 1
+                return readsAfterMove >= readsUntilArrival ? original : lastWritten
+            },
+            move: { _ in moved = true },
+            pause: { pauses.append($0) })
+
+        #expect(status == .restored)
+        #expect(readsAfterMove == readsUntilArrival)
+        #expect(pauses == Array(repeating: CursorRestorationOwnership.readbackInterval, count: readsUntilArrival - 1))
+    }
+
+    @Test
+    func `a pointer that never arrives stays unverified after a bounded wait`() {
+        let token = SharedInputActivityToken.trackedZero
+        let lastWritten = CGPoint(x: 20, y: 20)
+        var readsAfterMove = 0
+        var moved = false
+        var pauses = 0
+
+        #expect(throws: DesktopActionFailure.self) {
+            _ = try CursorRestorationOwnership.restore(
+                CursorRestorationOwnership.Receipt(
+                    original: CGPoint(x: 10, y: 10), lastWritten: lastWritten, activityToken: token),
+                currentActivity: { token },
+                currentLocation: {
+                    if moved { readsAfterMove += 1 }
+                    return lastWritten
+                },
+                move: { _ in moved = true },
+                pause: { _ in pauses += 1 })
+        }
+        #expect(readsAfterMove == CursorRestorationOwnership.readbackAttempts)
+        #expect(pauses == CursorRestorationOwnership.readbackAttempts - 1)
+    }
+
     @Test(arguments: SharedDesktopInterruption.allCases)
     func `newer shared input suppresses cursor and focus cleanup`(
         _ interruption: SharedDesktopInterruption) async throws

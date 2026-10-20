@@ -18,6 +18,11 @@ public enum PeekabooBridgeBootstrap {
         let requestTimeoutSec: TimeInterval
         let requestDrainTimeoutSec: TimeInterval
         let screenCaptureKitOwnershipPreparer: @Sendable () async throws -> Void
+        var targetWindowObserver: (@Sendable (PeekabooBridgeTargetWindow) -> Void)? = nil
+        var operationObserver: (@Sendable (PeekabooBridgeOperationRecord) -> Void)? = nil
+        var operationAdmission: (@Sendable (PeekabooBridgeOperationAdmission) -> String?)? = nil
+        var secureTextFill: (@Sendable (PeekabooBridgeSecureTextFillContext) async
+            -> PeekabooBridgeSecureTextFillAuthorization)? = nil
     }
 
     @discardableResult
@@ -116,6 +121,10 @@ public enum PeekabooBridgeBootstrap {
             screenCaptureKitOwnershipPreparer: configuration.screenCaptureKitOwnershipPreparer,
             automationActivityObserver: configuration.automationActivityObserver,
             browserSessionBootstrapProvider: services.browserSessionBootstrapProvider)
+        server.targetWindowObserver = configuration.targetWindowObserver
+        server.operationObserver = configuration.operationObserver
+        server.operationAdmission = configuration.operationAdmission
+        server.secureTextFill = configuration.secureTextFill
         let host = PeekabooBridgeHost(
             socketPath: configuration.socketPath,
             server: server,

@@ -1274,6 +1274,8 @@ extension PeekabooBridgeOperationReceiptSemantics {
                 window.mutationPostconditionEvidence?.verifiedVisibleWorkArea.map {
                     WindowMutationGeometryPostcondition.boundsMatch(window.bounds, $0)
                 } == true
+        case let .setWindowFullScreen(payload):
+            window.mutationPostconditionEvidence?.isFullScreen == payload.fullScreen
         default:
             false
         }
@@ -1290,7 +1292,7 @@ extension PeekabooBridgeOperationReceiptSemantics {
         let expectedAction: DialogActionType? = switch request.operation {
         case .dialogClickButton, .backgroundDialogClickButton, .exactDialogClickButton: .clickButton
         case .dialogEnterText, .exactDialogEnterText: .enterText
-        case .dialogHandleFile: .handleFileDialog
+        case .dialogHandleFile, .exactFileDialogPath: .handleFileDialog
         case .dialogDismiss, .exactDialogDismiss, .exactDialogForceDismiss: .dismiss
         default: nil
         }
@@ -1324,6 +1326,8 @@ extension PeekabooBridgeOperationReceiptSemantics {
         case let .exactDialogEnterText(payload):
             try self.validateDialogTargetReceipt(result, selector: payload.target)
         case let .exactDialogForceDismiss(payload):
+            try self.validateDialogTargetReceipt(result, selector: payload.target)
+        case let .exactFileDialogPath(payload):
             try self.validateDialogTargetReceipt(result, selector: payload.target)
         default:
             break

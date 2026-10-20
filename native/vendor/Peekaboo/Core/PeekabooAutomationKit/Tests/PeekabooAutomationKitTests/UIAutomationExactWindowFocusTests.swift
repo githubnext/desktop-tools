@@ -672,6 +672,59 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
         XCTAssertGreaterThan(fixture.postedEvents.value, 0)
     }
 
+    func testReceiverInsideTheKeySheetOfTheExactWindowRemainsEligibleForKeyboardDispatch() async throws {
+        let processIdentifier = getpid()
+        let fixture = self.exactSheetKeyboardFixture(
+            processIdentifier: processIdentifier,
+            processStartIdentity: SystemIdentityResolver.processStartIdentity(processIdentifier) ?? 98,
+            isSheet: true,
+            hasAttachedSheet: false,
+            keyWindowID: 43,
+            receiverSheetWindowID: 43)
+
+        _ = try await fixture.hotkey.hotkey(
+            keys: "cmd,a",
+            holdDuration: 0,
+            targetProcessIdentifier: fixture.identity.ownerProcessIdentifier,
+            deliveryValidator: {
+                try await fixture.automation.requireExactWindowKeyboardFocus(
+                    expectedWindowIdentity: fixture.identity,
+                    expectedWindowBounds: fixture.bounds)
+            })
+
+        XCTAssertGreaterThan(fixture.postedEvents.value, 0)
+    }
+
+    func testReceiverInsideAnAttachedSheetRefusesUnlessThatSheetIsKey() async throws {
+        // Another sheet, the parent window holding the sheet, and the parent itself as an unrelated key window.
+        for (isSheet, hasAttachedSheet, keyWindowID) in [(true, false, 44), (false, true, 42), (false, false, 42)] {
+            let fixture = self.exactSheetKeyboardFixture(
+                processIdentifier: 930_014,
+                processStartIdentity: 99,
+                isSheet: isSheet,
+                hasAttachedSheet: hasAttachedSheet,
+                keyWindowID: keyWindowID,
+                receiverSheetWindowID: 43)
+
+            do {
+                _ = try await fixture.hotkey.hotkey(
+                    keys: "cmd,a",
+                    holdDuration: 0,
+                    targetProcessIdentifier: fixture.identity.ownerProcessIdentifier,
+                    deliveryValidator: {
+                        try await fixture.automation.requireExactWindowKeyboardFocus(
+                            expectedWindowIdentity: fixture.identity,
+                            expectedWindowBounds: fixture.bounds)
+                    })
+                XCTFail("Expected key window \(keyWindowID) to refuse a receiver inside sheet 43")
+            } catch let PeekabooError.invalidInput(message) {
+                XCTAssertTrue(message.contains("not on the target window"), message)
+            }
+
+            XCTAssertEqual(fixture.postedEvents.value, 0)
+        }
+    }
+
     func testExactSheetWithNestedAttachedSheetRefusesBeforeKeyboardDispatch() async throws {
         let fixture = self.exactSheetKeyboardFixture(
             processIdentifier: 930_013,
@@ -764,7 +817,9 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
         processIdentifier: pid_t,
         processStartIdentity: UInt64,
         isSheet: Bool,
-        hasAttachedSheet: Bool) -> ExactSheetKeyboardFixture
+        hasAttachedSheet: Bool,
+        keyWindowID: Int = 42,
+        receiverSheetWindowID: Int? = nil) -> ExactSheetKeyboardFixture
     {
         let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
         let identity = WindowMutationIdentity(
@@ -779,12 +834,13 @@ final class UIAutomationExactWindowFocusTests: XCTestCase {
                 ExactWindowFocusSnapshot(
                     processIdentifier: observedProcessIdentifier,
                     windowID: identity.windowID,
+                    sheetWindowID: receiverSheetWindowID,
                     frame: CGRect(x: 50, y: 100, width: 200, height: 30))
             },
             exactKeyWindowReader: { observedProcessIdentifier in
                 ExactKeyWindowSnapshot(
                     processIdentifier: observedProcessIdentifier,
-                    windowID: identity.windowID,
+                    windowID: keyWindowID,
                     isSheet: isSheet,
                     hasAttachedSheet: hasAttachedSheet)
             },

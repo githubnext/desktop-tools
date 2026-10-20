@@ -1375,7 +1375,7 @@ extension ClickServiceTargetResolutionTests {
                 syntheticInputDriver: synthetic,
                 automationElementResolver: ClickFixedAutomationElementResolver(),
                 exactWindowIdentityValidator: { _, _ in true },
-                tabSelectionVerifier: { _, _ in true })
+                tabSelectionVerifier: { _, _, _ in true })
 
             do {
                 _ = try await service.click(

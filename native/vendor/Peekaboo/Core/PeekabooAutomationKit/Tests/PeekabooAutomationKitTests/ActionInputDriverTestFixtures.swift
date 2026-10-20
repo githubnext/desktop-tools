@@ -56,6 +56,7 @@ final class RecordingActionInputDriver: ActionInputDriving {
     private(set) var clickCallCount = 0
     private(set) var setValueCallCount = 0
     private(set) var performActionCallCount = 0
+    private(set) var performedActionNames: [String] = []
 
     init(
         elementActionError: ActionInputError? = nil,
@@ -124,9 +125,10 @@ final class RecordingActionInputDriver: ActionInputDriving {
         return UIInputExecutionResult.Action(outcome: .confirmedNoChange())
     }
 
-    func tryPerformAction(element _: AutomationElement, actionName _: String) throws
+    func tryPerformAction(element _: AutomationElement, actionName: String) throws
     -> UIInputExecutionResult.Action {
         self.performActionCallCount += 1
+        self.performedActionNames.append(actionName)
         if let elementActionError {
             throw elementActionError
         }
@@ -171,6 +173,10 @@ final class FixedActionAutomationElementResolver: AutomationElementResolving {
     init(onResolve: @escaping @MainActor () -> Void = {}) {
         self.onResolve = onResolve
     }
+
+    /// The resolved application element stands in for the observed one, so accept it as exact.
+    static let acceptsStandIn: @MainActor @Sendable (AutomationElement, DetectedElement, WindowContext?) throws
+        -> FocusedElementIdentity? = { _, _, _ in nil }
 
     func resolve(detectedElement _: DetectedElement, windowContext _: WindowContext?) -> AutomationElement? {
         self.onResolve()
@@ -438,6 +444,19 @@ final class ActionInputMockAutomationElement: AutomationElementRepresenting, @un
         }
     }
 
+    var dateSetterReadbackOverride: Date?
+    var setDates: [Date] = []
+    var textInputRoute: TextInputRoute = .nativeAX
+    var webTextMarkers: (any WebTextMarkerAccess)?
+
+    func setAutomationDate(_ date: Date) throws {
+        guard self.isValueSettable else {
+            throw AccessibilitySystemError(.attributeUnsupported)
+        }
+        self.setDates.append(date)
+        self.value = self.dateSetterReadbackOverride ?? date
+    }
+
     func setAutomationFocused(_ focused: Bool) throws {
         guard self.isFocusedSettable else {
             throw AccessibilitySystemError(.attributeUnsupported)
@@ -465,5 +484,79 @@ final class ActionInputMockAutomationElement: AutomationElementRepresenting, @un
 
     func doubleAttribute(_ name: String) -> Double? {
         self.doubleAttributes[name]
+    }
+}
+
+/// A web area over one document string; a marker is its UTF-16 offset, and indexes can be skewed.
+@MainActor
+final class FakeWebTextMarkers: WebTextMarkerAccess {
+    let document: [UInt16]
+    let elementStart: Int
+    let elementEnd: Int
+    var indexSkew = 0
+    var selection: (Int, Int)?
+    var acceptedSelectionOverride: (Int, Int)?
+    var selects: [(Int, Int)] = []
+
+    init(before: String, text: String, after: String) {
+        self.document = Array((before + text + after).utf16)
+        self.elementStart = before.utf16.count
+        self.elementEnd = self.elementStart + text.utf16.count
+    }
+
+    private func offset(_ marker: CFTypeRef) -> Int { (marker as! NSNumber).intValue }
+    private func marker(_ offset: Int) -> CFTypeRef { NSNumber(value: offset) }
+    private func pair(_ range: CFTypeRef) -> (Int, Int) {
+        let values = (range as! NSArray).map { ($0 as! NSNumber).intValue }
+        return (values[0], values[1])
+    }
+
+    private func text(_ start: Int, _ end: Int) -> String {
+        String(utf16CodeUnits: Array(self.document[start..<end]), count: end - start)
+    }
+
+    func span() -> WebTextSpan? {
+        WebTextSpan(
+            text: self.text(self.elementStart, self.elementEnd),
+            start: self.marker(self.elementStart),
+            end: self.marker(self.elementEnd))
+    }
+
+    func marker(atIndex index: Int) -> CFTypeRef? {
+        let offset = index + self.indexSkew
+        return (0...self.document.count).contains(offset) ? self.marker(offset) : nil
+    }
+
+    func index(of marker: CFTypeRef) -> Int? { self.offset(marker) }
+
+    func next(after marker: CFTypeRef) -> CFTypeRef? {
+        let offset = self.offset(marker)
+        return offset < self.document.count ? self.marker(offset + 1) : nil
+    }
+
+    func range(from start: CFTypeRef, to end: CFTypeRef) -> CFTypeRef? {
+        let (a, b) = (self.offset(start), self.offset(end))
+        return [min(a, b), max(a, b)] as NSArray
+    }
+
+    func string(for range: CFTypeRef) -> String? {
+        let (a, b) = self.pair(range)
+        return self.text(a, b)
+    }
+
+    func bounds(of range: CFTypeRef) -> (start: CFTypeRef, end: CFTypeRef)? {
+        let (a, b) = self.pair(range)
+        return (self.marker(a), self.marker(b))
+    }
+
+    func selectedRange() -> CFTypeRef? {
+        self.selection.map { [$0.0, $0.1] as NSArray }
+    }
+
+    func select(_ range: CFTypeRef) -> Bool {
+        let requested = self.pair(range)
+        self.selects.append(requested)
+        self.selection = self.acceptedSelectionOverride ?? requested
+        return true
     }
 }

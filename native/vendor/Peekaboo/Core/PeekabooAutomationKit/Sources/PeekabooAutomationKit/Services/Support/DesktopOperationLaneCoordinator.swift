@@ -234,9 +234,18 @@ public actor DesktopOperationLaneCoordinator {
     private nonisolated func checkLockDeadline(_ deadline: ContinuousClock.Instant, path: String) throws {
         try Task.checkCancellation()
         guard self.now() < deadline else {
+            // flock records no owner, so name every process with the file open; the holder is among them.
+            let holders = LockFileHolders.describe(path: path)
+            let message = DesktopOperationLaneError.lockTimeout(path: path).localizedDescription
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
-                message: DesktopOperationLaneError.lockTimeout(path: path).localizedDescription,
+                message: holders.isEmpty
+                    ? message
+                    : message + " Processes with it open, one of which holds it: " + holders.joined(separator: "; ") + ".",
+                hint: holders.isEmpty
+                    ? "Another desktop operation is still running. Wait, then observe again before retrying."
+                    : "Another process holds the desktop lock. If one listed is stuck, such as a test run, tell the user which one; " +
+                    "do not retry in a loop.",
                 standardErrorCode: .timeout)
         }
     }

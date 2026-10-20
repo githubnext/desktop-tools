@@ -24,10 +24,11 @@ enum DetachedAXActionRunner {
     /// modal loop should still be reported as delivered.
     static let pressGracePeriod: TimeInterval = 2.0
 
+    /// A nil grace period retains the awaiting operation and its lane until the native call actually returns.
     static func perform(
         action actionName: String,
         on element: AXUIElement,
-        gracePeriod: TimeInterval) async throws -> DesktopActionOutcome
+        gracePeriod: TimeInterval?) async throws -> DesktopActionOutcome
     {
         let box = UncheckedAXElementBox(element: element)
         return try await self.run(gracePeriod: gracePeriod) {
@@ -35,13 +36,26 @@ enum DetachedAXActionRunner {
         }
     }
 
+    /// Retains the caller's lane until the focus write returns, including after cancellation.
+    static func focus(on element: AXUIElement) async throws {
+        let box = UncheckedAXElementBox(element: element)
+        _ = try await self.run(
+            gracePeriod: nil,
+            delivery: .init(mechanism: .accessibilityValue, mode: .background))
+        {
+            AXUIElementSetAttributeValue(box.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        }
+    }
+
     /// Runs `operation` on a detached thread, resolving with operation-still-running evidence if
     /// it does not return within `gracePeriod`. Factored over a closure so tests can exercise the
     /// race without a live accessibility element.
     static func run(
-        gracePeriod: TimeInterval,
+        gracePeriod: TimeInterval?,
+        delivery: DesktopActionOutcome.Delivery? = nil,
         operation: @escaping @Sendable () -> AXError) async throws -> DesktopActionOutcome
     {
+        let delivery = delivery ?? self.delivery
         let gate = OneShotOutcomeGate()
         let result = await withCheckedContinuation { (continuation: CheckedContinuation<
             Result<DesktopActionOutcome, AccessibilitySystemError>,
@@ -52,16 +66,18 @@ enum DetachedAXActionRunner {
                 let result = operation()
                 if result == .success {
                     gate.resume(with: .success(.dispatchedUnverified(
-                        delivery: self.delivery,
+                        delivery: delivery,
                         evidence: .deliveryAccepted)))
                 } else {
                     gate.resume(with: .failure(AccessibilitySystemError(result)))
                 }
             }
-            DispatchQueue.global().asyncAfter(deadline: .now() + gracePeriod) {
-                gate.resume(with: .success(.dispatchedUnverified(
-                    delivery: self.delivery,
-                    evidence: .operationStillRunning)))
+            if let gracePeriod {
+                DispatchQueue.global().asyncAfter(deadline: .now() + gracePeriod) {
+                    gate.resume(with: .success(.dispatchedUnverified(
+                        delivery: delivery,
+                        evidence: .operationStillRunning)))
+                }
             }
         }
         return try result.get()

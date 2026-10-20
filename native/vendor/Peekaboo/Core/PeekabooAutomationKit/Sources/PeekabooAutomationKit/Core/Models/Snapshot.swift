@@ -77,6 +77,8 @@ public nonisolated struct UIElement: Codable, Sendable {
     public let description: String?
     public let help: String?
     public let roleDescription: String?
+    /// Kept only for secure text fields, whose values are never stored.
+    public let subrole: String?
     public let identifier: String?
     public let confidence: Double?
     public var frame: CGRect
@@ -107,6 +109,7 @@ public nonisolated struct UIElement: Codable, Sendable {
         description: String? = nil,
         help: String? = nil,
         roleDescription: String? = nil,
+        subrole: String? = nil,
         identifier: String? = nil,
         confidence: Double? = nil,
         frame: CGRect,
@@ -127,6 +130,7 @@ public nonisolated struct UIElement: Codable, Sendable {
         self.description = description
         self.help = help
         self.roleDescription = roleDescription
+        self.subrole = subrole
         self.identifier = identifier
         self.confidence = confidence
         self.frame = frame

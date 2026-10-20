@@ -1266,6 +1266,11 @@ extension PeekabooBridgeRequest {
             [DesktopTargetEvidenceAdapter.evidence(
                 windowIdentity: payload.request.windowIdentity,
                 bounds: payload.request.windowBounds)]
+        case let .secureTextFill(payload):
+            [DesktopTargetEvidenceAdapter.evidence(
+                windowIdentity: payload.expectedWindowIdentity,
+                bounds: payload.expectedWindowBounds,
+                focusedElement: payload.expectedFocusedElement)]
         case let .exactWindowTargetedHotkey(payload):
             [DesktopTargetEvidenceAdapter.evidence(
                 windowIdentity: payload.expectedWindowIdentity,
@@ -1326,6 +1331,10 @@ extension PeekabooBridgeRequest {
             [DesktopTargetEvidenceAdapter.evidence(
                 windowTarget: payload.target,
                 windowIdentity: payload.expectedIdentity)]
+        case let .setWindowFullScreen(payload):
+            [DesktopTargetEvidenceAdapter.evidence(
+                windowTarget: payload.target,
+                windowIdentity: payload.expectedIdentity)]
         case let .quitApplication(payload):
             payload.expectedIdentity.map {
                 [.init(processIdentifier: $0.processIdentifier, processIdentity: $0)]
@@ -1344,6 +1353,12 @@ extension PeekabooBridgeRequest {
             } else {
                 []
             }
+        case let .menuCommand(payload):
+            [.init(processIdentifier: payload.expectedIdentity.processIdentifier,
+                   processIdentity: payload.expectedIdentity)]
+        case let .enableWebAccessibility(payload):
+            [.init(processIdentifier: payload.expectedIdentity.processIdentifier,
+                   processIdentity: payload.expectedIdentity)]
         case let .clickMenuItem(payload):
             payload.expectedIdentity.map {
                 [.init(processIdentifier: $0.processIdentifier, processIdentity: $0)]

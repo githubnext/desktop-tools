@@ -43,7 +43,7 @@ import PeekabooFoundation
             FocusedElementReceiptResolver.attachingObservedFocus(
                 to: windowContext,
                 elements: elements,
-                corroboratedElementID: truncationInfo?.isTruncated == true ||
+                corroboratedElementID: truncationInfo?.hasIncompleteReads == true ||
                     warnings.contains(DetectionMetadata.applicationScopedAccessibilityFallbackWarning)
                     ? nil : corroboratedFocusedElementID)
         }

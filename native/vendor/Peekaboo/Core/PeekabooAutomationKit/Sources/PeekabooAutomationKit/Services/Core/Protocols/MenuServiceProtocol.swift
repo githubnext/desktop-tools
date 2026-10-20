@@ -706,6 +706,9 @@ public struct MenuExtraInfo: Sendable, Codable {
     /// Source used to collect the item (cgs, cgwindow, ax-control-center, ax-menubar).
     public let source: String?
 
+    /// Accessibility size of the item when it has no WindowServer window of its own.
+    public let size: CGSize?
+
     public init(
         title: String,
         rawTitle: String? = nil,
@@ -717,7 +720,8 @@ public struct MenuExtraInfo: Sendable, Codable {
         windowID: CGWindowID? = nil,
         windowLayer: Int? = nil,
         ownerPID: pid_t? = nil,
-        source: String? = nil)
+        source: String? = nil,
+        size: CGSize? = nil)
     {
         self.title = title
         self.rawTitle = rawTitle
@@ -730,5 +734,6 @@ public struct MenuExtraInfo: Sendable, Codable {
         self.windowLayer = windowLayer
         self.ownerPID = ownerPID
         self.source = source
+        self.size = size
     }
 }

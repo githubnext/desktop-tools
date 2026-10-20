@@ -245,7 +245,10 @@ extension UIAutomationService {
                 snapshotId: snapshotId,
                 automationTarget: automationTarget,
                 validatesProcessIdentity: true,
-                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
+                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery,
+                lanePreparation: {
+                    await self.showAgentCursorClick(target: target, clickType: clickType, snapshotId: snapshotId)
+                })
         }
 
         await self.visualizeClick(
@@ -325,7 +328,10 @@ extension UIAutomationService {
                 snapshotId: snapshotId,
                 automationTarget: automationTarget,
                 validatesProcessIdentity: true,
-                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
+                allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery,
+                lanePreparation: {
+                    await self.showAgentCursorClick(target: target, clickType: clickType, snapshotId: snapshotId)
+                })
         }
 
         await self.visualizeClick(

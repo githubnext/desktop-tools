@@ -10,7 +10,22 @@ extension ApplicationService {
     {
         let access: DesktopOperationAccess = request.activates ? .write : .read
         return try await self.operationLaneCoordinator.run(scope: .global, access: access) {
-            let preparedLaunch = try self.prepareApplicationLaunch(request)
+            let preparedLaunch: PreparedApplicationLaunch
+            do {
+                preparedLaunch = try self.prepareApplicationLaunch(request)
+            } catch {
+                // Selector preparation is synchronous and has not opened or activated an application.
+                let reason: DesktopActionOutcome.RefusalReason
+                if let nativeError = error as? PeekabooError, case .invalidInput = nativeError {
+                    reason = .invalidRequest
+                } else {
+                    reason = .targetUnavailable
+                }
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: reason,
+                    message: error.localizedDescription,
+                    hint: "Verify the application selector or launch options before choosing a new action.")
+            }
             return try await self.performApplicationLaunchWithOutcomeOwnedLane(preparedLaunch)
         }
     }
@@ -101,9 +116,16 @@ extension ApplicationService {
                         hint: "Refresh the application inventory before retrying.")
                 }
                 let delivery = Self.applicationDelivery(mode: .background)
-                let outcome: DesktopActionOutcome = attempt.terminated
-                    ? .confirmedChange(delivery: delivery, unitCount: .one)
-                    : .suspectedNoop(delivery: delivery, unitCount: .one)
+                let outcome: DesktopActionOutcome
+                if !attempt.terminated, !request.force {
+                    // An accepted quit can be waiting on unsaved work; repeating it is not safe.
+                    outcome = .dispatchedUnverified(
+                        delivery: delivery, evidence: .operationStillRunning, unitCount: .one)
+                } else {
+                    outcome = attempt.terminated
+                        ? .confirmedChange(delivery: delivery, unitCount: .one)
+                        : .suspectedNoop(delivery: delivery, unitCount: .one)
+                }
                 return DesktopActionResult(payload: attempt.terminated, outcome: outcome)
             }
         } catch let failure as DesktopActionFailure {

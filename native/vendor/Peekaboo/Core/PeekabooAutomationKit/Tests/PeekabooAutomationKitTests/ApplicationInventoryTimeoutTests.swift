@@ -155,11 +155,12 @@ struct ApplicationInventoryTimeoutTests {
     @MainActor
     func `PID discovery consumes the overall budget before empty inventory can be complete`() async throws {
         let clock = AutomationTestLockedValue(ContinuousClock.now)
+        let pastBudget = ApplicationService.applicationInventoryOverallTimeout + 1
         let service = ApplicationService(
             applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
             frontmostProcessIdentifierProvider: { nil },
             runningApplicationProcessIdentifiersProvider: {
-                clock.withValue { $0 = $0.advanced(by: .seconds(2)) }
+                clock.withValue { $0 = $0.advanced(by: .seconds(pastBudget)) }
                 return []
             },
             applicationWindowCatalogProvider: { [] },

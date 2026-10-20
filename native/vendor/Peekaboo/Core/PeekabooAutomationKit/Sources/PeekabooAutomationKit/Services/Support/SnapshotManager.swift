@@ -131,6 +131,7 @@ public final class SnapshotManager: SnapshotManagerProtocol {
                 description: element.attributes["description"],
                 help: element.attributes["help"],
                 roleDescription: element.attributes["roleDescription"],
+                subrole: element.attributes["subrole"],
                 identifier: element.attributes["identifier"],
                 confidence: element.attributes["confidence"].flatMap(Double.init),
                 frame: element.bounds,
@@ -186,6 +187,9 @@ public final class SnapshotManager: SnapshotManagerProtocol {
             }
             if let roleDescription = uiElement.roleDescription {
                 attributes["roleDescription"] = roleDescription
+            }
+            if let subrole = uiElement.subrole {
+                attributes["subrole"] = subrole
             }
             if let confidence = uiElement.confidence {
                 attributes["confidence"] = String(format: "%.2f", confidence)

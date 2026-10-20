@@ -1,3 +1,4 @@
+import CoreGraphics
 import Darwin
 import Foundation
 import PeekabooFoundation
@@ -10,6 +11,15 @@ struct ClipboardPasteTransactionGateTests {
     func `Process start identity distinguishes a live process from an invalid PID`() {
         #expect(ClipboardPasteTransactionGate.processStartIdentity(getpid()) != nil)
         #expect(ClipboardPasteTransactionGate.processStartIdentity(-1) == nil)
+    }
+
+    @Test
+    func `A closed or reused receiver window resolves a paste, an unavailable list does not`() {
+        let owner = kCGWindowOwnerPID as String
+        #expect(ClipboardPasteTransactionGate.windowClosed(pid: 42, windowInfo: []))
+        #expect(ClipboardPasteTransactionGate.windowClosed(pid: 42, windowInfo: [[owner: 43]]))
+        #expect(!ClipboardPasteTransactionGate.windowClosed(pid: 42, windowInfo: [[owner: 42]]))
+        #expect(!ClipboardPasteTransactionGate.windowClosed(pid: 42, windowInfo: nil))
     }
 
     @Test
@@ -362,7 +372,8 @@ struct ClipboardPasteTransactionGateTests {
                 #expect(path == lockURL.path)
                 #expect(code == ELOOP)
                 #expect(error.localizedDescription.contains("Clipboard paste transaction lock failed"))
-            case .fileSystem, .unsafeDirectory, .unsafeLockFile, .lockTimeout:
+            case .fileSystem, .unsafeDirectory, .unsafeLockFile, .lockTimeout, .invalidReservation,
+                 .transactionUnavailable:
                 Issue.record("Expected lock-file symlink rejection from open")
             }
         }

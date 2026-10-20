@@ -123,7 +123,8 @@ extension PeekabooBridgeResponse {
                 bounds: termination.receipt.windowBounds)]
         case let .error(envelope):
             return envelope.actionTargetReceipt.map { [DesktopTargetEvidenceAdapter.evidence(receipt: $0)] } ?? []
-        case .operationSessionRollover,
+        case .clipboardFiles, .clipboardImage, .clipboardText, .clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite, .literalInsert,
+             .operationSessionRollover,
              .handshake,
              .permissionsStatus,
              .daemonStatus,

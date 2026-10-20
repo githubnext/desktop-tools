@@ -64,6 +64,17 @@ struct DetachedAXObservationWorkerTests {
     }
 
     @Test
+    func `outline rows report their disclosure level and expansion`() {
+        let attributes = DetachedAXObservationWorker.rowDisclosureAttributes
+        #expect(attributes(NSNumber(value: 2), kCFBooleanTrue) == ["disclosureLevel": "2", "disclosing": "true"])
+        #expect(attributes(NSNumber(value: 0), NSNumber(value: 0)) == ["disclosureLevel": "0", "disclosing": "false"])
+        #expect(attributes(nil, nil).isEmpty)
+        #expect(attributes(kCFBooleanTrue, nil).isEmpty)
+        #expect(attributes(NSNumber(value: -1), nil).isEmpty)
+        #expect(attributes("1", "true").isEmpty)
+    }
+
+    @Test
     func `observation focus decoder rejects unreadable values`() {
         #expect(DetachedAXObservationWorker.booleanAttributeValue(nil) == nil)
         #expect(DetachedAXObservationWorker.booleanAttributeValue("true") == nil)

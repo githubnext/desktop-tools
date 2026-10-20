@@ -56,7 +56,8 @@ import PeekabooFoundation
         "axmenuitem", "axtab",
     ]
     private static let valueMetadataRoles: Set<String> = [
-        "axcheckbox", "axcombobox", "axdatefield", "axincrementor", "axpopupbutton",
+        // Date and time controls too, so a reader can refuse one that won't take a date, such as Safari's.
+        "axcheckbox", "axcombobox", "axdatefield", "axdatetimearea", "axtimefield", "axincrementor", "axpopupbutton",
         "axradiobutton", "axscrollbar", "axsearchfield", "axsecuretextfield", "axslider",
         "axswitch", "axtextarea", "axtextfield",
     ]

@@ -162,6 +162,11 @@ extension DetectionTruncationInfo {
             self.deadlineReached || self.incompleteAccessibilityRead
     }
 
+    /// Whether a read stopped early or failed, rather than the traversal stopping at a budget limit.
+    var hasIncompleteReads: Bool {
+        self.deadlineReached || self.incompleteAccessibilityRead
+    }
+
     public func remediationMessage(
         budget: AXTraversalBudget?,
         applicationScopedFallback: Bool = false) -> String

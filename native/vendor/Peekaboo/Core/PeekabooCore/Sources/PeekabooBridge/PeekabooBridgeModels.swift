@@ -36,6 +36,15 @@ public enum PeekabooBridgePermissionKind: String, Codable, Sendable {
 
 public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Hashable {
     // Core
+    case literalInsert
+    case attachmentInsert
+    case clipboardTextRead
+    case clipboardImageRead
+    case clipboardImageExport
+    case clipboardFilesRead
+    case clipboardTextWrite
+    case clipboardImageWrite
+    case clipboardFilesWrite
     case permissionsStatus
     case requestPostEventPermission
     case daemonStatus
@@ -86,6 +95,10 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case swipe
     case drag
     case moveMouse
+    case systemDefinedKey
+    case selectInputSource
+    case enableWebAccessibility
+    case secureTextFill
     case waitForElement
     // Windows
     case listWindows
@@ -98,6 +111,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case minimizeWindow
     case restoreWindow
     case maximizeWindow
+    case setWindowFullScreen
     case getFocusedWindow
     // Applications
     case listApplications
@@ -116,6 +130,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     // Menus
     case listMenus
     case listFrontmostMenus
+    case menuCommand
     case clickMenuItem
     case clickMenuItemByName
     // Menu bar extras
@@ -147,6 +162,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case exactDialogDismiss
     case exactDialogEnterText
     case exactDialogForceDismiss
+    case exactFileDialogPath
     // Snapshots/cache
     case createSnapshot
     case storeDetectionResult
@@ -236,6 +252,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
                 .minimizeWindow,
                 .restoreWindow,
                 .maximizeWindow,
+                .setWindowFullScreen,
             ])
         }
         if version < PeekabooBridgeProtocolVersion(major: 1, minor: 17) {

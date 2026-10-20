@@ -94,6 +94,8 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     let syntheticInputDriver: any SyntheticInputDriving
     let automationElementResolver: any AutomationElementResolving
     let elementMutationValueReader: @MainActor @Sendable (AutomationElement) -> String?
+    let exactSnapshotElementMatcher: @MainActor @Sendable (AutomationElement, DetectedElement, WindowContext?) throws
+        -> FocusedElementIdentity?
     let exactWindowFocusReader: @Sendable (pid_t) -> ExactWindowFocusSnapshot?
     let exactFocusedElementReader: @Sendable (FocusedElementIdentity)
         -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
@@ -104,6 +106,8 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     let exactKeyWindowReader: @Sendable (pid_t) -> ExactKeyWindowSnapshot?
     let exactWindowIdentityValidator: @Sendable (WindowMutationIdentity, CGRect) -> Bool
     let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
+    /// An element's advertised actions when its process may perform custom actions, otherwise nil.
+    let customActionDescriptors: @MainActor @Sendable (AutomationElement, pid_t) -> [String]?
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
     let desktopOperationExecutor: DesktopOperationExecutor
     let heldPointerLifecycle: ExactWindowHeldPointerLifecycle
@@ -179,6 +183,8 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
         automationElementResolver: any AutomationElementResolving,
         elementMutationValueReader: (@MainActor @Sendable (AutomationElement) -> String?)? = nil,
+        exactSnapshotElementMatcher: (@MainActor @Sendable (AutomationElement, DetectedElement, WindowContext?) throws
+            -> FocusedElementIdentity?)? = nil,
         hotkeyServiceFactory: ((HotkeyServiceFactoryContext) -> HotkeyService)? = nil,
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
         exactWindowFocusReader: @escaping @Sendable (pid_t) -> ExactWindowFocusSnapshot? =
@@ -198,6 +204,8 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
             SystemIdentityResolver.validateWindowMutationIdentity,
         processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
             SystemIdentityResolver.processStartIdentity,
+        customActionDescriptors: @escaping @MainActor @Sendable (AutomationElement, pid_t) -> [String]? =
+            NotificationCenterCustomActions.descriptors,
         operationLaneCoordinator: DesktopOperationLaneCoordinator = .shared,
         desktopOperationExecutor: DesktopOperationExecutor? = nil)
     {
@@ -216,6 +224,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
             Self.safeValueDescription(element.value)
                 ?? element.selectedValue.map(String.init)
         }
+        self.exactSnapshotElementMatcher = exactSnapshotElementMatcher ?? Self.exactSnapshotElementIdentity
         self.feedbackClient = feedbackClient
         self.exactWindowFocusReader = exactWindowFocusReader
         self.exactFocusedElementReader = exactFocusedElementReader
@@ -224,6 +233,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         self.exactKeyWindowReader = exactKeyWindowReader
         self.exactWindowIdentityValidator = exactWindowIdentityValidator
         self.processStartIdentityProvider = processStartIdentityProvider
+        self.customActionDescriptors = customActionDescriptors
         self.operationLaneCoordinator = operationLaneCoordinator
         let executor = desktopOperationExecutor ?? DesktopOperationExecutor(laneCoordinator: operationLaneCoordinator)
         self.desktopOperationExecutor = executor

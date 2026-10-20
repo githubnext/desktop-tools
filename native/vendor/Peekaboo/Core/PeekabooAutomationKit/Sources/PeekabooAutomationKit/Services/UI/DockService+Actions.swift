@@ -441,7 +441,8 @@ extension DockService {
                             snapshot.subrole,
                             "\(snapshot.frame)",
                         ]))
-                })
+                },
+                exactOnly: true)
         } catch let error as DesktopLeafSelectionError {
             switch error {
             case .notFound, .invalidIndex:

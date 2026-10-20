@@ -138,7 +138,7 @@ extension DockService {
                 ]))
         }
         do {
-            return try DeterministicDesktopLeafSelector.select(named: name, from: candidates)
+            return try DeterministicDesktopLeafSelector.select(named: name, from: candidates, exactOnly: true)
         } catch let error as DesktopLeafSelectionError {
             switch error {
             case .notFound:

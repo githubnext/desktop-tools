@@ -247,7 +247,7 @@ extension PeekabooBridgeRequest {
     /// never own the desktop lane or mutation watermark: its child re-enters this same Bridge and
     /// each nested tool call owns its own exact-target lane and signed receipt.
     var bypassesOuterDesktopMutationLane: Bool {
-        self.unwrappedOperationRequest.operation == .agentExecutionTrace
+        [.agentExecutionTrace, .literalInsert, .attachmentInsert, .clipboardTextWrite, .clipboardImageWrite, .clipboardFilesWrite].contains(self.unwrappedOperationRequest.operation)
     }
 }
 

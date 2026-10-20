@@ -64,13 +64,27 @@ public final class GestureService {
         self.logger.debug("\(gestureDescription)")
 
         try self.ensurePositiveSteps(request.steps, action: "Drag")
+        guard request.waypoints.count <= DragPolyline.maximumWaypointCount,
+              request.steps > request.waypoints.count
+        else {
+            throw PeekabooError.invalidInput(
+                "Drag accepts at most \(DragPolyline.maximumWaypointCount) waypoints and needs a step per segment")
+        }
 
-        let path = self.buildGesturePath(
-            from: request.from,
-            to: request.to,
-            duration: request.duration,
-            steps: request.steps,
-            profile: request.profile)
+        let path = request.waypoints.isEmpty
+            ? self.buildGesturePath(
+                from: request.from,
+                to: request.to,
+                duration: request.duration,
+                steps: request.steps,
+                profile: request.profile)
+            : HumanMousePath(
+                points: DragPolyline.samples(
+                    from: request.from,
+                    through: request.waypoints,
+                    to: request.to,
+                    count: request.steps),
+                duration: request.duration)
         let modifierKeys = Self.heldModifierKeys(for: request.modifiers)
         let modifierEvents = try self.makeModifierEvents(for: modifierKeys)
         modifierEvents.down.forEach { $0.post(tap: .cghidEventTap) }
@@ -268,6 +282,9 @@ public final class GestureService {
             upEvent.location = lastPoint
             upEvent.post(tap: .cghidEventTap)
         }
+        // Drag and drop between windows needs a beat after the press before the drag starts, and the
+        // destination needs updates while the pointer rests over it before the release.
+        try await Task.sleep(for: Self.dragSettle)
 
         let delay = self.stepDelay(duration: duration, steps: points.count)
         for (index, point) in points.enumerated() {
@@ -285,5 +302,20 @@ public final class GestureService {
                 try await Task.sleep(nanoseconds: delay)
             }
         }
+        for _ in 0..<3 {
+            try await Task.sleep(for: Self.dragSettle / 3)
+            guard let rest = CGEvent(
+                mouseEventSource: nil,
+                mouseType: draggedType,
+                mouseCursorPosition: end,
+                mouseButton: mouseButton)
+            else {
+                throw UIAutomationError.failedToCreateEvent
+            }
+            rest.post(tap: .cghidEventTap)
+        }
     }
+
+    /// The pause after the press and the rest over the destination in a global drag.
+    static let dragSettle: Duration = .milliseconds(150)
 }

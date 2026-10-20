@@ -4,17 +4,55 @@ import PeekabooFoundation
 
 extension HotkeyService {
     public nonisolated static func isPasteShortcut(_ keys: String) -> Bool {
-        guard let chord = try? HotkeyChord(keys: self.parsedKeys(keys)) else { return false }
-        return self.isPasteShortcut(primaryKey: chord.plan.primaryKey, flags: chord.plan.modifierFlags)
+        guard let chord = self.shortcut(keys) else { return false }
+        return self.isPasteShortcut(primaryKey: chord.primaryKey, flags: chord.flags)
     }
 
     nonisolated static func isPasteShortcut(primaryKey: String, flags: CGEventFlags) -> Bool {
         primaryKey == "v" && flags == .maskCommand
     }
 
-    public nonisolated static func isSelectAllShortcut(_ keys: String) -> Bool {
+    /// Whether a chord puts text into the focused field: a character or Space without Command or Control, or a
+    /// Command-V paste with any other modifiers.
+    public nonisolated static func entersText(_ keys: String) -> Bool {
         guard let chord = try? HotkeyChord(keys: self.parsedKeys(keys)) else { return false }
-        return self.isSelectAllShortcut(primaryKey: chord.plan.primaryKey, flags: chord.plan.modifierFlags)
+        let key = chord.plan.primaryKey
+        let flags = chord.plan.modifierFlags
+        if key == "v", flags.contains(.maskCommand) { return true }
+        guard !flags.contains(.maskCommand), !flags.contains(.maskControl) else { return false }
+        return !self.nonTextKeys.contains(key) && !(key.hasPrefix("f") && Int(key.dropFirst()) != nil)
+    }
+
+    /// Keys that edit, move or submit without entering a character.
+    private nonisolated static let nonTextKeys: Set<String> = [
+        "return", "tab", "escape", "delete", "forwarddelete", "left", "right", "up", "down", "home", "end",
+        "pageup", "pagedown", "help", "clear", "capslock", "keypadenter", "keypadclear",
+    ]
+
+    public nonisolated static func isSelectAllShortcut(_ keys: String) -> Bool {
+        guard let chord = self.shortcut(keys) else { return false }
+        return self.isSelectAllShortcut(primaryKey: chord.primaryKey, flags: chord.flags)
+    }
+
+    /// The chord's primary key name and modifiers, naming a layout character by the character it types.
+    ///
+    /// Bridge clients classify a request off the main thread, where no keyboard layout can be read. Resolution
+    /// keeps the character as the key's name, so this agrees with the plan the host resolves, and a character the
+    /// layout cannot type is still refused there before input.
+    nonisolated static func shortcut(_ keys: String) -> (primaryKey: String, flags: CGEventFlags)? {
+        guard let parsed = try? self.parsedKeys(keys) else { return nil }
+        var flags: CGEventFlags = []
+        var primaryKeys: [String] = []
+        for key in parsed {
+            if let flag = HotkeyKey.modifierFlag(for: key) {
+                flags.insert(flag)
+            } else {
+                primaryKeys.append(key)
+            }
+        }
+        guard primaryKeys.count == 1, let key = primaryKeys.first else { return nil }
+        if HotkeyPrimaryKey(key) != nil { return (key, flags) }
+        return LayoutCharacter(key).map { ($0.character, flags) }
     }
 
     nonisolated static func isSelectAllShortcut(primaryKey: String, flags: CGEventFlags) -> Bool {
@@ -43,9 +81,9 @@ extension HotkeyService {
     struct HotkeyChord {
         let plan: HotkeyPlan
 
-        init(keys: [String]) throws {
+        init(keys: [String], layout: @autoclosure () -> KeyboardLayoutTranslator? = .current()) throws {
             var modifierFlags: CGEventFlags = []
-            var primaryKey: HotkeyPrimaryKey?
+            var primaryName: String?
 
             for rawKey in keys {
                 let key = HotkeyKey.normalizedName(for: rawKey)
@@ -54,20 +92,23 @@ extension HotkeyService {
                     continue
                 }
 
-                guard let resolvedKey = HotkeyPrimaryKey(key) else {
+                guard HotkeyPrimaryKey(key) != nil || LayoutCharacter(key) != nil else {
                     throw PeekabooError.invalidInput("Invalid hotkey: \(keys.joined(separator: "+"))")
                 }
 
-                if let existing = primaryKey {
-                    throw PeekabooError.invalidInput("Invalid hotkey: \(existing.name)+\(resolvedKey.name)")
+                if let existing = primaryName {
+                    throw PeekabooError.invalidInput("Invalid hotkey: \(existing)+\(key)")
                 }
 
-                primaryKey = resolvedKey
+                primaryName = key
             }
 
-            guard let primaryKey else {
+            guard let primaryName else {
                 throw PeekabooError.invalidInput("Invalid hotkey: \(keys.joined(separator: "+"))")
             }
+            // Layout characters resolve after every modifier is known; Command can select another layout.
+            let primaryKey = try HotkeyPrimaryKey(primaryName) ?? LayoutCharacter(primaryName)!.resolve(
+                flags: modifierFlags, layout: layout())
 
             self.plan = HotkeyPlan(
                 primaryKey: primaryKey.name,
@@ -152,6 +193,14 @@ extension HotkeyService {
             self.keyCode = keyCode
         }
 
+        init(name: String, keyCode: CGKeyCode) {
+            self.name = name
+            self.keyCode = keyCode
+        }
+
+        /// Keypad keys type digits and operators too, but only their own names select them.
+        static let keypadKeyCodes = Set(keyCodes.filter { $0.key.hasPrefix("keypad") }.values)
+
         private static let keyCodes: [String: CGKeyCode] = [
             "a": 0x00,
             "s": 0x01,
@@ -229,6 +278,32 @@ extension HotkeyService {
             "f10": 0x6D,
             "f11": 0x67,
             "f12": 0x6F,
+            "f13": 0x69,
+            "f14": 0x6B,
+            "f15": 0x71,
+            "f16": 0x6A,
+            "f17": 0x40,
+            "f18": 0x4F,
+            "f19": 0x50,
+            "f20": 0x5A,
+            "keypad0": 0x52,
+            "keypad1": 0x53,
+            "keypad2": 0x54,
+            "keypad3": 0x55,
+            "keypad4": 0x56,
+            "keypad5": 0x57,
+            "keypad6": 0x58,
+            "keypad7": 0x59,
+            "keypad8": 0x5B,
+            "keypad9": 0x5C,
+            "keypaddecimal": 0x41,
+            "keypadmultiply": 0x43,
+            "keypadplus": 0x45,
+            "keypadclear": 0x47,
+            "keypaddivide": 0x4B,
+            "keypadenter": 0x4C,
+            "keypadminus": 0x4E,
+            "keypadequals": 0x51,
         ]
     }
 }

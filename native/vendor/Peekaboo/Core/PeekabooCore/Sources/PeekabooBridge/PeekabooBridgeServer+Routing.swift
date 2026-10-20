@@ -19,6 +19,15 @@ extension PeekabooBridgeServer {
         _ plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
         peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeHandledResponse
     {
+        try await self.recordingOperation(plan, peer: peer) {
+            try await self.routeUnrecorded(plan, peer: peer)
+        }
+    }
+
+    private func routeUnrecorded(
+        _ plan: PeekabooBridgeOperationResultSemantics.PeekabooBridgeRequestPlan,
+        peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeHandledResponse
+    {
         let request = plan.request
         do {
             try self.validatePeerAuthorization(peer)
@@ -83,6 +92,14 @@ extension PeekabooBridgeServer {
                 plan: plan,
                 stage: .preDispatch(PeekabooBridgeOperationResultSemantics.preDispatchReason(for: envelope)))
         }
+        if let refusal = await self.admissionRefusal(plan, peer: peer) {
+            failed = true
+            throw PeekabooBridgeOperationResultSemantics.canonicalFailure(
+                .init(code: .permissionDenied, message: refusal),
+                plan: plan,
+                stage: .preDispatch(.permissionDenied))
+        }
+        await self.reportTargetWindow(plan, peer: peer)
 
         do {
             return try await self.withDaemonActivity(for: plan) {

@@ -14,6 +14,20 @@ enum ActionInputUnsupportedReason: String, Codable, Equatable {
     case missingElement
 }
 
+/// The refusal for a text value written into web content, which page scripts never see as input.
+public enum WebTextFieldValueRefusal {
+    public static let message =
+        "This text field is web content: an Accessibility value write doesn't fire the page's input and change events, so the page would ignore it."
+    public static let hint =
+        "Type into it instead: desktop_type replaces a focused web field's text with key events."
+
+    static let textRoles: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox"]
+
+    static var failure: DesktopActionFailure {
+        DesktopActionFailure.preDispatchRefusal(reason: .operationUnsupported, message: message, hint: hint)
+    }
+}
+
 enum ActionInputError: Error, Equatable {
     case unsupported(ActionInputUnsupportedReason)
     case staleElement
@@ -93,6 +107,11 @@ protocol ActionInputDriving: Sendable {
         value: UIElementValue,
         beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
     func tryPerformAction(element: AutomationElement, actionName: String) throws -> UIInputExecutionResult.Action
+    /// Performs one named action after `beforeMutation`, retaining the lane per the action's native behavior.
+    func tryPerformExactAction(
+        element: AutomationElement,
+        actionName: String,
+        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
     func trySelectText(
         element: AutomationElement,
         request: TextSelectionRequest,
@@ -126,6 +145,15 @@ extension ActionInputDriving {
         beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
     {
         throw ActionInputError.unsupported(.attributeUnsupported)
+    }
+
+    func tryPerformExactAction(
+        element: AutomationElement,
+        actionName: String,
+        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
+    {
+        try beforeMutation()
+        return try self.tryPerformAction(element: element, actionName: actionName)
     }
 }
 
@@ -171,8 +199,16 @@ struct ActionInputDriver: ActionInputDriving {
         allowAccessibilityValueFallback: Bool,
         beforeMutation: @MainActor () throws -> Void = {}) async throws -> UIInputExecutionResult.Action
     {
+        // WebKit text controls may accept AXPress without moving keyboard focus.
+        if allowAccessibilityValueFallback,
+           let role = element.role,
+           role == "AXTextField" || role == "AXTextArea",
+           element.isFocusedSettable
+        {
+            return try await self.focusForClick(element, beforeMutation: beforeMutation)
+        }
         do {
-            return try self.performAction(AXActionNames.kAXPressAction, on: element, beforeMutation: beforeMutation)
+            return try await self.performPressAction(on: element, beforeMutation: beforeMutation)
         } catch let error as ActionInputError
             where error == .unsupported(.actionUnsupported) &&
             allowAccessibilityValueFallback &&
@@ -201,6 +237,51 @@ struct ActionInputDriver: ActionInputDriving {
             return try await self.performShowMenuAction(on: element)
         } catch ActionInputError.targetUnavailable {
             throw ActionInputError.unsupported(.actionUnsupported)
+        }
+    }
+
+    /// Keeps the operation lane owned until native completion while allowing a self-targeted app to service AX.
+    private func performPressAction(
+        on element: any AutomationElementRepresenting,
+        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
+    {
+        guard let axElement = element.underlyingAXElement else {
+            return try self.performAction(AXActionNames.kAXPressAction, on: element, beforeMutation: beforeMutation)
+        }
+        try Task.checkCancellation()
+        guard element.supportsAction(AXActionNames.kAXPressAction) else {
+            throw ActionInputError.unsupported(.actionUnsupported)
+        }
+        // The action may remove this element; result metadata must not query it after dispatch.
+        let anchorPoint = element.anchorPoint
+        let elementRole = element.role
+        try beforeMutation()
+        try Task.checkCancellation()
+        do {
+            _ = try await DetachedAXActionRunner.perform(
+                action: AXActionNames.kAXPressAction,
+                on: axElement,
+                gracePeriod: nil)
+            return UIInputExecutionResult.Action(
+                outcome: .dispatchedUnverified(
+                    delivery: Self.accessibilityActionDelivery,
+                    evidence: .deliveryAccepted,
+                    unitCount: .one),
+                actionName: AXActionNames.kAXPressAction,
+                anchorPoint: anchorPoint,
+                elementRole: elementRole)
+        } catch {
+            let classified = Self.classify(error)
+            if Self.nativeMutationFailureMayHaveDispatched(classified) {
+                throw DesktopActionFailure.indeterminate(
+                    delivery: Self.accessibilityActionDelivery,
+                    evidence: .completionUnknown,
+                    unitCount: .one,
+                    message: "Accessibility press returned without reliable completion evidence.",
+                    hint: "Observe the exact target before retrying this click.",
+                    causeDescription: error.localizedDescription)
+            }
+            throw classified
         }
     }
 
@@ -288,6 +369,51 @@ struct ActionInputDriver: ActionInputDriving {
         try self.performAction(actionName, on: element)
     }
 
+    /// Performs one named action off MainActor after a final target check.
+    ///
+    /// `AXShowMenu` keeps its native call running while the menu tracks, so it reports delivery after the
+    /// existing show-menu grace period. Every other action retains the operation lane until the native call
+    /// returns. A failure that may follow delivery stays indeterminate; nothing falls back to another route.
+    func tryPerformExactAction(
+        element: AutomationElement,
+        actionName: String,
+        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
+    {
+        try Task.checkCancellation()
+        guard element.supportsAction(actionName) else {
+            throw ActionInputError.unsupported(.actionUnsupported)
+        }
+        // The action may remove or move this element; result metadata must not query it after dispatch.
+        let anchorPoint = element.anchorPoint
+        let elementRole = element.role
+        try beforeMutation()
+        try Task.checkCancellation()
+        do {
+            let outcome = try await DetachedAXActionRunner.perform(
+                action: actionName,
+                on: element.element.underlyingElement,
+                gracePeriod: actionName == AXActionNames.kAXShowMenuAction
+                    ? DetachedAXActionRunner.showMenuGracePeriod : nil)
+            return UIInputExecutionResult.Action(
+                outcome: outcome,
+                actionName: actionName,
+                anchorPoint: anchorPoint,
+                elementRole: elementRole)
+        } catch {
+            let classified = Self.classify(error)
+            if Self.nativeMutationFailureMayHaveDispatched(classified) {
+                throw DesktopActionFailure.indeterminate(
+                    delivery: Self.accessibilityActionDelivery,
+                    evidence: .completionUnknown,
+                    unitCount: .one,
+                    message: "Accessibility action \(actionName) returned without reliable completion evidence.",
+                    hint: "Observe the exact target before deciding whether to repeat this action.",
+                    causeDescription: error.localizedDescription)
+            }
+            throw classified
+        }
+    }
+
     func trySelectText(
         element: AutomationElement,
         request: TextSelectionRequest,
@@ -307,9 +433,17 @@ struct ActionInputDriver: ActionInputDriving {
             reason: .targetUnavailable,
             message: "The target text or selection is unreadable or changed; observe it again.")
         let target = try await self.observationTarget(element)
-        guard element.role != "AXSecureTextField", element.subrole != "AXSecureTextField",
-              element.isTextSelectionSettable
-        else {
+        guard element.role != "AXSecureTextField", element.subrole != "AXSecureTextField" else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "The nonsecure target must expose a settable AXSelectedTextRange.")
+        }
+        // Web text that isn't editable has no settable range, but its web area selects by text markers.
+        if !element.isTextSelectionSettable, let markers = element.webTextMarkers {
+            return try await self.selectWebText(
+                element: element, markers: markers, request: request, beforeMutation: beforeMutation)
+        }
+        guard element.isTextSelectionSettable else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .operationUnsupported,
                 message: "The nonsecure target must expose a settable AXSelectedTextRange.")
@@ -400,6 +534,60 @@ struct ActionInputDriver: ActionInputDriving {
                 anchorPoint: nil,
                 elementRole: element.role),
             selection)
+    }
+
+    private func selectWebText(
+        element: any AutomationElementRepresenting,
+        markers: any WebTextMarkerAccess,
+        request: TextSelectionRequest,
+        beforeMutation: @MainActor () throws -> Void) async throws
+        -> (UIInputExecutionResult.Action, TextSelectionResult)
+    {
+        try Self.validateBeforeMutation(beforeMutation)
+        guard let span = markers.span() else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The web text's markers are unreadable; observe it again.")
+        }
+        let selection: TextSelectionResult
+        do {
+            selection = try request.resolve(in: span.text)
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(reason: .invalidRequest, message: error.localizedDescription)
+        }
+        let range = selection.selectedRange
+        let action = { (outcome: DesktopActionOutcome) in
+            UIInputExecutionResult.Action(
+                outcome: outcome, actionName: "AXSelectedTextMarkerRange", anchorPoint: nil, elementRole: element.role)
+        }
+        if WebTextSelectionPlanner.selectionMatches(range, in: span, markers: markers) {
+            return (action(.confirmedNoChange()), selection)
+        }
+        guard let target = WebTextSelectionPlanner.locate(range, in: span, markers: markers) else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "The web text's markers could not be matched to this text within the step limit; nothing was selected.",
+                hint: "Select within a smaller element from the inspection, or read the text with desktop_read.")
+        }
+        try Self.validateBeforeMutation(beforeMutation)
+        guard markers.select(target) else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: "The web area did not accept a text marker selection.")
+        }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        repeat {
+            if WebTextSelectionPlanner.selectionMatches(range, in: span, markers: markers) {
+                return (action(.confirmedChange(delivery: Self.accessibilityValueDelivery, unitCount: .one)), selection)
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        } while ContinuousClock.now < deadline
+        throw DesktopActionFailure.indeterminate(
+            delivery: Self.accessibilityValueDelivery,
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "The web area accepted the selection, but it did not read back as the requested text.",
+            hint: "Observe the page before deciding whether to retry the selection.")
     }
 
     nonisolated static func classify(_ error: any Error) -> ActionInputError {
@@ -566,9 +754,19 @@ struct ActionInputDriver: ActionInputDriving {
         let observationTarget = try await self.observationTarget(element)
         try Self.validateBeforeMutation(beforeMutation)
         do {
-            try element.setAutomationFocused(true)
+            try await element.focusAutomationElement()
         } catch {
-            throw Self.classify(error)
+            let classified = Self.classify(error)
+            if Self.nativeMutationFailureMayHaveDispatched(classified) {
+                throw DesktopActionFailure.indeterminate(
+                    delivery: Self.accessibilityValueDelivery,
+                    evidence: .completionUnknown,
+                    unitCount: .one,
+                    message: "Accessibility focus returned without reliable completion evidence.",
+                    hint: "Observe the exact field before deciding whether to retry focus.",
+                    causeDescription: error.localizedDescription)
+            }
+            throw classified
         }
         var confirmedIdentity: FocusedElementIdentity?
         guard await self.observeMutation(
@@ -615,6 +813,11 @@ struct ActionInputDriver: ActionInputDriving {
         beforeMutation: @MainActor () throws -> Void = {})
         async throws -> UIInputExecutionResult.Action
     {
+        if Self.isPressToggleRole(element.role), !element.isValueSettable, !element.isSelectedSettable,
+           element.supportsAction(AXActionNames.kAXPressAction)
+        {
+            return try await self.setToggleByPress(value, on: element, beforeMutation: beforeMutation)
+        }
         if let rejectionReason = Self.setValueRejectionReason(
             role: element.role,
             subrole: element.subrole,
@@ -622,6 +825,13 @@ struct ActionInputDriver: ActionInputDriving {
             isSelectedSettable: element.isSelectedSettable)
         {
             throw ActionInputError.unsupported(rejectionReason)
+        }
+        // An unresolved ancestry counts as web content, so a write the page can't see is never reported as done.
+        if case .string = value,
+           WebTextFieldValueRefusal.textRoles.contains(element.role ?? "") || element.subrole == "AXSearchField",
+           element.textInputRoute != .nativeAX
+        {
+            throw WebTextFieldValueRefusal.failure
         }
 
         do {
@@ -667,6 +877,11 @@ struct ActionInputDriver: ActionInputDriving {
                     elementRole: observedIdentity?.role ?? element.role,
                     valueVerification: .init(
                         attribute: .selected, resolvedKind: .bool, readback: .bool(selectedAfter)))
+            }
+
+            if let dateBefore = element.value as? Date, case let .string(text) = value {
+                return try await self.setDateValue(
+                    text, before: dateBefore, on: element, beforeMutation: beforeMutation)
             }
 
             let valueBefore = element.value
@@ -738,6 +953,47 @@ struct ActionInputDriver: ActionInputDriving {
             throw failure
         } catch {
             throw Self.classify(error)
+        }
+    }
+
+    /// Date and time controls report an NSDate; the request and readback are both UTC ISO 8601 to the second.
+    private func setDateValue(
+        _ text: String,
+        before: Date,
+        on element: any AutomationElementRepresenting,
+        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
+    {
+        guard let requested = ElementDateValue.date(text) else {
+            throw ActionInputError.unsupported(.valueNotSettable)
+        }
+        func verification(_ date: Date) -> ElementValueVerification {
+            .init(attribute: .value, resolvedKind: .string, readback: .string(ElementDateValue.string(date)))
+        }
+        if ElementDateValue.string(before) == text {
+            return UIInputExecutionResult.Action(
+                outcome: .confirmedNoChange(),
+                actionName: AXActionNames.kAXSetValueAction,
+                anchorPoint: element.anchorPoint,
+                elementRole: element.role,
+                valueVerification: verification(before))
+        }
+        try Self.validateBeforeMutation(beforeMutation)
+        try element.setAutomationDate(requested)
+        // Controls apply the date synchronously, but may publish it on the next run-loop turn.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while true {
+            if let after = element.value as? Date, ElementDateValue.string(after) == text {
+                return UIInputExecutionResult.Action(
+                    outcome: Self.dispatchedValueMutationOutcome(preStateKnown: true),
+                    actionName: AXActionNames.kAXSetValueAction,
+                    anchorPoint: element.anchorPoint,
+                    elementRole: element.role,
+                    valueVerification: verification(after))
+            }
+            guard ContinuousClock.now < deadline else {
+                throw Self.unverifiedValueMutationFailure(attribute: AXActionNames.kAXSetValueAction)
+            }
+            try await Task.sleep(for: .milliseconds(50))
         }
     }
 
@@ -867,6 +1123,75 @@ struct ActionInputDriver: ActionInputDriving {
             }
         }
         return false
+    }
+
+    /// Toggles whose on/off value is read-only but which advertise AXPress, as SwiftUI checkboxes do.
+    private nonisolated static func isPressToggleRole(_ role: String?) -> Bool {
+        switch role {
+        case AXRoleNames.kAXCheckBoxRole, "AXSwitch", "AXToggle", "AXDisclosureTriangle":
+            true
+        default:
+            false
+        }
+    }
+
+    private nonisolated static func toggleState(_ readback: ElementValueReadback?) -> Bool? {
+        switch readback {
+        case let .bool(value)?: value
+        case let .int(value)? where value == 0 || value == 1: value == 1
+        case let .double(value)? where value == 0 || value == 1: value == 1
+        default: nil
+        }
+    }
+
+    /// Sets a read-only toggle with at most one press, then reads the same element back.
+    ///
+    /// A state already matching the request sends nothing. A mixed or unreadable state is refused before input.
+    /// After the press, only a readback of the requested state confirms the change; anything else stays
+    /// indeterminate, and the press is never repeated.
+    private func setToggleByPress(
+        _ value: UIElementValue,
+        on element: any AutomationElementRepresenting,
+        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
+    {
+        let requested = try ElementValueMutationSemantics.booleanValue(value, role: element.role)
+        guard let before = Self.toggleState(ElementValueReadback(nativeValue: element.value)) else {
+            throw ActionInputError.unsupported(.valueNotSettable)
+        }
+        if before == requested {
+            return UIInputExecutionResult.Action(
+                outcome: .confirmedNoChange(),
+                actionName: AXActionNames.kAXSetValueAction,
+                anchorPoint: element.anchorPoint,
+                elementRole: element.role,
+                valueVerification: .init(attribute: .value, resolvedKind: .bool, readback: .bool(before)))
+        }
+        let observationTarget = try await self.observationTarget(element)
+        let pressed = try await self.performPressAction(on: element, beforeMutation: beforeMutation)
+        var after: Bool?
+        guard await self.observeMutation(
+            on: element,
+            target: observationTarget,
+            attribute: .value,
+            matches: { sample in
+                after = Self.toggleState(sample.map(\.value) ?? ElementValueReadback(nativeValue: element.value))
+                return after == requested
+            }), let after
+        else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: Self.accessibilityActionDelivery,
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "The toggle was pressed, but its requested state could not be verified.",
+                hint: "Observe the exact target before deciding whether to press it again; do not reuse the prior snapshot.",
+                causeDescription: "Post-press readback did not confirm the requested state.")
+        }
+        return UIInputExecutionResult.Action(
+            outcome: .confirmedChange(delivery: Self.accessibilityActionDelivery),
+            actionName: AXActionNames.kAXSetValueAction,
+            anchorPoint: pressed.anchorPoint,
+            elementRole: pressed.elementRole,
+            valueVerification: .init(attribute: .value, resolvedKind: .bool, readback: .bool(after)))
     }
 
     private static func unverifiedValueMutationFailure(attribute: String) -> DesktopActionFailure {

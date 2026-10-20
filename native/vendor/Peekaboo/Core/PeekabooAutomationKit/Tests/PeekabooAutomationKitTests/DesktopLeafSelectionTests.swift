@@ -48,6 +48,26 @@ struct DesktopLeafSelectionTests {
     }
 
     @Test
+    func `exact-only selection refuses folded, case and partial matches`() throws {
+        let candidates = [
+            self.candidate(index: 0, name: "New Window"),
+            self.candidate(index: 1, name: "Wi-Fi"),
+        ]
+
+        for selector in ["New", "new window", "WiFi"] {
+            #expect(throws: DesktopLeafSelectionError.self) {
+                try DeterministicDesktopLeafSelector.select(named: selector, from: candidates, exactOnly: true)
+            }
+        }
+        let selection = try DeterministicDesktopLeafSelector.select(
+            named: "New Window",
+            from: candidates,
+            exactOnly: true)
+        #expect(selection.candidate.value == Value(name: "New Window"))
+        #expect(selection.matchKind == .exact)
+    }
+
+    @Test
     func `selected leaf evidence detects reorder and substitution`() throws {
         let original = try self.evidence(index: 0, title: "Clock", candidateDigest: "a")
         let reordered = try self.evidence(index: 1, title: "Clock", candidateDigest: "b")

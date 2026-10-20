@@ -60,6 +60,25 @@ extension PeekabooBridgeOperationResultSemantics {
         }
 
         return switch operation {
+        case .clipboardFilesRead:
+            descriptor(completion: .readOnly, targetPolicy: .notApplicable, responseFamilies: [.clipboardFiles])
+        case .clipboardImageRead, .clipboardImageExport:
+            descriptor(completion: .readOnly, targetPolicy: .notApplicable, responseFamilies: [.clipboardImage])
+        case .clipboardTextRead:
+            descriptor(completion: .readOnly, targetPolicy: .notApplicable, responseFamilies: [.clipboardText])
+        case .clipboardFilesWrite:
+            descriptor(ownership: .service, completion: .dispatchedUnverified(clipboardForeground),
+                       targetPolicy: .global, responseFamilies: [.clipboardFilesWrite])
+        case .clipboardImageWrite:
+            descriptor(ownership: .service, completion: .dispatchedUnverified(clipboardForeground),
+                       targetPolicy: .global, responseFamilies: [.clipboardImageWrite])
+        case .clipboardTextWrite:
+            descriptor(ownership: .service, completion: .dispatchedUnverified(clipboardForeground),
+                       targetPolicy: .global, responseFamilies: [.clipboardTextWrite])
+        case .literalInsert, .attachmentInsert:
+            descriptor(ownership: .service, requiredPermissions: [.accessibility, .postEvent],
+                       completion: .dispatchedUnverified(clipboardForeground),
+                       targetPolicy: .global, responseFamilies: [.literalInsert])
         case .permissionsStatus:
             descriptor(
                 completion: .readOnly,
@@ -275,11 +294,31 @@ extension PeekabooBridgeOperationResultSemantics {
                 completion: .dispatchedUnverified(globalForeground),
                 targetPolicy: .global,
                 responseFamilies: [.ok])
-        case .swipe, .drag, .moveMouse:
+        case .swipe, .drag, .moveMouse, .systemDefinedKey:
             descriptor(
                 ownership: .service,
                 requiredPermissions: [.postEvent],
                 completion: .dispatchedUnverified(globalForeground),
+                targetPolicy: .global,
+                responseFamilies: [.ok])
+        case .secureTextFill:
+            descriptor(
+                ownership: .service,
+                requiredPermissions: [.accessibility, .postEvent],
+                completion: .dispatchedUnverified(windowBackground),
+                targetPolicy: .requestPinned,
+                responseFamilies: [.bool])
+        case .enableWebAccessibility:
+            descriptor(
+                ownership: .service,
+                requiredPermissions: [.accessibility],
+                completion: .dispatchedUnverified(valueBackground),
+                targetPolicy: .requestPinned,
+                responseFamilies: [.int])
+        case .selectInputSource:
+            descriptor(
+                ownership: .service,
+                completion: .dispatchedUnverified(nativeBackground),
                 targetPolicy: .global,
                 responseFamilies: [.ok])
         case .targetedHotkey:
@@ -361,7 +400,8 @@ extension PeekabooBridgeOperationResultSemantics {
                 targetPolicy: .requestPinned,
                 responseFamilies: [.ok, .window],
                 responseTargetEvidence: .window)
-        case .moveWindow, .resizeWindow, .setWindowBounds, .minimizeWindow, .restoreWindow, .maximizeWindow:
+        case .moveWindow, .resizeWindow, .setWindowBounds, .minimizeWindow, .restoreWindow, .maximizeWindow,
+             .setWindowFullScreen:
             descriptor(
                 ownership: .service,
                 pinnedWindow: .required,
@@ -495,7 +535,7 @@ extension PeekabooBridgeOperationResultSemantics {
                 completion: .readOnly,
                 targetPolicy: .notApplicable,
                 responseFamilies: [.menuStructure])
-        case .clickMenuItem, .clickMenuItemByName:
+        case .menuCommand, .clickMenuItem, .clickMenuItemByName:
             descriptor(
                 ownership: .service,
                 requiredPermissions: [.accessibility],
@@ -683,6 +723,15 @@ extension PeekabooBridgeOperationResultSemantics {
                 typedResponse: .dialogResult,
                 requiredPermissions: [.accessibility, .postEvent],
                 completion: .dispatchedUnverified(globalForeground),
+                targetPolicy: .responseResolved,
+                responseFamilies: [.dialogResult],
+                responseTargetEvidence: .dialog)
+        case .exactFileDialogPath:
+            descriptor(
+                ownership: .service,
+                typedResponse: .dialogResult,
+                requiredPermissions: [.accessibility, .postEvent],
+                completion: .dispatchedUnverified(compositeForeground),
                 targetPolicy: .responseResolved,
                 responseFamilies: [.dialogResult],
                 responseTargetEvidence: .dialog)

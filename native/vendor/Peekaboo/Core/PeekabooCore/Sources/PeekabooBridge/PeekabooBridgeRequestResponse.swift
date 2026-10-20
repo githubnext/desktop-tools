@@ -6,6 +6,15 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     indirect case attestedOperation(PeekabooBridgeAttestedOperationRequest)
     indirect case projectedAction(PeekabooBridgeProjectedActionRequest)
     case handshake(PeekabooBridgeHandshake)
+    case literalInsert(PeekabooBridgeLiteralInsertRequest)
+    case attachmentInsert(PeekabooBridgeAttachmentInsertRequest)
+    case clipboardTextRead
+    case clipboardImageRead
+    case clipboardImageExport
+    case clipboardFilesRead
+    case clipboardTextWrite(String)
+    case clipboardImageWrite(Data)
+    case clipboardFilesWrite([String])
     case permissionsStatus
     case requestPostEventPermission
     case daemonStatus
@@ -53,6 +62,10 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case swipe(PeekabooBridgeSwipeRequest)
     case drag(PeekabooBridgeDragRequest)
     case moveMouse(PeekabooBridgeMoveMouseRequest)
+    case systemDefinedKey(PeekabooBridgeSystemDefinedKeyRequest)
+    case selectInputSource(PeekabooBridgeSelectInputSourceRequest)
+    case enableWebAccessibility(PeekabooBridgeEnableWebAccessibilityRequest)
+    case secureTextFill(PeekabooBridgeSecureTextFillRequest)
     case waitForElement(PeekabooBridgeWaitRequest)
     case listWindows(PeekabooBridgeWindowTargetRequest)
     case listWindowMutationInventory(PeekabooBridgeWindowTargetRequest)
@@ -65,6 +78,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case minimizeWindow(PeekabooBridgeWindowTargetRequest)
     case restoreWindow(PeekabooBridgeWindowTargetRequest)
     case maximizeWindow(PeekabooBridgeWindowTargetRequest)
+    case setWindowFullScreen(PeekabooBridgeWindowFullScreenRequest)
     case getFocusedWindow
     case listApplications
     case listApplicationMutationInventory
@@ -82,6 +96,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case showAllApplications
     case listMenus(PeekabooBridgeMenuListRequest)
     case listFrontmostMenus
+    case menuCommand(MenuCommandRequest)
     case clickMenuItem(PeekabooBridgeMenuClickRequest)
     case clickMenuItemByName(PeekabooBridgeMenuClickByNameRequest)
     case listMenuExtras
@@ -110,6 +125,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case exactDialogDismiss(PreparedDialogActionReceipt)
     case exactDialogEnterText(DialogInputExecutionRequest)
     case exactDialogForceDismiss(DialogForcedDismissExecutionRequest)
+    case exactFileDialogPath(FileDialogPathRequest)
     case createSnapshot(PeekabooBridgeCreateSnapshotRequest)
     case storeDetectionResult(PeekabooBridgeStoreDetectionRequest)
     case getDetectionResult(PeekabooBridgeGetDetectionRequest)
@@ -134,6 +150,15 @@ extension PeekabooBridgeRequest {
         case let .attestedOperation(payload): payload.request.operation
         case let .projectedAction(payload): payload.request.operation
         case .handshake: .permissionsStatus
+        case .literalInsert: .literalInsert
+        case .attachmentInsert: .attachmentInsert
+        case .clipboardTextRead: .clipboardTextRead
+        case .clipboardImageRead: .clipboardImageRead
+        case .clipboardImageExport: .clipboardImageExport
+        case .clipboardFilesRead: .clipboardFilesRead
+        case .clipboardTextWrite: .clipboardTextWrite
+        case .clipboardImageWrite: .clipboardImageWrite
+        case .clipboardFilesWrite: .clipboardFilesWrite
         case .permissionsStatus: .permissionsStatus
         case .requestPostEventPermission: .requestPostEventPermission
         case .daemonStatus: .daemonStatus
@@ -182,6 +207,10 @@ extension PeekabooBridgeRequest {
         case .swipe: .swipe
         case .drag: .drag
         case .moveMouse: .moveMouse
+        case .systemDefinedKey: .systemDefinedKey
+        case .selectInputSource: .selectInputSource
+        case .enableWebAccessibility: .enableWebAccessibility
+        case .secureTextFill: .secureTextFill
         case .waitForElement: .waitForElement
         case .listWindows, .listWindowMutationInventory: .listWindows
         case .focusWindow: .focusWindow
@@ -193,6 +222,7 @@ extension PeekabooBridgeRequest {
         case .minimizeWindow: .minimizeWindow
         case .restoreWindow: .restoreWindow
         case .maximizeWindow: .maximizeWindow
+        case .setWindowFullScreen: .setWindowFullScreen
         case .getFocusedWindow: .getFocusedWindow
         case .listApplications, .listApplicationMutationInventory: .listApplications
         case .findApplication: .findApplication
@@ -209,6 +239,7 @@ extension PeekabooBridgeRequest {
         case .showAllApplications: .showAllApplications
         case .listMenus: .listMenus
         case .listFrontmostMenus: .listFrontmostMenus
+        case .menuCommand: .menuCommand
         case .clickMenuItem: .clickMenuItem
         case .clickMenuItemByName: .clickMenuItemByName
         case .listMenuExtras: .listMenuExtras
@@ -237,6 +268,7 @@ extension PeekabooBridgeRequest {
         case .exactDialogDismiss: .exactDialogDismiss
         case .exactDialogEnterText: .exactDialogEnterText
         case .exactDialogForceDismiss: .exactDialogForceDismiss
+        case .exactFileDialogPath: .exactFileDialogPath
         case .createSnapshot: .createSnapshot
         case .storeDetectionResult: .storeDetectionResult
         case .getDetectionResult: .getDetectionResult
@@ -262,6 +294,13 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
     case operationSessionRollover(PeekabooBridgeOperationSessionRefusal)
     indirect case projectedAction(PeekabooBridgeProjectedActionResponse)
     case handshake(PeekabooBridgeHandshakeResponse)
+    case literalInsert(PeekabooBridgeLiteralInsertResult)
+    case clipboardText(ClipboardTextContents)
+    case clipboardImage(ClipboardImageContents)
+    case clipboardFiles(ClipboardFilesContents)
+    case clipboardTextWrite(PeekabooBridgeClipboardTextWriteResult)
+    case clipboardImageWrite(PeekabooBridgeClipboardImageWriteResult)
+    case clipboardFilesWrite(PeekabooBridgeClipboardFilesWriteResult)
     case permissionsStatus(PermissionsStatus)
     case daemonStatus(PeekabooDaemonStatus)
     case agentExecutionTrace(PeekabooBridgeAgentExecutionTraceResponse)

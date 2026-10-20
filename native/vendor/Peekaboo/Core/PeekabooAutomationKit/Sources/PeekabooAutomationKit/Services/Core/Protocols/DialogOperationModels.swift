@@ -479,3 +479,42 @@ public struct PreparedDialogActionReceipt: Sendable, Codable, Equatable {
         self.discoveryProof = discoveryProof
     }
 }
+
+/// Chooses one absolute path in one exact Open or Save panel, without pressing its default button.
+public struct FileDialogPathRequest: Sendable, Codable, Equatable {
+    public let target: DialogTargetSelector
+    public let path: String
+    public let focus: DialogForegroundFocusPolicy
+
+    public init(
+        target: DialogTargetSelector,
+        path: String,
+        focus: DialogForegroundFocusPolicy = DialogForegroundFocusPolicy()) throws
+    {
+        guard target.hasTarget else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Choosing a file-dialog path requires an explicit app, PID, or window target.",
+                hint: "List the dialog and pass its exact owner.")
+        }
+        guard path.hasPrefix("/"), !path.contains("\0"), path.utf8.count <= 4096 else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "File-dialog paths must be absolute, at most 4096 bytes, and free of NUL characters.")
+        }
+        try focus.validate(operation: "File-dialog path")
+        self.target = target
+        self.path = path
+        self.focus = focus
+    }
+
+    private enum CodingKeys: String, CodingKey { case target, path, focus }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            target: container.decode(DialogTargetSelector.self, forKey: .target),
+            path: container.decode(String.self, forKey: .path),
+            focus: container.decode(DialogForegroundFocusPolicy.self, forKey: .focus))
+    }
+}

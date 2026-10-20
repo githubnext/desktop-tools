@@ -503,6 +503,20 @@ struct ObservedFocusCorroborationTests {
         #expect(result.elements.all.filter { $0.isFocused == true }.count == 3)
     }
 
+    // The match is against the app's own focused element, so elements left unread past a budget cannot win it.
+    @Test(arguments: [
+        DetectionTruncationInfo(maxDepthReached: true),
+        DetectionTruncationInfo(maxElementCountReached: true),
+        DetectionTruncationInfo(maxChildrenPerNodeReached: true),
+    ])
+    func `budget truncated builder still attaches corroboration`(truncation: DetectionTruncationInfo) throws {
+        let result = self.result(elements: self.ambiguousElements(), truncation: truncation)
+        let receipt = try #require(result.metadata.windowContext?.focusedElement)
+
+        #expect(receipt.identifier == "native-field")
+        #expect(result.metadata.truncationInfo == truncation)
+    }
+
     @Test(arguments: Self.truncations)
     func `truncated builder preserves ordinary unique focus behavior`(truncation: DetectionTruncationInfo) {
         let result = self.result(elements: [self.element(id: "field")], truncation: truncation)
@@ -598,14 +612,11 @@ struct ObservedFocusCorroborationTests {
     }
 
     enum SuppressedObservation: CaseIterable, Sendable {
-        case cached, applicationPartial, depth, count, children, deadline, incompleteRead
+        case cached, applicationPartial, deadline, incompleteRead
 
         var truncation: DetectionTruncationInfo? {
             switch self {
             case .cached, .applicationPartial: nil
-            case .depth: DetectionTruncationInfo(maxDepthReached: true)
-            case .count: DetectionTruncationInfo(maxElementCountReached: true)
-            case .children: DetectionTruncationInfo(maxChildrenPerNodeReached: true)
             case .deadline: DetectionTruncationInfo(deadlineReached: true)
             case .incompleteRead: DetectionTruncationInfo(incompleteAccessibilityRead: true)
             }

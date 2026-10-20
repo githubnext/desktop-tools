@@ -15,11 +15,16 @@ struct BackgroundInputDriverPositionalTargetTests {
         action: BackgroundInputDriver.PositionalClickAction,
         allowed: Bool) async throws
     {
-        let element = PositionalMockElement(isFocusedSettable: true, isSelectedSettable: true)
+        let element = PositionalMockElement(
+            role: "AXTextField",
+            frame: CGRect(x: 20, y: 30, width: 200, height: 80),
+            isFocusedSettable: true,
+            isSelectedSettable: true)
         if allowed {
             let outcome = try await BackgroundInputDriver.performPositionalClickAction(
                 action, on: element, allowsAccessibilityValueDelivery: true)
-            #expect(outcome.state == .dispatchedUnverified)
+            // Positional focus shares element clicks' verified focus write; selection stays unread.
+            #expect(outcome.state == (action == .focus ? .confirmedChange : .dispatchedUnverified))
             #expect(outcome.delivery?.mechanism == .accessibilityValue)
         } else {
             let failure = await #expect(throws: DesktopActionFailure.self) {
@@ -429,8 +434,8 @@ struct BackgroundInputDriverPositionalTargetTests {
         let message = BackgroundInputDriver.noActionableElementMessage(
             at: CGPoint(x: 2396, y: 162),
             targetProcessIdentifier: 92941)
-        #expect(message.contains("--foreground"))
-        #expect(message.contains("--input-strategy synthOnly"))
+        #expect(message.contains("modifier"))
+        #expect(message.contains("Nothing was clicked"))
         #expect(message.contains("(2396, 162)"))
         #expect(message.contains("92941"))
         // The message must describe the genuine "nothing pressable here" case, not claim that
@@ -484,7 +489,82 @@ struct BackgroundInputDriverPositionalTargetTests {
         let message = BackgroundInputDriver.occludedWindowMessage(at: CGPoint(x: 2396, y: 162), targetWindowID: 3279)
         #expect(message.contains("3279"))
         #expect(message.contains("(2396, 162)"))
-        #expect(message.contains("--foreground"))
+        #expect(message.contains("sheet"))
+        #expect(!message.contains("--foreground"))
+    }
+
+    @Test
+    func `occluded window refusal is retry safe`() {
+        let failure = BackgroundInputDriver.occludedWindowRefusal(
+            at: CGPoint(x: 1, y: 2),
+            targetWindowID: 3,
+            resolvedWindowID: 4)
+        #expect(failure.outcome.dispatchState == .none)
+    }
+
+    private static func window(_ id: Int, pid: Int = 42, layer: Int = 0, _ rect: CGRect) -> [String: Any] {
+        [
+            kCGWindowNumber as String: id,
+            kCGWindowOwnerPID as String: pid,
+            kCGWindowLayer as String: layer,
+            kCGWindowBounds as String: rect.dictionaryRepresentation as NSDictionary,
+        ]
+    }
+
+    private static let parentFrame = CGRect(x: 397, y: 116, width: 740, height: 625)
+    private static let sheetFrame = CGRect(x: 532, y: 241, width: 470, height: 375)
+    private static let panelFrame = CGRect(x: 327, y: 204, width: 880, height: 448)
+
+    @MainActor
+    private static func isSheet(
+        _ sheetID: CGWindowID,
+        attachedTo parentID: CGWindowID,
+        _ windows: [[String: Any]],
+        listed: [CGWindowID]? = [75]) -> Bool
+    {
+        BackgroundInputDriver.isSheetWithoutAccessibilityWindow(
+            sheetID,
+            attachedTo: parentID,
+            copyWindowInfo: { _, _ in windows },
+            accessibilityWindowIDs: { _ in listed })
+    }
+
+    @Test @MainActor
+    func `a sheet in front of its parent with no AXWindow is accepted`() {
+        let accepted = Self.isSheet(756, attachedTo: 75, [Self.window(756, Self.sheetFrame), Self.window(75, Self.parentFrame)])
+        #expect(accepted)
+    }
+
+    @Test @MainActor
+    func `an open panel wider than its parent, on a sheet, is accepted`() {
+        let windows = [Self.window(1654, Self.panelFrame), Self.window(756, Self.sheetFrame), Self.window(75, Self.parentFrame)]
+        let accepted = Self.isSheet(1654, attachedTo: 75, windows)
+        #expect(accepted)
+    }
+
+    @Test @MainActor
+    func `an open panel whose controls name an off-screen service window is accepted`() {
+        let windows = [Self.window(1654, Self.panelFrame), Self.window(756, Self.sheetFrame), Self.window(75, Self.parentFrame)]
+        let accepted = Self.isSheet(1654, attachedTo: 1653, windows)
+        #expect(accepted)
+        // An on-screen window that the panel isn't attached to still refuses.
+        let other = Self.window(9, pid: 7, CGRect(x: 0, y: 0, width: 100, height: 100))
+        let refused = !Self.isSheet(1654, attachedTo: 9, [other] + windows)
+        #expect(refused)
+    }
+
+    @Test @MainActor
+    func `a window Accessibility lists, behind the parent, off its center, or of another app is not a sheet`() {
+        let front = [Self.window(756, Self.sheetFrame), Self.window(75, Self.parentFrame)]
+        let results = [
+            Self.isSheet(756, attachedTo: 75, front, listed: [75, 756]),
+            Self.isSheet(756, attachedTo: 75, front, listed: nil),
+            Self.isSheet(756, attachedTo: 75, front.reversed()),
+            Self.isSheet(756, attachedTo: 75, [Self.window(756, CGRect(x: 0, y: 241, width: 470, height: 375)), front[1]]),
+            Self.isSheet(756, attachedTo: 75, [Self.window(756, pid: 7, Self.sheetFrame), front[1]]),
+            Self.isSheet(756, attachedTo: 75, [Self.window(756, layer: 8, Self.sheetFrame), front[1]]),
+        ]
+        #expect(results == [false, false, false, false, false, false])
     }
 }
 
@@ -504,8 +584,13 @@ private final class PositionalMockElement: AutomationElementRepresenting, @unche
     let isFocusedSettable: Bool
     let isSelectedSettable: Bool
     let isEnabled: Bool
-    let isFocused = false
+    private(set) var isFocused = false
     let isOffscreen = false
+    var focusedElementIdentity: FocusedElementIdentity? {
+        self.role.map { role in
+            FocusedElementIdentity(processIdentifier: 777, windowID: 42, role: role, frame: self.frame ?? .zero)
+        }
+    }
     var anchorPoint: CGPoint? {
         self.frame.map { CGPoint(x: $0.midX, y: $0.midY) }
     }
@@ -561,6 +646,7 @@ private final class PositionalMockElement: AutomationElementRepresenting, @unche
 
     func setAutomationFocused(_ focused: Bool) throws {
         self.setFocusedValues.append(focused)
+        self.isFocused = focused
     }
 
     func setAutomationSelected(_ selected: Bool) throws {

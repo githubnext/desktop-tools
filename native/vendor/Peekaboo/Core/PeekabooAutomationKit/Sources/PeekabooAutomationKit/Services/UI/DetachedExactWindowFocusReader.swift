@@ -14,6 +14,8 @@ struct RetainedFocusElement: @unchecked Sendable, Equatable {
 struct ExactWindowFocusSnapshot: Sendable, Equatable {
     let processIdentifier: pid_t
     let windowID: Int?
+    /// The attached sheet that holds the element inside `windowID`, if any.
+    let sheetWindowID: Int?
     let frame: CGRect
     let role: String?
     let subrole: String?
@@ -26,6 +28,7 @@ struct ExactWindowFocusSnapshot: Sendable, Equatable {
     init(
         processIdentifier: pid_t,
         windowID: Int?,
+        sheetWindowID: Int? = nil,
         frame: CGRect,
         role: String? = nil,
         subrole: String? = nil,
@@ -37,6 +40,7 @@ struct ExactWindowFocusSnapshot: Sendable, Equatable {
     {
         self.processIdentifier = processIdentifier
         self.windowID = windowID
+        self.sheetWindowID = sheetWindowID
         self.frame = frame
         self.role = role
         self.subrole = subrole
@@ -56,6 +60,16 @@ struct ExactKeyWindowSnapshot: Sendable, Equatable {
 
     var hasSheet: Bool {
         self.isSheet || self.hasAttachedSheet
+    }
+
+    /// Whether keyboard input reaches `focused` in the exact `windowID`. A receiver inside an attached
+    /// sheet is reachable only while that sheet is key; any other receiver needs the window itself.
+    func isKey(processIdentifier: pid_t, windowID: Int, focused: ExactWindowFocusSnapshot) -> Bool {
+        guard self.processIdentifier == processIdentifier else { return false }
+        if let sheetWindowID = focused.sheetWindowID {
+            return self.isSheet && self.windowID == sheetWindowID
+        }
+        return self.windowID == windowID
     }
 }
 
@@ -111,19 +125,8 @@ enum DetachedExactWindowFocusReader {
             element: focusedElement,
             processIdentifier: focusedProcessIdentifier,
             metadata: metadata,
-            resolveWindowID: { window in
-                if deadline == nil {
-                    AXUIElementSetMessagingTimeout(window, self.messagingTimeout)
-                }
-                defer {
-                    if deadline != nil {
-                        AXUIElementSetMessagingTimeout(window, 0)
-                    }
-                }
-                return self.readBeforeDeadline(
-                    deadline,
-                    applyTimeout: { AXUIElementSetMessagingTimeout(window, $0) == .success },
-                    read: { AXWindowIDResolver.windowID(of: window).map(Int.init) })
+            resolveOwner: {
+                AXWindowIDResolver.owner(of: focusedElement, tree: .bounded(deadline: deadline))
             })
         guard deadline.map({ ContinuousClock.now < $0 }) ?? true else { return nil }
         return snapshot
@@ -133,7 +136,7 @@ enum DetachedExactWindowFocusReader {
         element: AXUIElement,
         processIdentifier: pid_t,
         metadata: [String: AXDescriptorReader.SingleAttributeRead],
-        resolveWindowID: (AXUIElement) -> Int?) -> ExactWindowFocusSnapshot
+        resolveOwner: () -> AXWindowIDResolver.Owner?) -> ExactWindowFocusSnapshot
     {
         let value: (String) -> CFTypeRef? = { name in
             guard let read = metadata[name], read.error == .success, let value = read.value else { return nil }
@@ -146,17 +149,16 @@ enum DetachedExactWindowFocusReader {
         } else {
             .zero
         }
-        let windowID = value(kAXWindowAttribute).flatMap { window -> Int? in
-            guard CFGetTypeID(window) == AXUIElementGetTypeID() else { return nil }
-            return resolveWindowID(unsafeDowncast(window, to: AXUIElement.self))
-        }
+        // A sheet control's AXWindow link does not name its host window, so resolve from the element.
+        let owner = resolveOwner()
         let role = value(kAXRoleAttribute) as? String
         let subrole = self.subroleObservation(metadata[kAXSubroleAttribute])
         let title = value(kAXTitleAttribute) as? String
         let identifier = value(kAXIdentifierAttribute) as? String
         return ExactWindowFocusSnapshot(
             processIdentifier: processIdentifier,
-            windowID: windowID,
+            windowID: owner.map { Int($0.windowID) },
+            sheetWindowID: owner?.sheetWindowID.map(Int.init),
             frame: frame,
             role: role,
             subrole: subrole.value,
@@ -272,6 +274,7 @@ enum DetachedExactWindowFocusReader {
             return .success(ExactWindowFocusSnapshot(
                 processIdentifier: current.processIdentifier,
                 windowID: current.windowID,
+                sheetWindowID: current.sheetWindowID,
                 frame: current.frame,
                 role: current.role,
                 subrole: current.subrole,
@@ -394,30 +397,29 @@ enum DetachedExactWindowFocusReader {
         guard AXUIElementGetPid(element, &processIdentifier) == .success,
               processIdentifier == expected.processIdentifier
         else { return .failure(.processMismatch) }
-        let owningWindowRead = CFEqual(element, window)
-            ? AXDescriptorReader.SingleAttributeRead(error: .success, value: window)
-            : self.attributeRead(kAXWindowAttribute, of: element)
-        if case let .failure(error) = self.validateOwningWindow(
-            owningWindowRead,
-            expectedWindowID: expected.windowID,
-            copyWindowID: { AXWindowIDResolver.copyWindowID($0, into: &$1) })
-        {
-            return .failure(error)
-        }
         guard let frame = self.frame(of: element), !frame.isEmpty else {
             return .failure(.missingElementFrame)
         }
-
         let subrole = self.subroleObservation(self.attributeRead(kAXSubroleAttribute, of: element))
+        let title = self.stringAttribute(kAXTitleAttribute as String, of: element)
+        let identifier = self.stringAttribute(kAXIdentifierAttribute as String, of: element)
+        // Resolved last: the resolver's bounded reads clear this element's messaging timeout.
+        let owner: AXWindowIDResolver.Owner
+        switch self.validateOwningWindow(AXWindowIDResolver.owner(of: element), expectedWindowID: expected.windowID) {
+        case let .success(value): owner = value
+        case let .failure(error): return .failure(error)
+        }
+
         return .success(ExactWindowFocusSnapshot(
             processIdentifier: expected.processIdentifier,
             windowID: expected.windowID,
+            sheetWindowID: owner.sheetWindowID.map(Int.init),
             frame: frame,
             role: expected.role,
             subrole: subrole.value,
             subroleIsReadable: subrole.isReadable,
-            title: self.stringAttribute(kAXTitleAttribute as String, of: element),
-            identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element),
+            title: title,
+            identifier: identifier,
             nativeElement: RetainedFocusElement(element: element)))
     }
 
@@ -454,24 +456,14 @@ enum DetachedExactWindowFocusReader {
         return .failure(firstUnreadable ?? .windowNotFound)
     }
 
+    /// A sheet or Open and Save Panel control has no AXWindow link to the observed window, so the owner
+    /// comes from the shared resolver rather than the element's own AXWindow attribute.
     static func validateOwningWindow(
-        _ observation: AXDescriptorReader.SingleAttributeRead?,
-        expectedWindowID: Int,
-        copyWindowID: (AXUIElement, inout CGWindowID) -> AXError) -> Result<Void, FocusedElementReceiptError>
+        _ owner: AXWindowIDResolver.Owner?,
+        expectedWindowID: Int) -> Result<AXWindowIDResolver.Owner, FocusedElementReceiptError>
     {
-        guard let observation else {
-            return .failure(.windowObservationFailed(stage: .owningWindow, errorCode: nil))
-        }
-        guard observation.error == .success else {
-            return .failure(.windowObservationFailed(stage: .owningWindow, errorCode: observation.error.rawValue))
-        }
-        guard let value = observation.value, CFGetTypeID(value as CFTypeRef) == AXUIElementGetTypeID() else {
-            return .failure(.windowObservationFailed(stage: .owningWindow, errorCode: nil))
-        }
-        let window = unsafeDowncast(value as CFTypeRef, to: AXUIElement.self)
-        return self.windowIdentifier(window, stage: .owningWindowID, copyWindowID: copyWindowID).flatMap { actual in
-            actual == expectedWindowID ? .success(()) : .failure(.windowMismatch)
-        }
+        guard let owner else { return .failure(.windowObservationFailed(stage: .owningWindow, errorCode: nil)) }
+        return Int(owner.windowID) == expectedWindowID ? .success(owner) : .failure(.windowMismatch)
     }
 
     private static func windowIdentifier(

@@ -19,6 +19,16 @@ public struct ClipboardWriteRequest: Sendable {
     public var representations: [ClipboardRepresentation]
     public var alsoText: String?
     public var allowLarge: Bool
+    /// When set, one pasteboard item per file URL replaces the representations.
+    public var fileURLs: [String] = []
+
+    /// One public.file-url item per URL, in order.
+    public init(fileURLs: [String]) {
+        self.representations = []
+        self.alsoText = nil
+        self.allowLarge = false
+        self.fileURLs = fileURLs
+    }
 
     public init(
         representations: [ClipboardRepresentation],
@@ -51,6 +61,13 @@ public struct ClipboardReadResult: Sendable {
         self.data = data
         self.textPreview = textPreview
     }
+}
+
+/// A complete, generation-bound plain-text read; absence is distinct from an empty string.
+public struct ClipboardTextContents: Codable, Sendable {
+    public let present: Bool
+    public let text: String?
+    public let change_count: Int
 }
 
 /// Possible errors thrown by the clipboard service.
@@ -288,10 +305,165 @@ ClipboardReadAccessProviding {
         return .init(policy: policy)
     }
 
+    var literalInsertChangeCount: Int { self.pasteboard.changeCount }
+
+    public func readPlainText() throws -> ClipboardTextContents {
+        try Self.requireSilentReadAccess(self.readAccessStatus())
+        let generation = self.pasteboard.changeCount
+        guard let items = self.pasteboard.pasteboardItems, items.count <= 1 else {
+            throw Self.plainTextReadRefusal("Plain-text reads require a complete clipboard with at most one item.")
+        }
+        var text: String?
+        if let item = items.first {
+            guard !item.types.isEmpty,
+                  !item.types.contains(where: { $0.rawValue.localizedCaseInsensitiveContains("promise") }) else {
+                throw Self.plainTextReadRefusal("Clipboard file promises or unavailable representations cannot be read as plain text.")
+            }
+            if item.types.contains(.string) {
+                guard let value = item.string(forType: .string) else {
+                    throw Self.plainTextReadRefusal("The advertised plain-text representation could not be read completely.")
+                }
+                guard value.utf16.count <= 24_000 else {
+                    throw Self.plainTextReadRefusal("Clipboard text exceeds the complete 24 KB result limit.")
+                }
+                text = value
+            }
+        } else {
+            guard let types = self.pasteboard.types, types.isEmpty else {
+                throw Self.plainTextReadRefusal("The clipboard item inventory is unavailable.")
+            }
+        }
+        guard self.pasteboard.changeCount == generation else {
+            throw Self.plainTextReadRefusal("The clipboard changed during the read; request a fresh read.")
+        }
+        let result = ClipboardTextContents(present: text != nil, text: text, change_count: generation)
+        guard try JSONEncoder().encode(result).count <= 24_000 else {
+            throw Self.plainTextReadRefusal("Clipboard text exceeds the complete 24 KB result limit.")
+        }
+        return result
+    }
+
+    /// Reads one clipboard image as a bounded preview; `includingOriginal` also returns the validated source bytes.
+    public func readImage(includingOriginal: Bool = false) async throws -> ClipboardImageContents {
+        try Self.requireSilentReadAccess(self.readAccessStatus())
+        let generation = self.pasteboard.changeCount
+        guard let items = self.pasteboard.pasteboardItems, items.count <= 1 else {
+            throw PeekabooError.invalidInput("Image reads require a complete clipboard with at most one item.")
+        }
+        var imageData: Data?
+        var imageType: String?
+        if let item = items.first {
+            guard !item.types.isEmpty,
+                  !item.types.contains(where: { $0.rawValue.localizedCaseInsensitiveContains("promise") }) else {
+                throw PeekabooError.invalidInput("Clipboard file promises or unavailable representations cannot be read as an image.")
+            }
+            let supported = [UTType.png.identifier, UTType.jpeg.identifier, UTType.tiff.identifier]
+            if let type = supported.first(where: { item.types.contains(.init($0)) }) {
+                guard let data = item.data(forType: .init(type)) else {
+                    throw PeekabooError.invalidInput("The advertised image representation could not be read completely.")
+                }
+                imageData = data
+                imageType = type
+            } else if item.types.contains(where: { UTType($0.rawValue)?.conforms(to: .image) == true }) {
+                throw PeekabooError.invalidInput("Clipboard image reads support PNG, JPEG, or TIFF.")
+            }
+        } else {
+            guard let types = self.pasteboard.types, types.isEmpty else {
+                throw PeekabooError.invalidInput("The clipboard item inventory is unavailable.")
+            }
+        }
+        guard self.pasteboard.changeCount == generation else {
+            throw PeekabooError.invalidInput("The clipboard changed during the read; request a fresh read.")
+        }
+        guard let imageData, let imageType else {
+            return ClipboardImageContents(present: false, change_count: generation, source: nil, image: nil)
+        }
+        // Image decoding stays off the GUI actor; only its immutable copy leaves the pasteboard owner.
+        let rendering = Task.detached(priority: .userInitiated) {
+            try ClipboardImageRenderer.render(imageData, uti: imageType, generation: generation)
+        }
+        var result = try await withTaskCancellationHandler {
+            try await rendering.value
+        } onCancel: {
+            rendering.cancel()
+        }
+        try Task.checkCancellation()
+        guard self.pasteboard.changeCount == generation else {
+            throw PeekabooError.invalidInput("The clipboard changed during the read; request a fresh read.")
+        }
+        if includingOriginal { result.original = imageData }
+        return result
+    }
+
+    public func readFiles() throws -> ClipboardFilesContents {
+        try Self.requireSilentReadAccess(self.readAccessStatus())
+        let generation = self.pasteboard.changeCount
+        guard let items = self.pasteboard.pasteboardItems, items.count <= 32 else {
+            throw PeekabooError.invalidInput("File reads require a complete clipboard with at most 32 items.")
+        }
+        var files: [ClipboardFilesContents.File] = []
+        for item in items {
+            guard !item.types.isEmpty,
+                  !item.types.contains(where: { $0.rawValue.localizedCaseInsensitiveContains("promise") }) else {
+                throw PeekabooError.invalidInput("Clipboard file promises or unavailable representations cannot be read as file references.")
+            }
+            guard item.types.contains(.fileURL) else {
+                guard !item.types.contains(where: { $0.rawValue == "NSFilenamesPboardType" }) else {
+                    throw PeekabooError.invalidInput("Legacy filename lists are unsupported; copy advertised file URL items.")
+                }
+                continue
+            }
+            guard let data = item.data(forType: .fileURL), data.count <= 24_000,
+                  let raw = String(data: data, encoding: .utf8) else {
+                throw PeekabooError.invalidInput("The advertised file URL could not be read completely within 24 KB.")
+            }
+            guard let url = URL(string: raw, encodingInvalidCharacters: false), url.isFileURL,
+                  !(url as NSURL).isFileReferenceURL(),
+                  url.host == nil || url.host == "" || url.host?.lowercased() == "localhost",
+                  url.user == nil, url.password == nil, url.port == nil,
+                  url.query == nil, url.fragment == nil else {
+                throw PeekabooError.invalidInput("Clipboard files require ordinary absolute local file URLs.")
+            }
+            let path = url.path(percentEncoded: false)
+            guard path.hasPrefix("/"), !path.utf8.contains(0) else {
+                throw PeekabooError.invalidInput("Clipboard files require ordinary absolute local file URLs.")
+            }
+            files.append(.init(url: raw, path: path))
+        }
+        guard files.isEmpty || files.count == items.count else {
+            throw PeekabooError.invalidInput("Clipboard file reads do not omit mixed non-file items.")
+        }
+        if items.isEmpty {
+            guard let types = self.pasteboard.types, types.isEmpty else {
+                throw PeekabooError.invalidInput("The clipboard item inventory is unavailable.")
+            }
+        }
+        guard self.pasteboard.changeCount == generation else {
+            throw PeekabooError.invalidInput("The clipboard changed during the read; request a fresh read.")
+        }
+        let result = ClipboardFilesContents(present: !files.isEmpty, files: files.isEmpty ? nil : files,
+                                            change_count: generation)
+        guard try JSONEncoder().encode(result).count <= 24_000 else {
+            throw PeekabooError.invalidInput("Clipboard file references exceed the complete 24 KB result limit.")
+        }
+        return result
+    }
+
+    private static func plainTextReadRefusal(_ message: String) -> PeekabooError {
+        .invalidInput(message)
+    }
+
     public func prepareTemporaryWrite() throws -> any ClipboardTemporaryWriteTransaction {
+        try self.prepareTemporaryWrite(maximumBytes: Int.max, maximumItems: Int.max, maximumRepresentations: Int.max)
+    }
+
+    public func prepareTemporaryWrite(
+        maximumBytes: Int, maximumItems: Int, maximumRepresentations: Int) throws -> any ClipboardTemporaryWriteTransaction
+    {
         try Self.requireSilentReadAccess(self.readAccessStatus())
         let originalChangeCount = self.pasteboard.changeCount
-        let items = try self.temporarySnapshotItems()
+        let items = try self.temporarySnapshotItems(
+            maximumBytes: maximumBytes, maximumItems: maximumItems, maximumRepresentations: maximumRepresentations)
         guard self.pasteboard.changeCount == originalChangeCount else {
             throw ClipboardTemporaryWriteError.snapshotChanged
         }
@@ -316,6 +488,27 @@ ClipboardReadAccessProviding {
                 }))
     }
 
+    /// A claimed write that keeps no copy of the prior clipboard, so it never reads it and has nothing to restore.
+    public func prepareReplacingWrite() -> any ClipboardTemporaryWriteTransaction {
+        OwnedClipboardTemporaryWriteTransaction(
+            priorClipboardPresent: false,
+            originalChangeCount: self.pasteboard.changeCount,
+            isGeneralPasteboard: self.pasteboard.name == .general,
+            access: ClipboardTemporaryWriteAccess(
+                changeCount: { self.pasteboard.changeCount },
+                write: { request, expectedChangeCount, didClaim in
+                    var didDispatch = false
+                    return try self.set(
+                        request,
+                        didDispatch: &didDispatch,
+                        expectedChangeCount: expectedChangeCount,
+                        didClaim: didClaim)
+                },
+                restore: { _ in
+                    throw ClipboardServiceError.writeFailed("A replacing write keeps no prior clipboard to restore")
+                }))
+    }
+
     static func requireSilentReadAccess(_ access: ClipboardReadAccessStatus) throws {
         guard access.readAdmitted else {
             throw DesktopActionFailure.preDispatchRefusal(
@@ -326,7 +519,9 @@ ClipboardReadAccessProviding {
         }
     }
 
-    private func temporarySnapshotItems() throws -> [[ClipboardRepresentation]] {
+    private func temporarySnapshotItems(
+        maximumBytes: Int, maximumItems: Int, maximumRepresentations: Int) throws -> [[ClipboardRepresentation]]
+    {
         guard let items = self.pasteboard.pasteboardItems else {
             throw ClipboardTemporaryWriteError.snapshotUnavailable
         }
@@ -336,14 +531,24 @@ ClipboardReadAccessProviding {
             }
             return []
         }
+        guard items.count <= maximumItems else { throw ClipboardTemporaryWriteError.snapshotUnavailable }
+        var bytes = 0
+        var representations = 0
         return try items.map { item in
             guard !item.types.isEmpty else {
                 throw ClipboardTemporaryWriteError.snapshotUnavailable
             }
+            representations += item.types.count
+            guard representations <= maximumRepresentations else { throw ClipboardTemporaryWriteError.snapshotUnavailable }
             return try item.types.map { type in
+                guard !type.rawValue.localizedCaseInsensitiveContains("promise") else {
+                    throw ClipboardTemporaryWriteError.snapshotUnavailable
+                }
                 guard let data = item.data(forType: type) else {
                     throw ClipboardTemporaryWriteError.snapshotUnavailable
                 }
+                guard data.count <= maximumBytes - bytes else { throw ClipboardTemporaryWriteError.snapshotUnavailable }
+                bytes += data.count
                 return ClipboardRepresentation(utiIdentifier: type.rawValue, data: data)
             }
         }
@@ -459,12 +664,52 @@ ClipboardReadAccessProviding {
             verify: { _ in self.matches(request: request) })
     }
 
+    public func setFilesActionResult(_ input: ClipboardFilesInput) throws -> DesktopActionResult<Int> {
+        var generation: Int?
+        return try ClipboardMutationResultOwner.perform(
+            operation: "Clipboard files write",
+            mutation: { didDispatch in
+                let items = try input.files.map { file in
+                    let item = NSPasteboardItem()
+                    guard item.setData(Data(file.url.utf8), forType: .fileURL) else {
+                        throw ClipboardServiceError.writeFailed("Unable to prepare a file reference")
+                    }
+                    return item
+                }
+                try Task.checkCancellation()
+                let claimed = self.pasteboard.clearContents()
+                didDispatch = true
+                generation = claimed
+                try self.requireTemporaryOwnership(claimed)
+                guard self.pasteboard.writeObjects(items) else {
+                    throw ClipboardServiceError.writeFailed("Unable to publish all file reference items")
+                }
+                try self.requireTemporaryOwnership(claimed)
+                return input.files.count
+            },
+            verify: { _ in
+                guard let generation, self.readAccessStatus().readAdmitted,
+                      self.pasteboard.changeCount == generation,
+                      let items = self.pasteboard.pasteboardItems,
+                      items.count == input.files.count else { return false }
+                for (item, file) in zip(items, input.files) {
+                    guard item.types.contains(.fileURL),
+                          item.data(forType: .fileURL) == Data(file.url.utf8) else { return false }
+                }
+                return self.pasteboard.changeCount == generation
+            })
+    }
+
     private func set(
         _ request: ClipboardWriteRequest,
         didDispatch: inout Bool,
         expectedChangeCount: Int? = nil,
         didClaim: (Int) -> Void = { _ in }) throws -> ClipboardReadResult
     {
+        if !request.fileURLs.isEmpty {
+            return try self.setFileItems(
+                request.fileURLs, didDispatch: &didDispatch, expectedChangeCount: expectedChangeCount, didClaim: didClaim)
+        }
         guard !request.representations.isEmpty else {
             throw ClipboardServiceError.writeFailed("No representations provided.")
         }
@@ -516,6 +761,33 @@ ClipboardReadAccessProviding {
         try self.requireTemporaryOwnership(ownedChangeCount)
 
         return Self.writeResult(for: request)
+    }
+
+    private func setFileItems(
+        _ urls: [String],
+        didDispatch: inout Bool,
+        expectedChangeCount: Int?,
+        didClaim: (Int) -> Void) throws -> ClipboardReadResult
+    {
+        let items = try urls.map { url in
+            let item = NSPasteboardItem()
+            guard item.setData(Data(url.utf8), forType: .fileURL) else {
+                throw ClipboardServiceError.writeFailed("Unable to prepare a file reference")
+            }
+            return item
+        }
+        try self.requireTemporaryOwnership(expectedChangeCount)
+        let claimed = self.pasteboard.clearContents()
+        didDispatch = true
+        didClaim(claimed)
+        let ownedChangeCount = expectedChangeCount == nil ? nil : claimed
+        guard self.pasteboard.writeObjects(items) else {
+            try self.requireTemporaryOwnership(ownedChangeCount)
+            throw ClipboardServiceError.writeFailed("Unable to publish all file reference items")
+        }
+        try self.requireTemporaryOwnership(ownedChangeCount)
+        return ClipboardReadResult(
+            utiIdentifier: NSPasteboard.PasteboardType.fileURL.rawValue, data: Data(urls[0].utf8), textPreview: nil)
     }
 
     private static func writeResult(for request: ClipboardWriteRequest) -> ClipboardReadResult {

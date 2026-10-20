@@ -28,7 +28,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
 
         // This count is intentionally reviewed whenever the wire enum grows. The exhaustive
         // policy switches also make a missing classification a compile error.
-        #expect(operations.count == 118)
+        #expect(operations.count == 134)
 
         func partition<Value: Equatable>(_ values: [Value], by keyPath: KeyPath<Semantics.OperationPolicy, Value>) {
             let groups = values.map { expected in
@@ -145,6 +145,24 @@ struct PeekabooBridgeOperationSemanticPlanTests {
         #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
             maximizeOutcome,
             request: maximize))
+
+        let fullScreen = PeekabooBridgeRequest.setWindowFullScreen(.init(
+            target: .windowId(71),
+            expectedIdentity: .init(
+                windowID: 71,
+                ownerProcessIdentifier: 42,
+                ownerProcessStartIdentity: 1001,
+                capturedBounds: CGRect(x: 10, y: 20, width: 300, height: 200)),
+            fullScreen: true))
+        for mechanism in [DesktopActionOutcome.Delivery.Mechanism.accessibilityValue, .accessibilityAction] {
+            let delivery = DesktopActionOutcome.Delivery(mechanism: mechanism, mode: .background)
+            #expect(PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                .confirmedChange(route: .bridge, delivery: delivery, unitCount: .one),
+                request: fullScreen))
+            #expect(!PeekabooBridgeOperationResultSemantics.successfulOutcomeMatchesContract(
+                .confirmedChange(route: .bridge, delivery: delivery, unitCount: two),
+                request: fullScreen))
+        }
 
         let scroll = PeekabooBridgeRequest.targetedScroll(.init(request: .init(
             direction: .down,
@@ -702,7 +720,8 @@ struct PeekabooBridgeOperationSemanticPlanTests {
         try valid.bundle.validateIntegrity()
     }
 
-    @Test(arguments: ["cmd,a", "command+A", " META a ", "win,a", "cmdOrCtrl,a"])
+    // Bridge clients classify off the main thread, so a layout character must not need the keyboard layout.
+    @Test(arguments: ["cmd,a", "command+A", " META a ", "win,a", "cmdOrCtrl,a", "cmd,char:61"])
     func `select all admits one background AX selection write and uncertain progress`(_ keys: String) {
         for request in Self.selectionHotkeyRequests(keys: keys) {
             let success = DesktopActionOutcome.dispatchedUnverified(
@@ -722,7 +741,7 @@ struct PeekabooBridgeOperationSemanticPlanTests {
         }
     }
 
-    @Test(arguments: ["cmd,b", "ctrl,a", "cmd,shift,a", "a", "cmd", "cmd,a,b", "cmd,a,unknown", ""])
+    @Test(arguments: ["cmd,b", "ctrl,a", "cmd,shift,a", "a", "cmd", "cmd,a,b", "cmd,a,unknown", "", "cmd,char:62"])
     func `other or malformed hotkeys never authorize AX selection receipts`(_ keys: String) {
         for request in Self.selectionHotkeyRequests(keys: keys) {
             let success = DesktopActionOutcome.dispatchedUnverified(
@@ -2373,6 +2392,37 @@ extension PeekabooBridgeOperationSemanticPlanTests {
             outcome: maximizeOutcome.projection)
         #expect(throws: PeekabooBridgeOperationReceiptError.self) {
             try unprovenMaximize.bundle.validateIntegrity()
+        }
+
+        let fullScreenBounds = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        for fullScreen in [true, false] {
+            let fullScreenRequest = PeekabooBridgeRequest.projectedAction(.init(request: .setWindowFullScreen(.init(
+                target: .windowId(expected.windowID),
+                expectedIdentity: expected,
+                fullScreen: fullScreen))))
+            let fullScreenOutcome = DesktopActionOutcome.confirmedChange(
+                route: .bridge,
+                delivery: valueDelivery,
+                unitCount: .one)
+            for evidence in [true, false, nil] as [Bool?] {
+                let response = PeekabooBridgeResponse.projectedAction(.init(
+                    response: .window(window(
+                        bounds: fullScreenBounds,
+                        mutationPostconditionEvidence: .init(isFullScreen: evidence))),
+                    outcome: fullScreenOutcome.projection))
+                let signed = try await Self.makeBundle(
+                    request: fullScreenRequest,
+                    response: response,
+                    target: .window(expected),
+                    outcome: fullScreenOutcome.projection)
+                if evidence == fullScreen {
+                    try signed.bundle.validateIntegrity()
+                } else {
+                    #expect(throws: PeekabooBridgeOperationReceiptError.self) {
+                        try signed.bundle.validateIntegrity()
+                    }
+                }
+            }
         }
     }
 

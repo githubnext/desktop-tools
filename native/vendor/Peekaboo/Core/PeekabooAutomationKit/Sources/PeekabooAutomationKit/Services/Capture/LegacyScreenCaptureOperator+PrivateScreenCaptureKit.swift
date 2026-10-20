@@ -126,8 +126,9 @@ extension LegacyScreenCaptureOperator {
         // WindowServer ID through `SCShareableContent` before building a desktop-independent window filter.
         // Public `SCShareableContent.windows` enumeration can miss windows that this lookup still captures.
         // If Apple removes this selector, callers fall back to `/usr/sbin/screencapture -l` and then public SCK.
+        // A one-second budget timed out under ordinary load and quarantined every later capture.
         return try await ScreenCaptureKitCaptureGate.runOwnedOperation(
-            seconds: 1.0,
+            seconds: 3.0,
             operationName: "SCShareableContent.fetchWindowForWindowID")
         {
             try await ScreenCaptureKitCallbackBridge<SCWindow>.wait { finish in

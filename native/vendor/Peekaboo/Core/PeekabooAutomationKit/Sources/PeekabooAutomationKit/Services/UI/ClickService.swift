@@ -66,7 +66,10 @@ private struct ClickExecutionRequest: Sendable {
     let laneCompletion: @MainActor @Sendable (UIInputExecutionResult) async -> Void
 }
 
-typealias TabSelectionVerifier = @MainActor (AutomationElement, Int?) async throws -> Bool
+typealias TabSelectionVerifier = @MainActor (
+    AutomationElement,
+    _ subroleBefore: String?,
+    _ valueBefore: Int?) async throws -> Bool
 typealias ExactWindowPixelFocusExecutor = @MainActor @Sendable (
     CGPoint,
     UIAutomationTarget.ExactWindow) async throws -> UIInputExecutionResult.Action
@@ -158,11 +161,16 @@ public final class ClickService {
         self.exactWindowPixelFocusExecutor = exactWindowPixelFocusExecutor
     }
 
-    private static func verifyTabSelection(_ element: AutomationElement, valueBefore: Int?) async throws -> Bool {
-        guard element.subrole == "AXTabButton", valueBefore == 0 else { return false }
+    // Tab identity is read before the press; a pressed non-tab control may already be gone.
+    private static func verifyTabSelection(
+        _ element: AutomationElement,
+        subroleBefore: String?,
+        valueBefore: Int?) async throws -> Bool
+    {
+        guard subroleBefore == "AXTabButton", valueBefore == 0 else { return false }
         try await Task.sleep(for: .milliseconds(50))
         return ActionInputDriver.tabPressDidNotSelect(
-            subrole: element.subrole,
+            subrole: subroleBefore,
             valueBefore: valueBefore,
             valueAfter: element.intAttribute(AXAttributeNames.kAXValueAttribute))
     }
@@ -194,6 +202,7 @@ public final class ClickService {
         switch clickType {
         case .single:
             let valueBefore = element.intAttribute(AXAttributeNames.kAXValueAttribute)
+            let subroleBefore = element.subrole
             let originalIdentity = element.focusedElementIdentity
             let originalRole = element.role
             let result = try await self.actionInputDriver.tryClick(
@@ -228,7 +237,7 @@ public final class ClickService {
             }
             let tabPressDidNotSelect: Bool
             do {
-                tabPressDidNotSelect = try await self.tabSelectionVerifier(element, valueBefore)
+                tabPressDidNotSelect = try await self.tabSelectionVerifier(element, subroleBefore, valueBefore)
             } catch {
                 guard result.outcome.dispatchState.mutationDispatched else { throw error }
                 throw Self.unconfirmedTabPressFailure(result, cause: error)
@@ -1296,7 +1305,9 @@ extension ClickService {
         snapshotId: String?,
         automationTarget: UIAutomationTarget,
         validatesProcessIdentity: Bool = false,
-        allowsAccessibilityValueDelivery: Bool = true) async throws -> UIInputExecutionResult
+        allowsAccessibilityValueDelivery: Bool = true,
+        lanePreparation: @escaping @MainActor @Sendable () async -> Void = {}) async throws
+        -> UIInputExecutionResult
     {
         try await self.executeClick(ClickExecutionRequest(
             target: target,
@@ -1306,7 +1317,7 @@ extension ClickService {
             validatesProcessIdentity: validatesProcessIdentity,
             allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery,
             acquireLane: true,
-            lanePreparation: {},
+            lanePreparation: lanePreparation,
             laneCompletion: { _ in }))
     }
 
@@ -1431,6 +1442,19 @@ extension ClickService {
                         afterDispatch: false,
                         validateProcessIdentity: validatesProcessIdentity,
                         validateExactWindow: false)
+                    // Preparation precedes every strategy route, so only this first exact-window check
+                    // proves no input was sent; later route checks stay conservative.
+                    if clickType != .longPress,
+                       let exactWindowReceipt,
+                       !self.exactWindowIdentityValidator(exactWindowReceipt.identity, exactWindowReceipt.bounds)
+                    {
+                        throw DesktopActionFailure.preDispatchRefusal(
+                            reason: .targetUnavailable,
+                            message: "Exact-window click identity changed before dispatch; capture a fresh snapshot",
+                            hint: "Inspect the exact window again and use its fresh snapshot.",
+                            standardErrorCode: .snapshotStale)
+                            .attributed(to: exactWindowReceipt.actionTargetReceipt)
+                    }
                     mutationReceipt = preparedReceipt
                     syntheticDestination = SyntheticClickDestination(
                         captureReceipt: preparedReceipt,

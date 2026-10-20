@@ -16,6 +16,8 @@ public struct DragOperationRequest: Sendable, Equatable {
     public let modifiers: String?
     public let button: DragButton
     public let profile: MouseMovementProfile
+    /// Points visited in order between `from` and `to`. A drag with waypoints follows straight segments.
+    public let waypoints: [CGPoint]
 
     public init(
         from: CGPoint,
@@ -24,7 +26,8 @@ public struct DragOperationRequest: Sendable, Equatable {
         steps: Int,
         modifiers: String?,
         button: DragButton = .left,
-        profile: MouseMovementProfile)
+        profile: MouseMovementProfile,
+        waypoints: [CGPoint] = [])
     {
         self.from = from
         self.to = to
@@ -33,6 +36,7 @@ public struct DragOperationRequest: Sendable, Equatable {
         self.modifiers = modifiers
         self.button = button
         self.profile = profile
+        self.waypoints = waypoints
     }
 }
 

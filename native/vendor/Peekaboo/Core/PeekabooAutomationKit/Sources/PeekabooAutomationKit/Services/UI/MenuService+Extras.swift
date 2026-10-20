@@ -286,6 +286,9 @@ extension MenuService {
         // Menu bar enumeration must never hang: agents depend on this returning quickly.
         // AX can block on misbehaving apps; keep the default path cheap and bounded.
         let windowExtras = self.getMenuBarItemsViaWindows()
+        if let axExtras = self.axExtrasMenuBarInventory(windowExtras: windowExtras) {
+            return axExtras
+        }
 
         // Fast path: WindowServer enumeration is usually sufficient and avoids AX calls entirely.
         // Only fall back to accessibility sweeps when explicitly enabled, or when WindowServer returns nothing.
@@ -398,7 +401,7 @@ extension MenuService {
         if let windowIdentity, windowIdentity.processIdentity != processIdentity {
             throw DesktopSelectedLeafEvidenceError.invalidEvidence
         }
-        let frame = windowIdentity?.capturedBounds ?? CGRect(
+        let frame = windowIdentity?.capturedBounds ?? extra.size.map { CGRect(origin: extra.position, size: $0) } ?? CGRect(
             x: extra.position.x - 0.5,
             y: extra.position.y - 0.5,
             width: 1,
@@ -643,6 +646,14 @@ extension MenuService {
                 reason: .targetUnavailable,
                 message: "Menu bar item [\(index)] changed identity or order before dispatch.",
                 hint: "Refresh menu bar items before retrying.")
+        }
+        if refreshedExtra.source == Self.axExtrasMenuBarSource, refreshedExtra.windowID == nil {
+            return try await self.clickAXExtrasMenuBarItem(
+                refreshedExtra,
+                index: index,
+                evidence: refreshedEvidence.selecting(
+                    normalizedSelector: normalizedSelector ?? String(index),
+                    matchKind: matchKind ?? .index))
         }
         let processIdentity = refreshedEvidence.selectedProcessIdentity
         let liveWindow = refreshedExtra.windowID.flatMap { SystemIdentityResolver.stableWindowIdentity($0) }

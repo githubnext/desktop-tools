@@ -95,81 +95,38 @@ struct DetachedExactWindowFocusWindowTests {
         }
     }
 
-    @Test(arguments: [
-        AXError.cannotComplete,
-        .invalidUIElement,
-        .apiDisabled,
-        .noValue,
-        .attributeUnsupported,
-        .failure,
-    ])
-    func `owning window read failures retain native status without ID lookup`(error: AXError) {
-        let result = DetachedExactWindowFocusReader.validateOwningWindow(
-            .init(error: error, value: self.first),
-            expectedWindowID: 42,
-            copyWindowID: { _, _ in Issue.record("Failed AXWindow read must not query ID"); return .success })
-        #expect(throws: FocusedElementReceiptError.windowObservationFailed(
-            stage: .owningWindow,
-            errorCode: error.rawValue))
-        {
-            try result.get()
+    @Test
+    func `an unresolved owner is unreadable rather than mismatched`() {
+        #expect(throws: FocusedElementReceiptError.windowObservationFailed(stage: .owningWindow, errorCode: nil)) {
+            try DetachedExactWindowFocusReader.validateOwningWindow(nil, expectedWindowID: 42).get()
+        }
+    }
+
+    @Test(arguments: [CGWindowID(42), 99])
+    func `the resolved owner establishes a match or mismatch`(actual: CGWindowID) throws {
+        let owner = AXWindowIDResolver.Owner(windowID: actual, sheetWindowID: 43)
+        let result = DetachedExactWindowFocusReader.validateOwningWindow(owner, expectedWindowID: 42)
+        if actual == 42 {
+            #expect(try result.get() == owner)
+        } else {
+            #expect(throws: FocusedElementReceiptError.windowMismatch) { try result.get() }
         }
     }
 
     @Test
-    func `missing and malformed owning windows are not compared with expected identity`() {
-        let observations: [AXDescriptorReader.SingleAttributeRead?] = [
-            nil, .init(error: .success, value: nil), .init(error: .success, value: "not a window"),
-            .init(error: .success, value: [self.first]), .init(error: .success, value: NSNumber(value: 42)),
-        ]
-        for observation in observations {
-            let result = DetachedExactWindowFocusReader.validateOwningWindow(
-                observation,
-                expectedWindowID: 42,
-                copyWindowID: { _, _ in Issue.record("Malformed AXWindow must not query ID"); return .success })
-            #expect(throws: FocusedElementReceiptError.windowObservationFailed(stage: .owningWindow, errorCode: nil)) {
-                try result.get()
-            }
+    func `a receiver inside a sheet needs that sheet as the key window`() {
+        let inSheet = ExactWindowFocusSnapshot(processIdentifier: 7, windowID: 42, sheetWindowID: 43, frame: .zero)
+        let inWindow = ExactWindowFocusSnapshot(processIdentifier: 7, windowID: 42, frame: .zero)
+        let key = { (processIdentifier: pid_t, windowID: Int, isSheet: Bool) in
+            ExactKeyWindowSnapshot(
+                processIdentifier: processIdentifier, windowID: windowID, isSheet: isSheet, hasAttachedSheet: false)
         }
-    }
-
-    @Test(arguments: [AXError.cannotComplete, .success])
-    func `failed and zero owning IDs remain unreadable rather than mismatched`(error: AXError) {
-        var reads = 0
-        let result = DetachedExactWindowFocusReader.validateOwningWindow(
-            .init(error: .success, value: self.first),
-            expectedWindowID: 42,
-            copyWindowID: { element, _ in
-                #expect(CFEqual(element, self.first))
-                reads += 1
-                return error
-            })
-        #expect(throws: FocusedElementReceiptError.windowObservationFailed(
-            stage: .owningWindowID, errorCode: error == .success ? nil : error.rawValue))
-        {
-            try result.get()
-        }
-        #expect(reads == 1)
-    }
-
-    @Test(arguments: [CGWindowID(42), 99])
-    func `only positive owning IDs establish a match or mismatch`(actual: CGWindowID) throws {
-        var reads = 0
-        let result = DetachedExactWindowFocusReader.validateOwningWindow(
-            .init(error: .success, value: self.first),
-            expectedWindowID: 42,
-            copyWindowID: { element, id in
-                #expect(CFEqual(element, self.first))
-                reads += 1
-                id = actual
-                return .success
-            })
-        if actual == 42 {
-            try result.get()
-        } else {
-            #expect(throws: FocusedElementReceiptError.windowMismatch) { try result.get() }
-        }
-        #expect(reads == 1)
+        #expect(key(7, 43, true).isKey(processIdentifier: 7, windowID: 42, focused: inSheet))
+        #expect(!key(8, 43, true).isKey(processIdentifier: 7, windowID: 42, focused: inSheet))
+        #expect(!key(7, 44, true).isKey(processIdentifier: 7, windowID: 42, focused: inSheet))
+        #expect(!key(7, 42, false).isKey(processIdentifier: 7, windowID: 42, focused: inSheet))
+        #expect(key(7, 42, false).isKey(processIdentifier: 7, windowID: 42, focused: inWindow))
+        #expect(!key(7, 43, true).isKey(processIdentifier: 7, windowID: 42, focused: inWindow))
     }
 
     @Test(arguments: [

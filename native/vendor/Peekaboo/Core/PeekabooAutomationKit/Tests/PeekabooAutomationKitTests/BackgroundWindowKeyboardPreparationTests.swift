@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
@@ -40,6 +41,10 @@ struct BackgroundWindowKeyboardPreparationTests {
             #expect(failure.causeDescription == FocusedElementReceiptError.focusNotConfirmed.errorDescription)
             #expect(failure.hint == "Observe the target again; this observation did not dispatch preparation input.")
             #expect(!failure.message.contains("native focus request"))
+            if phase != 0 {
+                #expect(failure.message.hasPrefix(
+                    "Background keyboard preparation did not finish, so no keys or paste were sent."))
+            }
         }
     }
 
@@ -71,6 +76,30 @@ struct BackgroundWindowKeyboardPreparationTests {
             Issue.record("Expected retained failure")
         } catch let failure as DesktopActionFailure {
             #expect(failure == existing)
+        }
+    }
+
+    @Test
+    func `a refused observation is read again at most twice`() async throws {
+        let target = try Self.observationTarget()
+        let reads = ReadCount()
+        let value: Int = try await BackgroundWindowKeyboardPreparation.read(target: target) {
+            guard reads.next() > 2 else { throw FocusedElementReceiptError.focusNotConfirmed }
+            return 7
+        }
+        #expect(value == 7)
+        #expect(reads.next() == 4)
+
+        let refusals = ReadCount()
+        do {
+            let _: Int = try await BackgroundWindowKeyboardPreparation.read(target: target) {
+                _ = refusals.next()
+                throw FocusedElementReceiptError.focusNotConfirmed
+            }
+            Issue.record("Expected observation refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(refusals.next() == 4)
         }
     }
 
@@ -213,5 +242,17 @@ struct BackgroundWindowKeyboardPreparationTests {
             delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
             evidence: .deliveryAccepted,
             unitCount: DesktopActionOutcome.DispatchUnitCount(3))
+    }
+}
+
+private final class ReadCount: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func next() -> Int {
+        self.lock.withLock {
+            self.count += 1
+            return self.count
+        }
     }
 }

@@ -309,11 +309,19 @@ struct SnapshotManagerTests {
                 "isValueSettable": "true",
                 "axEnabledKnown": "true",
             ])
+        let password = DetectedElement(
+            id: "elem_2",
+            type: .textField,
+            label: "Password",
+            value: nil,
+            bounds: CGRect(x: 10, y: 50, width: 200, height: 22),
+            isEnabled: true,
+            attributes: ["role": "AXTextField", "subrole": "AXSecureTextField", "axEnabledKnown": "true"])
         let result = ElementDetectionResult(
             snapshotId: snapshotId,
             screenshotPath: "/tmp/appearance.png",
-            elements: DetectedElements(sliders: [slider]),
-            metadata: DetectionMetadata(detectionTime: 0.1, elementCount: 1, method: "test"))
+            elements: DetectedElements(textFields: [password], sliders: [slider]),
+            metadata: DetectionMetadata(detectionTime: 0.1, elementCount: 2, method: "test"))
 
         try await manager.storeDetectionResult(snapshotId: snapshotId, result: result)
 
@@ -329,6 +337,8 @@ struct SnapshotManagerTests {
         #expect(storedSlider.isActionable)
         #expect(storedSlider.isEnabled == true)
         #expect(storedSlider.isValueSettable == true)
+        #expect(storedSlider.subrole == nil)
+        #expect(stored.uiMap[password.id]?.subrole == "AXSecureTextField")
 
         let hydrated = try #require(try await manager.getDetectionResult(snapshotId: snapshotId))
         let hydratedSlider = try #require(hydrated.elements.sliders.first)
@@ -339,6 +349,10 @@ struct SnapshotManagerTests {
         #expect(hydratedSlider.knownIsEnabled == true)
         #expect(hydratedSlider.isActionable)
         #expect(hydratedSlider.isValueSettable == true)
+        #expect(hydratedSlider.attributes["subrole"] == nil)
+        let hydratedPassword = try #require(hydrated.elements.all.first { $0.id == password.id })
+        #expect(hydratedPassword.attributes["subrole"] == "AXSecureTextField")
+        #expect(hydratedPassword.value == nil)
         try await manager.cleanSnapshot(snapshotId: snapshotId)
     }
 }

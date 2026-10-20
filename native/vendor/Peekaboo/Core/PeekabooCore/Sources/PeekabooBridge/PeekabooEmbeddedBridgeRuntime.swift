@@ -154,6 +154,18 @@ public actor PeekabooEmbeddedBridgeRuntime {
         public let maxMessageBytes: Int
         public let requestTimeoutSeconds: TimeInterval
         public let requestDrainTimeoutSeconds: TimeInterval
+        /// Receives each authorized request's exact target window before dispatch, on the main actor.
+        public var targetWindowObserver: (@Sendable (PeekabooBridgeTargetWindow) -> Void)?
+        /// Receives each authorized request once it has finished, with its target and outcome, on the main actor.
+        public var operationObserver: (@Sendable (PeekabooBridgeOperationRecord) -> Void)?
+        /// Refuses an authorized request before dispatch when it returns a message, given the operation, whether it
+        /// mutates the desktop, the client and the target process. It is asked at the handshake too, as
+        /// `permissionsStatus`. Called on the main actor for every request, so it must be quick.
+        public var operationAdmission: (@Sendable (PeekabooBridgeOperationAdmission) -> String?)?
+        /// Resolves the secret for each secure text field fill, or refuses it, on the main actor. It may wait for the
+        /// user; fills are refused without it.
+        public var secureTextFill: (@Sendable (PeekabooBridgeSecureTextFillContext) async
+            -> PeekabooBridgeSecureTextFillAuthorization)?
 
         let screenCaptureKitProcessCapabilityRegistrar: @Sendable () throws -> Void
         let screenCaptureKitOwnershipPreparer: @Sendable () async throws -> Void
@@ -387,7 +399,11 @@ public actor PeekabooEmbeddedBridgeRuntime {
                     maxMessageBytes: configuration.maxMessageBytes,
                     requestTimeoutSec: configuration.requestTimeoutSeconds,
                     requestDrainTimeoutSec: configuration.requestDrainTimeoutSeconds,
-                    screenCaptureKitOwnershipPreparer: configuration.screenCaptureKitOwnershipPreparer))
+                    screenCaptureKitOwnershipPreparer: configuration.screenCaptureKitOwnershipPreparer,
+                    targetWindowObserver: configuration.targetWindowObserver,
+                    operationObserver: configuration.operationObserver,
+                    operationAdmission: configuration.operationAdmission,
+                    secureTextFill: configuration.secureTextFill))
         }
         let host = preparedHost.host
 

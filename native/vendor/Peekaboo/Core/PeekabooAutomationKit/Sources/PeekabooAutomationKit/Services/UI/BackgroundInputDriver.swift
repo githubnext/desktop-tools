@@ -81,8 +81,9 @@ enum BackgroundInputDriver {
     /// `candidates` is ordered: the hit-tested element first, then its descendants, then its
     /// ancestors (see `hitTestCandidates`). The hit-test element is authoritative — macOS returned
     /// it for this exact point — so it is never rejected on frame grounds; every other candidate
-    /// must still contain the point. The first enabled candidate that supports the required action
-    /// wins. SwiftUI hit-tests can land on a non-pressable container whose pressable target is a
+    /// must still contain the point. Editable text fields prefer verified keyboard focus even when
+    /// they advertise AXPress; otherwise the first enabled actionable candidate wins.
+    /// SwiftUI hit-tests can land on a non-pressable container whose pressable target is a
     /// descendant, so descendants are searched before ancestors. Left clicks on text inputs (which
     /// have no `AXPress`) fall back to focusing the element, mirroring `ActionInputDriver`.
     @MainActor
@@ -93,12 +94,18 @@ enum BackgroundInputDriver {
     {
         let spatiallyValid = self.spatiallyValidCandidates(candidates, at: point)
 
+        // Preserve hit-test ordering: a button inside a field still owns its own point.
+        let prefersFocus: (any AutomationElementRepresenting) -> Bool = {
+            button == .left && ($0.role == "AXTextField" || $0.role == "AXTextArea") && $0.isFocusedSettable
+        }
         let requiredAction = button == .right ? AXActionNames.kAXShowMenuAction : AXActionNames.kAXPressAction
         if let actionable = spatiallyValid.first(where: {
-            $0.isEnabled &&
-                $0.supportsAction(requiredAction) &&
-                (button == .right || !self.nonPressableContainerRoles.contains($0.role ?? ""))
+            $0.isEnabled && (prefersFocus($0) ||
+                ($0.supportsAction(requiredAction) &&
+                    (button == .right || !self.nonPressableContainerRoles.contains($0.role ?? ""))))
         }) {
+            // WebKit text fields may advertise AXPress without giving it keyboard focus.
+            if prefersFocus(actionable) { return (actionable, .focus) }
             let role = actionable.role ?? "<none>"
             let frame = String(describing: actionable.frame)
             self.logger.debug(
@@ -178,10 +185,9 @@ enum BackgroundInputDriver {
     /// the click.
     /// Rejects a resolved element that does not belong to the pinned `targetWindowID`.
     ///
-    /// `_AXUIElementGetWindow` (via `AXWindowResolver`) returns the element's containing window in
-    /// the same CGWindowID namespace as the pinning selector. A `nil` window id means the element
-    /// exposes no window (or the lookup failed); for a pinned exact-window click that is treated as
-    /// a mismatch so the click is never delivered to an unverified window.
+    /// WebKit leaves may only identify their containing window through AXWindow. Resolve that
+    /// native link before comparing the same CGWindowID used by the pinning selector. Missing or
+    /// different window identities are still refused; bounds alone never authorize an AX action.
     @MainActor
     private static func assertBelongsToTargetWindow(
         _ element: any AutomationElementRepresenting,
@@ -192,21 +198,138 @@ enum BackgroundInputDriver {
             // In-memory elements (tests) carry no AX identity and cannot be window-verified.
             return
         }
-        guard AXWindowResolver().windowID(from: axElement) == targetWindowID else {
-            throw PeekabooError.serviceUnavailable(
-                Self.occludedWindowMessage(at: point, targetWindowID: targetWindowID))
+        guard let owner = AXWindowIDResolver.owner(of: axElement) else {
+            throw Self.occludedWindowRefusal(at: point, targetWindowID: targetWindowID, resolvedWindowID: nil)
         }
+        if owner.windowID == targetWindowID || owner.sheetWindowID == targetWindowID { return }
+        // A sheet with no AXWindow of its own reaches Accessibility only through its parent's tree, so hit-testing
+        // names the parent even though the sheet is in front at the point. An Open or Save panel's controls name
+        // the panel service's window instead, which is never on screen: the panel is drawn in the target.
+        if self.isSheetWithoutAccessibilityWindow(targetWindowID, attachedTo: owner.windowID) { return }
+        throw Self.occludedWindowRefusal(at: point, targetWindowID: targetWindowID, resolvedWindowID: owner.windowID)
+    }
+
+    /// Hit-testing runs before anything is sent, so these refusals are retry-safe.
+    static func occludedWindowRefusal(
+        at point: CGPoint,
+        targetWindowID: CGWindowID,
+        resolvedWindowID: CGWindowID?) -> DesktopActionFailure
+    {
+        DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: Self.occludedWindowMessage(
+                at: point,
+                targetWindowID: targetWindowID,
+                resolvedWindowID: resolvedWindowID))
+    }
+
+    /// Whether `sheetID` is an on-screen window of the same app as `parentID`, in front of it, centered on it with
+    /// its top edge inside it, that the app's AXWindows don't list: a sheet whose controls Accessibility reports
+    /// under the parent. An Open or Save panel attached to a sheet can be wider than the parent, so its width
+    /// isn't checked. When `parentID` isn't on screen, as for the panel service's window that an Open or Save
+    /// panel's controls name, any window of the sheet's app behind it can be the parent.
+    @MainActor
+    static func isSheetWithoutAccessibilityWindow(
+        _ sheetID: CGWindowID,
+        attachedTo parentID: CGWindowID,
+        copyWindowInfo: (CGWindowListOption, CGWindowID) -> [[String: Any]]? = { options, relativeToWindow in
+            CGWindowListCopyWindowInfo(options, relativeToWindow) as? [[String: Any]]
+        },
+        accessibilityWindowIDs: @MainActor (pid_t) -> [CGWindowID]? = BackgroundInputDriver.accessibilityWindowIDs) -> Bool
+    {
+        guard sheetID != parentID else { return false }
+        // Front to back.
+        let candidates = self.mouseWindowRouteCandidates(exactWindowID: nil, copyWindowInfo: copyWindowInfo)
+        guard let sheetIndex = candidates.firstIndex(where: { $0.windowID == sheetID }) else { return false }
+        let sheet = candidates[sheetIndex]
+        let attached = { (parent: MouseWindowRouteCandidate) in
+            parent.processIdentifier == sheet.processIdentifier &&
+                parent.layer == 0 &&
+                abs(sheet.bounds.midX - parent.bounds.midX) <= 2 &&
+                sheet.bounds.minY >= parent.bounds.minY &&
+                sheet.bounds.minY < parent.bounds.maxY
+        }
+        let behind = candidates[(sheetIndex + 1)...]
+        let parent: MouseWindowRouteCandidate? = if candidates.contains(where: { $0.windowID == parentID }) {
+            behind.first { $0.windowID == parentID }.flatMap { attached($0) ? $0 : nil }
+        } else {
+            behind.first(where: attached)
+        }
+        guard let parent,
+              sheet.layer == 0,
+              let listed = accessibilityWindowIDs(parent.processIdentifier)
+        else { return false }
+        return !listed.contains(sheetID)
+    }
+
+    /// The window IDs of an app's AXWindows, or nil when Accessibility can't list them.
+    @MainActor
+    static func accessibilityWindowIDs(_ processIdentifier: pid_t) -> [CGWindowID]? {
+        let application = AXUIElementCreateApplication(processIdentifier)
+        _ = AXUIElementSetMessagingTimeout(application, 1)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &value) == .success,
+              let windows = value as? [AXUIElement]
+        else { return nil }
+        return windows.compactMap { AXWindowIDResolver.windowID(of: $0) }
+    }
+
+    // The worker returns only an immutable retained CF handle; AXorcist remains on MainActor.
+    private struct HitTestElement: @unchecked Sendable {
+        let element: AXUIElement
     }
 
     @MainActor
     private static func hitTestCandidates(
         at point: CGPoint,
-        targetProcessIdentifier: pid_t) -> [any AutomationElementRepresenting]
+        targetProcessIdentifier: pid_t,
+        targetProcessStartIdentity: UInt64?) async throws -> [any AutomationElementRepresenting]
     {
-        guard let hit = Element.elementAtPoint(point, pid: targetProcessIdentifier) else {
-            return []
+        let retained: HitTestElement
+        do {
+            // A self-targeted AX hit test needs the app's main actor free to answer it.
+            // Only the read runs here; cancellation never permits later input from this lane.
+            retained = try await ElementDetectionTimeoutRunner.runDetached(
+                targetProcessIdentifier: targetProcessIdentifier,
+                targetProcessStartIdentity: targetProcessStartIdentity,
+                seconds: 2,
+                maximumPendingOperationCount: 1)
+            {
+                let application = AXUIElementCreateApplication(targetProcessIdentifier)
+                let timeoutError = AXUIElementSetMessagingTimeout(application, 1)
+                guard timeoutError == .success else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: timeoutError == .apiDisabled ? .permissionDenied : .targetUnavailable,
+                        message: "The background hit-test timeout could not be set (AX error \(timeoutError.rawValue)).")
+                }
+                var element: AXUIElement?
+                let error = AXUIElementCopyElementAtPosition(
+                    application, Float(point.x), Float(point.y), &element)
+                guard error == .success else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: error == .apiDisabled ? .permissionDenied : .targetUnavailable,
+                        message: "The background Accessibility hit test failed before input (AX error \(error.rawValue)).",
+                        hint: "Inspect the exact window again before choosing another action.")
+                }
+                guard let element else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .targetUnavailable,
+                        message: "The background Accessibility hit test returned no target before input.")
+                }
+                return HitTestElement(element: element)
+            }
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The background click point could not be read before input.",
+                hint: "Inspect the exact window again before choosing another action.",
+                causeDescription: error.localizedDescription)
         }
+        try Task.checkCancellation()
 
+        let hit = Element(retained.element)
         var candidates: [any AutomationElementRepresenting] = [AutomationElement(hit)]
         candidates.append(contentsOf: self.descendantsBreadthFirst(of: hit, maxVisited: 256, maxDepth: 8))
 
@@ -244,8 +367,12 @@ enum BackgroundInputDriver {
     private static func performDetachedAction(
         _ actionName: String,
         on element: any AutomationElementRepresenting,
-        gracePeriod: TimeInterval) async throws -> DesktopActionOutcome
+        gracePeriod: TimeInterval?,
+        beforeMutation: @MainActor () throws -> Void = {}) async throws -> DesktopActionOutcome
     {
+        try Task.checkCancellation()
+        try beforeMutation()
+        try Task.checkCancellation()
         guard let axElement = element.underlyingAXElement else {
             try element.performAutomationAction(actionName)
             return .dispatchedUnverified(
@@ -262,7 +389,19 @@ enum BackgroundInputDriver {
         } catch let error as DesktopActionFailure {
             throw error
         } catch {
-            throw ActionInputDriver.classify(error)
+            let classified = ActionInputDriver.classify(error)
+            if actionName == AXActionNames.kAXPressAction,
+               ActionInputDriver.nativeMutationFailureMayHaveDispatched(classified)
+            {
+                throw DesktopActionFailure.indeterminate(
+                    delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                    evidence: .completionUnknown,
+                    unitCount: .one,
+                    message: "Accessibility click returned without reliable completion evidence.",
+                    hint: "Observe the exact target before deciding whether to retry this click.",
+                    causeDescription: error.localizedDescription)
+            }
+            throw classified
         }
     }
 
@@ -857,7 +996,7 @@ enum BackgroundInputDriver {
               let element = Element.elementAtPoint(point)
         else { return nil }
         let axElement = element.underlyingElement
-        guard let windowID = AXWindowResolver().windowID(from: axElement) else { return nil }
+        guard let windowID = AXWindowIDResolver.owningWindowID(of: axElement) else { return nil }
         var processIdentifier: pid_t = 0
         guard AXUIElementGetPid(axElement, &processIdentifier) == .success else { return nil }
         return self.pointerReceiverIdentity(
@@ -1054,14 +1193,15 @@ extension BackgroundInputDriver {
                     message: "The Accessibility text receiver process changed before mutation.")
             }
             if let exactWindow {
-                try self.validateExactWindowTextReceiver(
-                    DetachedExactWindowFocusReader.read(element: element, processIdentifier: targetProcessIdentifier),
-                    exactWindow: exactWindow,
-                    phase: .continuation)
-                guard let keyWindow = DetachedExactWindowFocusReader.readKeyWindow(
+                let focused = DetachedExactWindowFocusReader.read(
+                    element: element, processIdentifier: targetProcessIdentifier)
+                try self.validateExactWindowTextReceiver(focused, exactWindow: exactWindow, phase: .continuation)
+                guard let focused, let keyWindow = DetachedExactWindowFocusReader.readKeyWindow(
                     processIdentifier: targetProcessIdentifier),
-                    keyWindow.processIdentifier == targetProcessIdentifier,
-                    keyWindow.windowID == exactWindow.identity.windowID,
+                    keyWindow.isKey(
+                        processIdentifier: targetProcessIdentifier,
+                        windowID: exactWindow.identity.windowID,
+                        focused: focused),
                     !keyWindow.hasAttachedSheet
                 else {
                     throw DesktopActionFailure.preDispatchRefusal(
@@ -1399,7 +1539,8 @@ extension BackgroundInputDriver {
     static func performPositionalClickAction(
         _ action: PositionalClickAction,
         on element: any AutomationElementRepresenting,
-        allowsAccessibilityValueDelivery: Bool = true) async throws -> DesktopActionOutcome
+        allowsAccessibilityValueDelivery: Bool = true,
+        beforeMutation: @MainActor () throws -> Void = {}) async throws -> DesktopActionOutcome
     {
         if !allowsAccessibilityValueDelivery, action == .select || action == .focus {
             throw DesktopActionFailure.preDispatchRefusal(
@@ -1412,23 +1553,25 @@ extension BackgroundInputDriver {
             return try await self.performDetachedAction(
                 AXActionNames.kAXPressAction,
                 on: element,
-                gracePeriod: DetachedAXActionRunner.pressGracePeriod)
+                gracePeriod: nil,
+                beforeMutation: beforeMutation)
         case .showMenu:
             return try await self.performDetachedAction(
                 AXActionNames.kAXShowMenuAction,
                 on: element,
-                gracePeriod: DetachedAXActionRunner.showMenuGracePeriod)
+                gracePeriod: DetachedAXActionRunner.showMenuGracePeriod,
+                beforeMutation: beforeMutation)
         case .select:
+            try Task.checkCancellation()
+            try beforeMutation()
             try element.setAutomationSelected(true)
             return .dispatchedUnverified(
                 delivery: .init(mechanism: .accessibilityValue, mode: .background),
                 evidence: .deliveryAccepted)
         case .focus:
-            try Task.checkCancellation()
-            try element.setAutomationFocused(true)
-            return .dispatchedUnverified(
-                delivery: .init(mechanism: .accessibilityValue, mode: .background),
-                evidence: .deliveryAccepted)
+            return try await ActionInputDriver().tryFocus(
+                element: element,
+                beforeMutation: beforeMutation).outcome
         }
     }
 
@@ -1458,7 +1601,10 @@ extension BackgroundInputDriver {
             exactWindowID: targetWindowID,
             candidates: self.mouseWindowRouteCandidates(exactWindowID: targetWindowID))
 
-        let candidates = self.hitTestCandidates(at: point, targetProcessIdentifier: targetProcessIdentifier)
+        let candidates = try await self.hitTestCandidates(
+            at: point,
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetProcessStartIdentity: exactWindow.identity.ownerProcessStartIdentity)
         guard let element = self.positionalFocusTarget(inCandidates: candidates, at: point) else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .operationUnsupported,
@@ -1489,7 +1635,19 @@ extension BackgroundInputDriver {
                 "Exact-window pixel-focus receipt changed before the Accessibility focus write")
         }
 
-        let outcome = try await self.performPositionalClickAction(.focus, on: element)
+        let outcome = try await self.performPositionalClickAction(.focus, on: element) {
+            guard exactWindowIdentityValidator(exactWindow.identity, exactWindow.bounds) else {
+                throw PeekabooError.snapshotStale(
+                    "Exact-window pixel-focus receipt changed before the Accessibility focus write")
+            }
+            if let axElement = element.underlyingAXElement {
+                guard let windowID = CGWindowID(exactly: exactWindow.identity.windowID),
+                      AXWindowIDResolver.owningWindowID(of: axElement) == windowID else {
+                    throw PeekabooError.snapshotStale(
+                        "Exact-window pixel-focus element changed windows before the Accessibility focus write")
+                }
+            }
+        }
         guard element.focusedState == true,
               let focusedElement = element.focusedElementIdentity
         else {
@@ -1548,18 +1706,23 @@ extension BackgroundInputDriver {
         No pressable accessibility element was found at (\(Int(point.x)), \(Int(point.y))) in \
         PID \(targetProcessIdentifier). Background clicks press the accessibility element at the \
         target point, and nothing pressable was found there — the point may be empty, a \
-        custom-drawn view, or an element that exposes no press action. Re-run with --foreground \
-        --input-strategy synthOnly to focus the app and send a real mouse click at these coordinates.
+        custom-drawn view, or an element that exposes no press action. Nothing was clicked. Inspect \
+        again and click an element, or click with a modifier to send a real pointer click in the foreground.
         """
     }
 
-    static func occludedWindowMessage(at point: CGPoint, targetWindowID: CGWindowID) -> String {
-        """
+    static func occludedWindowMessage(
+        at point: CGPoint,
+        targetWindowID: CGWindowID,
+        resolvedWindowID: CGWindowID? = nil) -> String
+    {
+        let window = resolvedWindowID.map { "window \($0)" } ?? "a different window"
+        return """
         Point (\(Int(point.x)), \(Int(point.y))) is occluded for the pinned target window \
-        \(targetWindowID): accessibility hit-testing resolved an element in a different window of \
-        the same app. Background clicks press the frontmost element at the point and cannot reach \
-        an overlapped window. Move the overlapping window aside, or re-run with --foreground to \
-        raise and click the target window.
+        \(targetWindowID): accessibility hit-testing resolved an element in \(window) of \
+        the same app, and that window is not a sheet attached to the target. Background clicks press \
+        the frontmost element at the point and cannot reach an overlapped window. Nothing was clicked. \
+        Focus the target window, then inspect it again.
         """
     }
 }
@@ -1625,13 +1788,19 @@ extension BackgroundInputDriver {
             throw PeekabooError.permissionDeniedAccessibility
         }
 
-        let candidates = self.hitTestCandidates(at: point, targetProcessIdentifier: targetProcessIdentifier)
+        let candidates = try await self.hitTestCandidates(
+            at: point,
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetProcessStartIdentity: expectedWindowIdentity?.ownerProcessStartIdentity)
         guard let resolved = Self.positionalClickTarget(inCandidates: candidates, at: point, button: button) else {
-            throw PeekabooError.serviceUnavailable(
-                Self.noActionableElementMessage(at: point, targetProcessIdentifier: targetProcessIdentifier))
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: Self.noActionableElementMessage(at: point, targetProcessIdentifier: targetProcessIdentifier))
         }
-        if let targetWindowID {
-            guard let expectedWindowIdentity,
+        let beforeMutation: @MainActor () throws -> Void = {
+            try Task.checkCancellation()
+            guard let targetWindowID,
+                  let expectedWindowIdentity,
                   let expectedWindowBounds,
                   SystemIdentityResolver.validateWindowMutationIdentity(
                       expectedWindowIdentity,
@@ -1642,11 +1811,13 @@ extension BackgroundInputDriver {
             }
             try self.assertBelongsToTargetWindow(resolved.element, targetWindowID: targetWindowID, at: point)
         }
+        try beforeMutation()
 
         return try await self.performPositionalClickAction(
             resolved.action,
             on: resolved.element,
-            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
+            allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery,
+            beforeMutation: beforeMutation)
     }
 }
 

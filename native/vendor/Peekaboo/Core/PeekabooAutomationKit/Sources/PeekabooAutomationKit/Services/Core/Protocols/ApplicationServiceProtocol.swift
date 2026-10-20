@@ -242,6 +242,12 @@ public enum ApplicationActionResultSemantics {
                 hint: "Observe the pinned application before retrying and update the runtime host.")
                 .attributed(to: expectedIdentity.actionTargetReceipt)
         }
+        // The bool records termination, not whether the quit request was accepted.
+        if !result.payload, outcome.state == .dispatchedUnverified,
+           outcome.evidence == .operationStillRunning
+        {
+            return
+        }
         if !result.payload, outcome.isAccepted(by: .confirmedOrDispatched) {
             throw DesktopActionFailure.indeterminate(
                 route: outcome.route,

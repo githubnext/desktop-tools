@@ -297,6 +297,60 @@ extension PeekabooBridgeClient {
         }
     }
 
+    /// Presses one media, volume or brightness key; the system acts on it, so nothing confirms its effect.
+    public func systemDefinedKeyWithOutcome(_ key: SystemDefinedKey) async throws -> UIAutomationActionResult<Void> {
+        try await self.actionResult(
+            for: .systemDefinedKey(PeekabooBridgeSystemDefinedKeyRequest(key: key)),
+            expectedResponse: "system key")
+        { response in
+            guard case .ok = response else { return nil }
+            return ()
+        }
+    }
+
+    /// Selects one enabled keyboard input source by ID; the caller reads the current source back.
+    public func selectInputSourceWithOutcome(id: String) async throws -> UIAutomationActionResult<Void> {
+        try await self.actionResult(
+            for: .selectInputSource(PeekabooBridgeSelectInputSourceRequest(id: id)),
+            expectedResponse: "input source")
+        { response in
+            guard case .ok = response else { return nil }
+            return ()
+        }
+    }
+
+    /// Turns on one app generation's web Accessibility tree, and says how, or that the app accepts neither attribute.
+    public func enableWebAccessibilityWithOutcome(
+        _ identity: ApplicationProcessIdentity, allowsEnhancedUserInterface: Bool) async throws
+        -> UIAutomationActionResult<PeekabooBridgeWebAccessibilityChange>
+    {
+        try await self.actionResult(
+            for: .enableWebAccessibility(PeekabooBridgeEnableWebAccessibilityRequest(
+                expectedIdentity: identity, allowsEnhancedUserInterface: allowsEnhancedUserInterface)),
+            expectedResponse: "web accessibility")
+        { response in
+            guard case let .int(raw) = response else { return nil }
+            return PeekabooBridgeWebAccessibilityChange(rawValue: raw)
+        }
+    }
+
+    /// Fills the focused secure text field with a Keychain item or agent text, which the host may ask the user about
+    /// first, so the request may wait up to `timeoutSec`. True when the field's mask matches the secret's length.
+    public func secureTextFillWithOutcome(
+        _ request: PeekabooBridgeSecureTextFillRequest,
+        timeoutSec: TimeInterval) async throws -> UIAutomationActionResult<Bool>
+    {
+        try await self.actionResult(
+            for: .secureTextFill(request),
+            expectedResponse: "secure text fill",
+            requiresTargetIdentity: true,
+            timeoutSec: timeoutSec)
+        { response in
+            guard case let .bool(matched) = response else { return nil }
+            return matched
+        }
+    }
+
     public func waitForElement(target: ClickTarget, timeout: TimeInterval, snapshotId: String?) async throws
         -> WaitForElementResult
     {

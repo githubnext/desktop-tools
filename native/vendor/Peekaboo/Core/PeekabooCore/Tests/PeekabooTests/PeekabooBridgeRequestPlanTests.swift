@@ -9,7 +9,7 @@ struct PeekabooBridgeRequestPlanTests {
     @Test
     func `Every wire operation has one complete static descriptor`() {
         let operations = PeekabooBridgeOperation.allCases
-        #expect(operations.count == 118)
+        #expect(operations.count == 134)
 
         let descriptors = operations.map(Semantics.operationDescriptor(for:))
         #expect(descriptors.map(\.operation) == operations)
@@ -67,6 +67,7 @@ struct PeekabooBridgeRequestPlanTests {
             .swipe,
             .drag,
             .moveMouse,
+            .systemDefinedKey,
             .beginExactWindowHeldPointer,
             .exactWindowDrag,
         ]
@@ -77,9 +78,14 @@ struct PeekabooBridgeRequestPlanTests {
             .foregroundModifierClick,
             .exactDialogForceDismiss,
             .clickMenuBarItemIndex,
+            .literalInsert,
+            .attachmentInsert,
+            .exactFileDialogPath,
+            .secureTextFill,
         ]
         let accessibility: Set<PeekabooBridgeOperation> = [
             .inspectAccessibilityTree,
+            .enableWebAccessibility,
             .getFocusedElement,
             .type,
             .typeActions,
@@ -98,6 +104,7 @@ struct PeekabooBridgeRequestPlanTests {
             .minimizeWindow,
             .restoreWindow,
             .maximizeWindow,
+            .setWindowFullScreen,
             .getFocusedWindow,
             .listMenus,
             .listFrontmostMenus,
@@ -130,6 +137,7 @@ struct PeekabooBridgeRequestPlanTests {
             .targetedClick,
             .exactWindowTargetedClick,
             .targetedScroll,
+            .menuCommand,
         ]
 
         #expect(operationSet(requiring: [.screenRecording]) == screenRecording)

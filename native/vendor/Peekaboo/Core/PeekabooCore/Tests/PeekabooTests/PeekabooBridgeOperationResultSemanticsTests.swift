@@ -298,6 +298,10 @@ struct PeekabooBridgeOperationResultSemanticsTests {
             .swipe,
             .drag,
             .moveMouse,
+            .systemDefinedKey,
+            .selectInputSource,
+            .enableWebAccessibility,
+            .secureTextFill,
             .focusWindow,
             .moveWindow,
             .resizeWindow,
@@ -307,6 +311,7 @@ struct PeekabooBridgeOperationResultSemanticsTests {
             .minimizeWindow,
             .restoreWindow,
             .maximizeWindow,
+            .setWindowFullScreen,
             .launchApplication,
             .relaunchApplicationWithOptions,
             .activateApplication,
@@ -333,6 +338,13 @@ struct PeekabooBridgeOperationResultSemanticsTests {
             .exactDialogDismiss,
             .exactDialogEnterText,
             .exactDialogForceDismiss,
+            .literalInsert,
+            .attachmentInsert,
+            .clipboardTextWrite,
+            .clipboardImageWrite,
+            .menuCommand,
+            .clipboardFilesWrite,
+            .exactFileDialogPath,
         ]
         let classified = Set(PeekabooBridgeOperation.allCases.filter(\.mutatesDesktop))
         #expect(classified == expected)

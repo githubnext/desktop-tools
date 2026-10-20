@@ -243,6 +243,7 @@ extension ActionInputDriverTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
             actionInputDriver: RecordingActionInputDriver(elementActionError: .staleElement),
             automationElementResolver: FixedActionAutomationElementResolver(),
+            exactSnapshotElementMatcher: FixedActionAutomationElementResolver.acceptsStandIn,
             processStartIdentityProvider: { _ in processStartIdentity })
 
         for operation in [
@@ -359,6 +360,7 @@ extension ActionInputDriverTests {
                 automationElementResolver: FixedActionAutomationElementResolver {
                     resolutions += 1
                 },
+                exactSnapshotElementMatcher: FixedActionAutomationElementResolver.acceptsStandIn,
                 processStartIdentityProvider: { _ in generations.next() })
 
             let failure = await #expect(throws: DesktopActionFailure.self) {
@@ -395,6 +397,7 @@ extension ActionInputDriverTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
             actionInputDriver: driver,
             automationElementResolver: FixedActionAutomationElementResolver(),
+            exactSnapshotElementMatcher: FixedActionAutomationElementResolver.acceptsStandIn,
             processStartIdentityProvider: { _ in process.processStartIdentity })
 
         let result = try await service.performActionWithOutcome(
@@ -797,6 +800,153 @@ extension ActionInputDriverTests {
         #expect(result.outcome.state == .confirmedChange)
         #expect(result.outcome.evidence == .verifiedChange)
         #expect(result.actionName == AXActionNames.kAXSetValueAction)
+    }
+
+    @MainActor
+    @Test
+    func `date value is written as a date and verified by its UTC readback`() async throws {
+        let element = ActionInputMockAutomationElement(
+            role: "AXDateTimeArea",
+            value: Date(timeIntervalSince1970: 1_700_000_000.5),
+            isValueSettable: true)
+
+        let result = try await ActionInputDriver().trySetValueForTesting(
+            element: element, value: .string("2026-10-17T15:30:00Z"))
+
+        #expect(element.setDates == [Date(timeIntervalSince1970: 1_792_251_000)])
+        #expect(element.setValues.isEmpty)
+        #expect(result.outcome.state == .confirmedChange)
+        #expect(result.valueVerification?.readback == .string("2026-10-17T15:30:00Z"))
+        #expect(result.valueVerification?.matches(
+            requested: .string("2026-10-17T15:30:00Z"),
+            newValue: "2026-10-17T15:30:00Z",
+            actionName: AXActionNames.kAXSetValueAction) == true)
+
+        let same = try await ActionInputDriver().trySetValueForTesting(
+            element: element, value: .string("2026-10-17T15:30:00Z"))
+        #expect(same.outcome.state == .confirmedNoChange)
+        #expect(element.setDates.count == 1)
+    }
+
+    @MainActor
+    @Test
+    func `date value refuses non canonical text and reports a mismatched readback as unknown`() async throws {
+        let element = ActionInputMockAutomationElement(
+            role: "AXDateTimeArea",
+            value: Date(timeIntervalSince1970: 1_700_000_000),
+            isValueSettable: true)
+        for text in ["2026-10-17", "2026-10-17T15:30:00+02:00", "2026-10-17T15:30:00.250Z", "tomorrow"] {
+            await #expect(throws: ActionInputError.unsupported(.valueNotSettable)) {
+                _ = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string(text))
+            }
+        }
+        #expect(element.setDates.isEmpty)
+
+        element.dateSetterReadbackOverride = Date(timeIntervalSince1970: 1_792_195_200)
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await ActionInputDriver().trySetValueForTesting(
+                element: element, value: .string("2026-10-17T15:30:00Z"))
+        }
+        #expect(element.setDates.count == 1)
+    }
+
+    @MainActor
+    @Test
+    func `text in web content is refused before any write unless its ancestry proves a native field`() async throws {
+        for route in [TextInputRoute.webKeyboard, .unproven] {
+            let element = ActionInputMockAutomationElement(
+                role: "AXTextField", value: "old", isValueSettable: true)
+            element.textInputRoute = route
+            await #expect(throws: WebTextFieldValueRefusal.failure) {
+                _ = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string("new"))
+            }
+            #expect(element.setValues.isEmpty)
+            #expect(element.value as? String == "old")
+        }
+
+        let native = ActionInputMockAutomationElement(role: "AXTextField", value: "old", isValueSettable: true)
+        let result = try await ActionInputDriver().trySetValueForTesting(element: native, value: .string("new"))
+        #expect(native.setValues == [.string("new")])
+        #expect(result.outcome.state == .confirmedChange)
+
+        // Non-text controls in web content keep their value route.
+        let slider = ActionInputMockAutomationElement(role: "AXSlider", value: 1.0, isValueSettable: true)
+        slider.textInputRoute = .webKeyboard
+        _ = try await ActionInputDriver().trySetValueForTesting(element: slider, value: .double(2))
+        #expect(slider.setValues == [.double(2)])
+    }
+
+    @MainActor
+    @Test
+    func `web text without a settable range is selected by text markers and read back`() async throws {
+        let markers = FakeWebTextMarkers(before: "Header ", text: "The quick fox, the quick dog", after: " Footer")
+        let element = ActionInputMockAutomationElement(role: "AXStaticText", value: "The quick fox, the quick dog")
+        element.webTextMarkers = markers
+        let request = TextSelectionRequest(text: "quick", prefix: "the ")
+
+        let (action, selection) = try await ActionInputDriver().selectText(
+            element: element, request: request, beforeMutation: {})
+
+        #expect(selection.selectedRange == TextSelectionRange(location: 19, length: 5))
+        #expect(markers.selects.count == 1)
+        #expect(markers.selects.first! == (7 + 19, 7 + 24))
+        #expect(action.outcome.state == .confirmedChange)
+        #expect(action.actionName == "AXSelectedTextMarkerRange")
+
+        let again = try await ActionInputDriver().selectText(element: element, request: request, beforeMutation: {})
+        #expect(again.0.outcome.state == .confirmedNoChange)
+        #expect(markers.selects.count == 1)
+
+        // A caret is an empty marker range at the match's end.
+        let caret = try await ActionInputDriver().selectText(
+            element: element, request: TextSelectionRequest(text: "fox", selectionType: .cursorAfter), beforeMutation: {})
+        #expect(caret.1.selectedRange == TextSelectionRange(location: 13, length: 0))
+        #expect(markers.selects.last! == (7 + 13, 7 + 13))
+    }
+
+    @MainActor
+    @Test
+    func `skewed index markers fall back to bounded marker steps`() async throws {
+        let markers = FakeWebTextMarkers(before: "Nav ", text: "Read the terms first.", after: "")
+        markers.indexSkew = 3
+        let element = ActionInputMockAutomationElement(role: "AXStaticText")
+        element.webTextMarkers = markers
+
+        let (action, selection) = try await ActionInputDriver().selectText(
+            element: element, request: TextSelectionRequest(text: "terms"), beforeMutation: {})
+        #expect(selection.selectedRange == TextSelectionRange(location: 9, length: 5))
+        #expect(markers.selects.first! == (4 + 9, 4 + 14))
+        #expect(action.outcome.state == .confirmedChange)
+
+        // Beyond the step limit, nothing is selected.
+        let long = FakeWebTextMarkers(
+            before: "", text: String(repeating: "a", count: WebTextSelectionPlanner.maximumSteps) + "needle", after: "")
+        long.indexSkew = 1
+        let far = ActionInputMockAutomationElement(role: "AXStaticText")
+        far.webTextMarkers = long
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await ActionInputDriver().selectText(
+                element: far, request: TextSelectionRequest(text: "needle"), beforeMutation: {})
+        }
+        #expect(long.selects.isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func `a web selection that reads back elsewhere is unknown`() async throws {
+        let markers = FakeWebTextMarkers(before: "", text: "one two one", after: "")
+        markers.acceptedSelectionOverride = (0, 3)
+        let element = ActionInputMockAutomationElement(role: "AXStaticText")
+        element.webTextMarkers = markers
+
+        do {
+            _ = try await ActionInputDriver().selectText(
+                element: element, request: TextSelectionRequest(text: "one", prefix: "two "), beforeMutation: {})
+            Issue.record("The mismatched readback was reported as selected")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.dispatchState.mutationDispatched)
+        }
+        #expect(markers.selects.count == 1)
     }
 
     @MainActor

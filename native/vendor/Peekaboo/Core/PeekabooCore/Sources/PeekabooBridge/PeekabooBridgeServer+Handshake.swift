@@ -48,6 +48,15 @@ extension PeekabooBridgeServer {
                 message: "UID \(uid) is not authorized for this listener")
         }
 
+        if let refusal = self.operationAdmission?(.init(
+            operation: .permissionsStatus,
+            mutatesDesktop: false,
+            clientProcessIdentifier: peer?.processIdentifier,
+            targetProcessIdentifier: nil))
+        {
+            throw PeekabooBridgeErrorEnvelope(code: .permissionDenied, message: refusal)
+        }
+
         if let pid = peer?.processIdentifier {
             self.logger.debug("bridge handshake ok pid=\(pid, privacy: .public)")
         }

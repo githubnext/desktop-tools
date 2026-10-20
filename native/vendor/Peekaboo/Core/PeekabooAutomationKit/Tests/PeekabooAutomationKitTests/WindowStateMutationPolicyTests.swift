@@ -107,6 +107,27 @@ struct WindowStateMutationPolicyTests {
     }
 
     @Test
+    func `on-screen close follows its window server entry over an incomplete AX scan`() {
+        #expect(pinnedWindowClosePresenceDisposition(
+            windowServerEntryPresent: false,
+            minimizedAXPresence: .unverifiable,
+            expectedMinimized: false) == .missing)
+        #expect(pinnedWindowClosePresenceDisposition(
+            windowServerEntryPresent: false,
+            minimizedAXPresence: .present,
+            expectedMinimized: false) == .present)
+        #expect(pinnedWindowClosePresenceDisposition(
+            windowServerEntryPresent: true,
+            windowServerEntryMatchesReceipt: false,
+            minimizedAXPresence: .unverifiable,
+            expectedMinimized: false) == .present)
+        #expect(pinnedWindowClosePresenceDisposition(
+            windowServerEntryPresent: false,
+            minimizedAXPresence: .unverifiable,
+            expectedMinimized: true) == .unverifiable)
+    }
+
+    @Test
     func `successful minimized close accepts complete AX disappearance scan`() {
         let presence = pinnedMinimizedWindowAXPresence(
             expectedIdentity: self.identity,

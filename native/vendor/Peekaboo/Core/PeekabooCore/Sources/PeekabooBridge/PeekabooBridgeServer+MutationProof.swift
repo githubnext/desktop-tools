@@ -94,38 +94,25 @@ extension PeekabooBridgeServer {
             guard let identity = request.pinnedWindowMutation?.identity else {
                 throw DesktopTargetIdentityError.incompleteExactWindow
             }
-            let rawReadback: ServiceWindowInfo?
-            do {
-                if request.operation == .focusWindow, let focusReadback {
-                    rawReadback = focusReadback
-                } else {
-                    rawReadback = try await self.services.windows
-                        .listWindows(target: .windowId(identity.windowID)).first
-                }
-            } catch let error as PeekabooError {
-                if [.closeWindow, .backgroundCloseWindow].contains(request.operation),
-                   case .windowNotFound = error
+            var attempt = 1
+            while true {
+                do {
+                    readback = try await self.verifiedWindowMutationReadback(
+                        request: request,
+                        identity: identity,
+                        outcome: outcome,
+                        focusReadback: focusReadback)
+                    break
+                } catch PeekabooBridgeOperationReceiptError.receiptMismatch("post-mutation window postcondition")
+                    where request.operation == .restoreWindow && attempt < 9
                 {
-                    // Exact-window lookup reports a successful close as target absence.
-                    rawReadback = nil
-                } else {
-                    throw error
+                    // The Dock's restore animation outlasts the service's confirmation, which repins
+                    // unchanged WindowServer bounds; AX can report the window minimized until it ends.
+                    // Readback posts no input, and every pass repeats the full identity validation.
+                    attempt += 1
+                    try? await Task.sleep(for: .milliseconds(100))
                 }
             }
-            if request.operation == .maximizeWindow, let rawReadback {
-                let visibleWorkArea = self.maximizedVisibleWorkAreaProvider(rawReadback.bounds)
-                readback = rawReadback.withMutationPostconditionEvidence(.init(
-                    isMaximized: visibleWorkArea.map {
-                        WindowMutationGeometryPostcondition.boundsMatch(rawReadback.bounds, $0)
-                    } ?? false,
-                    verifiedVisibleWorkArea: visibleWorkArea))
-            } else {
-                readback = rawReadback?.withMutationPostconditionEvidence(nil)
-            }
-            try PeekabooBridgeOperationReceiptSemantics.validatePostMutationWindow(
-                readback,
-                request: request,
-                outcome: outcome.routed(to: .bridge))
         } catch {
             throw DesktopActionFailure.indeterminate(
                 route: .local,
@@ -137,5 +124,51 @@ extension PeekabooBridgeServer {
                 causeDescription: error.localizedDescription)
         }
         return .window(readback)
+    }
+
+    private func verifiedWindowMutationReadback(
+        request: PeekabooBridgeRequest,
+        identity: WindowMutationIdentity,
+        outcome: DesktopActionOutcome,
+        focusReadback: ServiceWindowInfo?) async throws -> ServiceWindowInfo?
+    {
+        let rawReadback: ServiceWindowInfo?
+        do {
+            if request.operation == .focusWindow, let focusReadback {
+                rawReadback = focusReadback
+            } else {
+                rawReadback = try await self.services.windows
+                    .listWindows(target: .windowId(identity.windowID)).first
+            }
+        } catch let error as PeekabooError {
+            if [.closeWindow, .backgroundCloseWindow].contains(request.operation),
+               case .windowNotFound = error
+            {
+                // Exact-window lookup reports a successful close as target absence.
+                rawReadback = nil
+            } else {
+                throw error
+            }
+        }
+        let readback: ServiceWindowInfo?
+        if request.operation == .maximizeWindow, let rawReadback {
+            let visibleWorkArea = self.maximizedVisibleWorkAreaProvider(rawReadback.bounds)
+            readback = rawReadback.withMutationPostconditionEvidence(.init(
+                isMaximized: visibleWorkArea.map {
+                    WindowMutationGeometryPostcondition.boundsMatch(rawReadback.bounds, $0)
+                } ?? false,
+                verifiedVisibleWorkArea: visibleWorkArea))
+        } else if case .setWindowFullScreen = request, let rawReadback {
+            let fullScreen = await (self.services.windows as? any WindowFullScreenProviding)?
+                .windowFullScreenState(windowID: rawReadback.windowID, expectedIdentity: identity)
+            readback = rawReadback.withMutationPostconditionEvidence(.init(isFullScreen: fullScreen))
+        } else {
+            readback = rawReadback?.withMutationPostconditionEvidence(nil)
+        }
+        try PeekabooBridgeOperationReceiptSemantics.validatePostMutationWindow(
+            readback,
+            request: request,
+            outcome: outcome.routed(to: .bridge))
+        return readback
     }
 }

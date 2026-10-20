@@ -925,7 +925,7 @@ extension DialogService {
             causeDescription: cause.localizedDescription)
     }
 
-    private func establishDialogWindowFocus(
+    func establishDialogWindowFocus(
         plan: ForegroundDialogPlan,
         policy: DialogForegroundFocusPolicy) async throws
     {

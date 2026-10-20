@@ -70,7 +70,9 @@ enum BackgroundWindowKeyboardPreparation {
             let failure = Self.leafFailure(error, delivery: leafDelivery)
             throw sequence.failure(
                 combining: failure,
-                message: "Background keyboard preparation did not finish; observe before another input.")
+                // The caller sends keys only after preparation returns, so none were posted.
+                message: "Background keyboard preparation did not finish, so no keys or paste were sent. Its window " +
+                    "activation or title-bar click may have reached the app; observe before another input.")
         }
     }
 
@@ -86,7 +88,29 @@ enum BackgroundWindowKeyboardPreparation {
             message: error.localizedDescription)
     }
 
+    /// The target may still be handling the preparation input just posted, so its Accessibility replies
+    /// can miss the short per-message timeouts. A refused observation posted nothing and is read again,
+    /// a bounded number of times; only a complete admission authorizes the next input unit.
     static func read<Value: Sendable>(
+        target: UIAutomationTarget.ExactWindow,
+        operation: @escaping @Sendable () throws -> Value) async throws -> Value
+    {
+        var attempt = 1
+        while true {
+            do {
+                return try await Self.observe(target: target, operation: operation)
+            } catch let failure as DesktopActionFailure
+                where attempt < 3 && failure.outcome.state == .refused &&
+                failure.outcome.refusalReason == .targetUnavailable
+            {
+                attempt += 1
+                // Cancellation during the pause is reported by the next observation.
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+    }
+
+    private static func observe<Value: Sendable>(
         target: UIAutomationTarget.ExactWindow,
         operation: @escaping @Sendable () throws -> Value) async throws -> Value
     {

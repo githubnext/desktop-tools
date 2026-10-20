@@ -58,6 +58,7 @@ struct PeekabooEmbeddedBridgeRuntimeTests {
         #expect(!operations.contains(.agentExecutionTrace))
         #expect(!operations.contains(._appleScriptProbe))
         #expect(operations.contains(.desktopObservation))
+        #expect(operations.contains(.clipboardImageExport))
         #expect(operations.contains(.exactWindowTargetedClick))
         #expect(operations.contains(.backgroundDialogClickButton))
 

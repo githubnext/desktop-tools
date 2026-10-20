@@ -110,6 +110,7 @@ enum DetachedAXObservationWorker {
         kAXPositionAttribute,
         kAXSizeAttribute,
         kAXRoleAttribute,
+        kAXSubroleAttribute,
         kAXTitleAttribute,
         "AXLabel",
         kAXValueAttribute,
@@ -298,6 +299,7 @@ enum DetachedAXObservationWorker {
             nil
         }
         var state = TraversalState()
+        state.listsCustomActions = NotificationCenterCustomActions.isNotificationCenter(request.processIdentifier)
         self.process(
             window,
             request: TraversalRequest(
@@ -323,11 +325,13 @@ enum DetachedAXObservationWorker {
                 state: &state)
         }
 
+        // A budget cut leaves the emitted candidates unread past the limit, not misread; the match below is the
+        // app's own focused element, so it holds for those candidates. A deadline or failed read does not.
         let corroboratedFocus = self.corroboratedFocusElementID(
             observation: (
                 initialReference: initialFocus,
                 candidates: state.focusedReferences,
-                isComplete: !isApplicationScopedFallback && state.truncationInfo?.isTruncated != true),
+                isComplete: !isApplicationScopedFallback && state.truncationInfo?.hasIncompleteReads != true),
             canRead: { self.remainingMessagingTimeout(until: deadline) != nil },
             readCurrentReference: { self.focusedReference(application: application, deadline: deadline) },
             referencesEqual: { CFEqual($0, $1) },
@@ -568,9 +572,10 @@ enum DetachedAXObservationWorker {
             descriptor.identifier,
             baseType: baseType,
             resolvedType: elementType)
+        // One action read per emitted element records what it advertises for exact action requests.
+        let advertisedActions = self.actions(of: element, node: state.visited.count)
         let exposesAction = self.actionableRoles.contains(normalizedRole) ||
-            (self.actionLookupRoles.contains(normalizedRole) &&
-                self.actions(of: element, node: state.visited.count).contains(kAXPressAction))
+            (self.actionLookupRoles.contains(normalizedRole) && advertisedActions.contains(kAXPressAction))
         let isValueSettable = self.valueSettable(
             of: element,
             role: descriptor.role,
@@ -593,6 +598,10 @@ enum DetachedAXObservationWorker {
         if let roleDescription = descriptor.roleDescription {
             attributes["roleDescription"] = roleDescription
         }
+        if descriptor.isSecure {
+            // Readers withhold secure values by this attribute; the role stays what Accessibility reports.
+            attributes["subrole"] = "AXSecureTextField"
+        }
         if let identifier {
             attributes["identifier"] = identifier
         }
@@ -611,9 +620,33 @@ enum DetachedAXObservationWorker {
         if let isFocused = descriptor.isFocused {
             attributes["isFocused"] = String(isFocused)
         }
+        if let actions = self.standardActionList(advertisedActions) {
+            attributes["actions"] = actions
+        }
+        if state.listsCustomActions, let names = NotificationCenterCustomActions.attribute(advertisedActions) {
+            attributes["customActions"] = names
+        }
         if let source = request.source {
             attributes["source"] = source
         }
+        if normalizedRole == "axtable" {
+            // A web table names its header cells here; their role description no longer says so on macOS 27.
+            if let headers = self.rawAttribute("AXColumnHeaderUIElements", of: element) as? [AXUIElement] {
+                state.columnHeaders.append(contentsOf: headers.prefix(Self.maximumColumnHeaders))
+            }
+        } else if normalizedRole == "axcell", state.columnHeaders.contains(where: { CFEqual($0, element) }) {
+            attributes["columnHeader"] = "true"
+        }
+        if normalizedRole == "axrow" {
+            // Outline rows are flat siblings; only their disclosure level shows the hierarchy.
+            attributes.merge(
+                self.rowDisclosureAttributes(
+                    level: self.rawAttribute("AXDisclosureLevel", of: element),
+                    disclosing: self.rawAttribute("AXDisclosing", of: element)),
+                uniquingKeysWith: { current, _ in current })
+        }
+        // Pre-order IDs plus depth let a reader recover each element's subtree from the flat result.
+        attributes["depth"] = String(request.depth)
 
         state.elements.append(DetectedElement(
             id: elementID,
@@ -706,12 +739,15 @@ extension DetachedAXObservationWorker {
             size: self.sizeValue(byName[kAXSizeAttribute]) ?? .zero)
         guard frame.width > 5, frame.height > 5 else { return .absent }
         let role = self.stringValue(byName[kAXRoleAttribute]) ?? "Unknown"
+        let isSecure = self.isSecure(role: role, subrole: self.stringValue(byName[kAXSubroleAttribute]))
         return .value(Descriptor(
             frame: frame,
             role: role,
+            isSecure: isSecure,
             title: self.stringValue(byName[kAXTitleAttribute]),
             label: self.stringValue(byName["AXLabel"]),
-            value: AXDescriptorReader.displayValue(byName[kAXValueAttribute]),
+            // A secure field's value is a mask, one character per secret character, so even it is never kept.
+            value: isSecure ? nil : AXDescriptorReader.displayValue(byName[kAXValueAttribute]),
             description: self.stringValue(byName[kAXDescriptionAttribute]),
             help: self.stringValue(byName[kAXHelpAttribute]),
             roleDescription: self.stringValue(byName[kAXRoleDescriptionAttribute]),
@@ -723,6 +759,11 @@ extension DetachedAXObservationWorker {
             placeholder: self.stringValue(byName["AXPlaceholderValue"]),
             isEditable: self.boolValue(byName["AXEditable"]) ?? false,
             keyboardShortcut: self.stringValue(byName["AXKeyboardShortcut"])))
+    }
+
+    /// Secure text fields report the role AXTextField with the subrole AXSecureTextField; some report it as their role.
+    private static func isSecure(role: String, subrole: String?) -> Bool {
+        role == "AXSecureTextField" || subrole == "AXSecureTextField"
     }
 
     private static func descriptorWithSingleReads(of element: AXUIElement, node: Int) -> DescriptorReadResult {
@@ -742,12 +783,15 @@ extension DetachedAXObservationWorker {
             size: self.sizeValue(valuesByName[kAXSizeAttribute]) ?? .zero)
         guard frame.width > 5, frame.height > 5 else { return .absent }
         let role = self.stringValue(valuesByName[kAXRoleAttribute]) ?? "Unknown"
+        let isSecure = self.isSecure(role: role, subrole: self.stringValue(valuesByName[kAXSubroleAttribute]))
         return .value(Descriptor(
             frame: frame,
             role: role,
+            isSecure: isSecure,
             title: self.stringValue(valuesByName[kAXTitleAttribute]),
             label: self.stringValue(valuesByName["AXLabel"]),
-            value: AXDescriptorReader.displayValue(valuesByName[kAXValueAttribute]),
+            // A secure field's value is a mask, one character per secret character, so even it is never kept.
+            value: isSecure ? nil : AXDescriptorReader.displayValue(valuesByName[kAXValueAttribute]),
             description: self.stringValue(valuesByName[kAXDescriptionAttribute]),
             help: self.stringValue(valuesByName[kAXHelpAttribute]),
             roleDescription: self.stringValue(valuesByName[kAXRoleDescriptionAttribute]),
@@ -807,6 +851,19 @@ extension DetachedAXObservationWorker {
         return ChildrenReadResult(
             elements: read.value as? [AXUIElement] ?? [],
             isIncomplete: alreadyIncomplete || read.isIncomplete)
+    }
+
+    /// Standard action names only, bounded; custom actions carry arbitrary app text and are omitted.
+    static func standardActionList(_ actions: [String]) -> String? {
+        var names: [String] = []
+        for action in actions where names.count < 16 {
+            guard action.hasPrefix("AX"), action.utf8.count <= 48,
+                  action.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) }),
+                  !names.contains(action)
+            else { continue }
+            names.append(action)
+        }
+        return names.isEmpty ? nil : names.joined(separator: ",")
     }
 
     private static func actions(of element: AXUIElement, node: Int) -> [String] {
@@ -910,6 +967,23 @@ extension DetachedAXObservationWorker {
     private static func stringValue(_ value: Any?) -> String? {
         value as? String
     }
+
+    /// An outline row's nesting level from 0, and whether it is expanded; a flat table row has neither.
+    static func rowDisclosureAttributes(level: Any?, disclosing: Any?) -> [String: String] {
+        var attributes: [String: String] = [:]
+        if let level = level as? NSNumber, CFGetTypeID(level) != CFBooleanGetTypeID(),
+           (0...1000).contains(level.intValue)
+        {
+            attributes["disclosureLevel"] = String(level.intValue)
+        }
+        if let disclosing = self.boolValue(disclosing) {
+            attributes["disclosing"] = String(disclosing)
+        }
+        return attributes
+    }
+
+    /// Header cells kept per table; a wider header is matched only this far.
+    static let maximumColumnHeaders = 64
 
     static func booleanAttributeValue(_ value: Any?) -> Bool? {
         self.boolValue(value)
@@ -1070,11 +1144,9 @@ extension DetachedAXObservationWorker {
         guard self.remainingMessagingTimeout(until: deadline) != nil else { return false }
         var owner: pid_t = 0
         guard AXUIElementGetPid(element, &owner) == .success, owner == processIdentifier,
-              let timeout = self.remainingMessagingTimeout(until: deadline),
-              AXUIElementSetMessagingTimeout(element, timeout) == .success,
-              let owningWindow = self.elementAttribute(kAXWindowAttribute, of: element)
+              let owningWindowID = AXWindowIDResolver.owningWindowID(of: element, tree: .bounded(deadline: deadline))
         else { return false }
-        return CFEqual(owningWindow, window)
+        return owningWindowID == AXWindowIDResolver.windowID(of: window)
     }
 }
 
@@ -1088,6 +1160,7 @@ private struct TraversalRequest {
 private struct Descriptor {
     let frame: CGRect
     let role: String
+    let isSecure: Bool
     let title: String?
     let label: String?
     let value: String?
@@ -1148,6 +1221,10 @@ private struct TraversalState {
     var maxChildrenPerNodeReached = false
     var deadlineReached = false
     var incompleteAccessibilityRead = false
+    /// Only Notification Center's custom action names are listed; elsewhere they are arbitrary app text.
+    var listsCustomActions = false
+    /// The header cells that tables seen so far name, so each cell is matched without another read.
+    var columnHeaders: [AXUIElement] = []
 
     var truncationInfo: DetectionTruncationInfo? {
         guard self.maxDepthReached || self.maxElementCountReached || self.maxChildrenPerNodeReached ||

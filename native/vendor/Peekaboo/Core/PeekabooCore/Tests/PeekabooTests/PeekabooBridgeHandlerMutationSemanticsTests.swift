@@ -1116,6 +1116,45 @@ struct PeekabooBridgeHandlerMutationSemanticsTests {
 
     @Test
     @MainActor
+    func `confirmed restore reads a still minimized window again until its postcondition holds`() async throws {
+        func readback(isMinimized: Bool) -> ServiceWindowInfo {
+            ServiceWindowInfo(
+                windowID: Self.windowIdentity.windowID,
+                title: "Fixture",
+                bounds: Self.bounds,
+                isMinimized: isMinimized,
+                mutationIdentity: Self.windowIdentity.withMinimizedState(isMinimized))
+        }
+        let request = PeekabooBridgeRequest.restoreWindow(.init(
+            target: .windowId(Self.windowIdentity.windowID),
+            expectedIdentity: Self.windowIdentity.withMinimizedState(true)))
+
+        let restoring = HandlerMutationReadbacks([true, true, false].map(readback(isMinimized:)))
+        let handled = try await Self.handleCurrent(
+            request,
+            with: Self.server(services: StubServices(windows: HandlerMutationWindowService(readbacks: restoring))))
+        guard case let .window(window?) = handled.response else {
+            Issue.record("Expected a proved restore window response")
+            return
+        }
+        #expect(window.isMinimized == false)
+        #expect(await restoring.count == 3)
+
+        let minimized = HandlerMutationReadbacks(Array(repeating: readback(isMinimized: true), count: 12))
+        do {
+            _ = try await Self.handleCurrent(
+                request,
+                with: Self.server(services: StubServices(windows: HandlerMutationWindowService(readbacks: minimized))))
+            Issue.record("Expected a window that stays minimized to remain indeterminate")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.evidence == .completionUnknown)
+        }
+        #expect(await minimized.count == 9)
+    }
+
+    @Test
+    @MainActor
     func `current close refuses receiptless provider before dispatch`() async throws {
         let windows = ReceiptlessCloseWindowService()
         let server = Self.server(services: StubServices(windows: windows))
@@ -1451,15 +1490,18 @@ private final class HandlerMutationWindowService: WindowManagementServiceProtoco
     private let maximizeOutcome: DesktopActionOutcome
     private let readback: ServiceWindowInfo?
     private let readbackError: PeekabooError?
+    private let readbacks: HandlerMutationReadbacks?
 
     init(
         maximizeOutcome: DesktopActionOutcome = .confirmedNoChange(),
         readback: ServiceWindowInfo? = nil,
-        readbackError: PeekabooError? = nil)
+        readbackError: PeekabooError? = nil,
+        readbacks: HandlerMutationReadbacks? = nil)
     {
         self.maximizeOutcome = maximizeOutcome
         self.readback = readback
         self.readbackError = readbackError
+        self.readbacks = readbacks
     }
 
     func closeWindow(target _: WindowTarget) async throws {}
@@ -1581,11 +1623,28 @@ private final class HandlerMutationWindowService: WindowManagementServiceProtoco
         if let readbackError {
             throw readbackError
         }
+        if let readbacks {
+            return await readbacks.next().map { [$0] } ?? []
+        }
         return self.readback.map { [$0] } ?? []
     }
 
     func getFocusedWindow() async throws -> ServiceWindowInfo? {
         nil
+    }
+}
+
+private actor HandlerMutationReadbacks {
+    private var remaining: [ServiceWindowInfo]
+    private(set) var count = 0
+
+    init(_ readbacks: [ServiceWindowInfo]) {
+        self.remaining = readbacks
+    }
+
+    func next() -> ServiceWindowInfo? {
+        self.count += 1
+        return self.remaining.isEmpty ? nil : self.remaining.removeFirst()
     }
 }
 
