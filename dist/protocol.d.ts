@@ -66,6 +66,8 @@ export type DesktopApplication = {
 export type DesktopLaunch = {
     op: "launch";
     application: DesktopApplication;
+    /** native2 (wire 2) only: bring the app forward; it launches in the background otherwise. */
+    activate?: boolean;
 };
 export type DesktopOpen = {
     op: "open";
@@ -75,6 +77,8 @@ export type DesktopOpen = {
         url: string;
     };
     application?: DesktopApplication;
+    /** native2 (wire 2) only: bring the receiving app forward; it opens in the background otherwise. */
+    activate?: boolean;
 };
 /** One element ID from an earlier accessibility snapshot of the same window. */
 export type DesktopScope = {

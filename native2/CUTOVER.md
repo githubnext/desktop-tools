@@ -72,7 +72,7 @@ A model shouldn't care about any of these, but they make Node's tests and the pa
 ### Keeping the two in step
 
 - CI builds native2, runs its tests, and runs `node scripts/contract.mjs --check`, so a tool whose description or schema changes in `src/` fails until native2's contract is regenerated. A change in behaviour that isn't ported still shows up only in the next parity run.
-- `ContractText.swift` is compiled from the Node server's instructions and tools/list, so Node stays the source of truth until the switch. The exception is text native2 owns, written in `scripts/contract.mjs` over Node's: desktop_launch and desktop_open's descriptions and `activate`, and the instructions' sentence on working in the background (#162). The shipped stack takes no fixes before the cutover, so these change in native2 only. The script stops if the Node text they replace changes.
+- `ContractText.swift` is compiled from the Node server's instructions and tools/list, run with `--wire 2`, so Node stays the source of truth until the switch. Text native2 owns sits in `src/tools.ts` behind `wire: 2` in `desktopTools` and `desktopToolRules`: desktop_launch and desktop_open's descriptions and `activate`, and the instructions' sentence on working in the background (#162). The shipped stack takes no fixes before the cutover, so wire 1 keeps the old text. Embedders on wire 2, such as ace's channel, pass `wire: 2` to both to offer the same text (#173).
 
 ### What must survive (ace)
 
