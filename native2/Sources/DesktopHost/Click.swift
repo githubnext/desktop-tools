@@ -24,6 +24,7 @@ extension Tools {
 			let window = window(snapshot)
 			let global = fraction.map { globalPoint($0, in: window.bounds) } ?? CGPoint(x: target!.frame.midX, y: target!.frame.midY)
 			try window.check()
+			Hooks.showPointer(.click(at: global, kind: kind, window: window.windowID))
 			switch (kind, target) {
 			case (.single, let element?):
 				do { return try Mac.clickElement(element.reference, window: window) } catch is Unsupported {

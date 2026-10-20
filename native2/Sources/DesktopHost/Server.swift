@@ -7,6 +7,10 @@ import Foundation
 public final class Server: @unchecked Sendable {
 	public let path: String
 	private var listener: Int32 = -1
+	private let lock = NSLock()
+	private var stopped = false
+	/// The socket file this server bound, which stop removes only while the path still names it.
+	private var published = stat()
 
 	/// The signature a client must carry; nil serves any process of this user, as an unsigned dev host must.
 	public let client: ClientRequirement?
@@ -31,13 +35,29 @@ public final class Server: @unchecked Sendable {
 		}
 		guard bound == 0 else { throw WireError.system("bind", errno) }
 		chmod(path, 0o600)
+		lstat(path, &published)
 		guard listen(fd, 16) == 0 else { throw WireError.system("listen", errno) }
 		listener = fd
 		Thread.detachNewThread { [self] in accept() }
 	}
 
+	/// Stops accepting and removes the socket when the path still names it; open connections finish on their own.
+	public func stop() {
+		let first = lock.withLock { defer { stopped = true }; return !stopped }
+		guard first, listener >= 0 else { return }
+		var now = stat()
+		if lstat(path, &now) == 0, now.st_dev == published.st_dev, now.st_ino == published.st_ino { unlink(path) }
+	}
+
 	private func accept() {
+		// A blocked accept doesn't wake when another thread closes its socket, so it polls for stop.
+		var ready = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
 		while true {
+			if lock.withLock({ stopped }) {
+				close(listener)
+				return
+			}
+			guard poll(&ready, 1, 250) > 0 else { continue }
 			let fd = Darwin.accept(listener, nil, nil)
 			if fd < 0 {
 				if errno == EINTR { continue }
@@ -78,7 +98,7 @@ private final class Session: @unchecked Sendable {
 				}
 				guard let id = frame["id"]?.int else { continue }
 				let task = Task { [self] in
-					let result = await Tools.call(frame["tool"]?.string ?? "", arguments: frame["arguments"] ?? .object([]), client: client)
+					let result = await Tools.observed(frame["tool"]?.string ?? "", arguments: frame["arguments"] ?? .object([]), client: client)
 					lock.withLock { _ = running.removeValue(forKey: id) }
 					try? connection.send(.object([("id", JSON(id)), ("result", result.mcp)]))
 				}
