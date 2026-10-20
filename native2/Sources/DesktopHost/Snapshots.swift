@@ -54,5 +54,10 @@ actor Snapshots {
 		return snapshot
 	}
 
+	/// Returns a snapshot whose action sent nothing, so it can drive the next one.
+	func release(_ id: String) {
+		store[id]?.spent = false
+	}
+
 	func get(_ id: String) -> Snapshot? { store[id] }
 }

@@ -11,6 +11,7 @@ public enum Tools {
 			case "desktop_apps": return try await apps(arguments)
 			case "desktop_windows": return try await windows(arguments)
 			case "desktop_inspect": return try await inspect(arguments)
+			case "desktop_click": return try await click(arguments)
 			default:
 				return ToolResult(text: "\(name) isn't in the Swift spike yet.", isError: true)
 			}

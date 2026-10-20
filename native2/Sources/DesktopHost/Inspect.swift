@@ -51,6 +51,18 @@ extension Tools {
 	/// One observation: the exact window's Accessibility tree and its pixels, read side by side, then checked
 	/// against the window's identity so neither describes a different window.
 	static func observe(pid: pid_t, windowID: Int) async throws -> ToolResult {
+		let (data, image) = try await observation(pid: pid, windowID: windowID)
+		return ToolResult(text: try boundedObservation(data), image: image)
+	}
+
+	/// An observation bounded to the result limit, keeping the containers an agent can scope into.
+	static func boundedObservation(_ data: JSON) throws -> String {
+		try bounded(data, field: "ui_elements") { element in
+			element["attributes"]?["role"]?.string.map(scopeRoles.contains) ?? false
+		}
+	}
+
+	static func observation(pid: pid_t, windowID: Int) async throws -> (JSON, (data: String, mimeType: String)) {
 		let started = ContinuousClock.now
 		guard let generation = Mac.generation(pid) else {
 			throw ToolError("notFound: Desktop observation target was not found: live process generation for PID \(pid).")
@@ -116,10 +128,7 @@ extension Tools {
 			"target_receipt": .object([("pid", JSON(pid)), ("window_id", JSON(windowID)), ("process_start_identity_decimal", JSON(String(generation)))]),
 			"image": .object([("width", JSON(jpeg.width)), ("height", JSON(jpeg.height)), ("note", JSON(imageNote))]),
 		])
-		let text = try bounded(data, field: "ui_elements") { element in
-			element["attributes"]?["role"]?.string.map(scopeRoles.contains) ?? false
-		}
-		return ToolResult(text: text, image: (jpeg.data.base64EncodedString(), "image/jpeg"))
+		return (data, (jpeg.data.base64EncodedString(), "image/jpeg"))
 	}
 
 	/// The element actions an agent can request; AXPress stays with desktop_click, which performs it with its checks.
