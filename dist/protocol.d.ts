@@ -149,6 +149,7 @@ export type DesktopRequest = DesktopManagement | DesktopLaunch | DesktopOpen | D
 } | {
     op: "windows";
     pid: number;
+    all?: boolean;
 } | {
     op: "menus";
     target: DesktopAppTarget;

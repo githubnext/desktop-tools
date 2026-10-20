@@ -76,7 +76,8 @@ extension DialogService {
                     in: window,
                     candidates: tree.elements.filter {
                         DialogElementClassifier.isStructuralDialog(DialogElementClassifier.evidence(for: $0))
-                    })
+                    },
+                    parent: { $0 == window ? nil : $0.parent() })
                 for dialog in dialogs {
                     let metadata = self.discoveryTree(
                         dialog,

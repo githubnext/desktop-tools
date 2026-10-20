@@ -1,0 +1,226 @@
+{
+	"inventory_completeness": "complete",
+	"windows": [
+		{
+			"is_key": true,
+			"is_minimized": false,
+			"display_current_space_id": 1,
+			"display_asleep": false,
+			"process_start_identity_decimal": "1792461962814398",
+			"observation_capability": "combined_eligible",
+			"window_title": "note.txt",
+			"space_ids": [
+				1
+			],
+			"is_on_screen": true,
+			"bounds": {
+				"x": 152,
+				"width": 656,
+				"height": 422,
+				"y": 73
+			},
+			"window_id": 2205,
+			"display_index": 0,
+			"target": {
+				"window_id": 2205,
+				"is_minimized": false,
+				"process_start_identity_decimal": "1792461962814398",
+				"bounds": {
+					"x": 152,
+					"width": 656,
+					"height": 422,
+					"y": 73
+				},
+				"pid": 41114
+			},
+			"availability": {
+				"state": "available",
+				"reason": "visible"
+			}
+		},
+		{
+			"is_minimized": false,
+			"display_current_space_id": 1,
+			"display_asleep": false,
+			"process_start_identity_decimal": "1792461962814398",
+			"observation_capability": "pixels_only",
+			"window_title": "",
+			"space_ids": [],
+			"is_on_screen": false,
+			"bounds": {
+				"x": 0,
+				"width": 500,
+				"height": 500,
+				"y": 482
+			},
+			"observation_reason": "no_matching_accessibility_window",
+			"window_id": 2204,
+			"display_index": 0,
+			"target": {
+				"window_id": 2204,
+				"is_minimized": false,
+				"process_start_identity_decimal": "1792461962814398",
+				"bounds": {
+					"x": 0,
+					"width": 500,
+					"height": 500,
+					"y": 482
+				},
+				"pid": 41114
+			},
+			"availability": {
+				"state": "unavailable",
+				"reason": "not_on_screen",
+				"hint": "macOS reports the window off screen for no reason this listing can see. Bring it forward with desktop_focus, then inspect it again before acting."
+			}
+		},
+		{
+			"is_minimized": false,
+			"display_current_space_id": 1,
+			"display_asleep": false,
+			"process_start_identity_decimal": "1792461962814398",
+			"observation_capability": "pixels_only",
+			"window_title": "",
+			"space_ids": [],
+			"is_on_screen": false,
+			"bounds": {
+				"x": 0,
+				"width": 1512,
+				"height": 33,
+				"y": 0
+			},
+			"observation_reason": "no_matching_accessibility_window",
+			"window_id": 2203,
+			"display_index": 0,
+			"target": {
+				"window_id": 2203,
+				"is_minimized": false,
+				"process_start_identity_decimal": "1792461962814398",
+				"bounds": {
+					"x": 0,
+					"width": 1512,
+					"height": 33,
+					"y": 0
+				},
+				"pid": 41114
+			},
+			"availability": {
+				"state": "unavailable",
+				"reason": "not_on_screen",
+				"hint": "macOS reports the window off screen for no reason this listing can see. Bring it forward with desktop_focus, then inspect it again before acting."
+			}
+		},
+		{
+			"is_minimized": false,
+			"display_current_space_id": 1,
+			"display_asleep": false,
+			"process_start_identity_decimal": "1792461962814398",
+			"observation_capability": "pixels_only",
+			"window_title": "",
+			"space_ids": [],
+			"is_on_screen": false,
+			"bounds": {
+				"x": 0,
+				"width": 1512,
+				"height": 33,
+				"y": 0
+			},
+			"observation_reason": "no_matching_accessibility_window",
+			"window_id": 2202,
+			"display_index": 0,
+			"target": {
+				"window_id": 2202,
+				"is_minimized": false,
+				"process_start_identity_decimal": "1792461962814398",
+				"bounds": {
+					"x": 0,
+					"width": 1512,
+					"height": 33,
+					"y": 0
+				},
+				"pid": 41114
+			},
+			"availability": {
+				"state": "unavailable",
+				"reason": "not_on_screen",
+				"hint": "macOS reports the window off screen for no reason this listing can see. Bring it forward with desktop_focus, then inspect it again before acting."
+			}
+		},
+		{
+			"is_minimized": false,
+			"display_current_space_id": 1,
+			"display_asleep": false,
+			"process_start_identity_decimal": "1792461962814398",
+			"observation_capability": "pixels_only",
+			"window_title": "",
+			"space_ids": [],
+			"is_on_screen": false,
+			"bounds": {
+				"x": 0,
+				"width": 1512,
+				"height": 33,
+				"y": 0
+			},
+			"observation_reason": "no_matching_accessibility_window",
+			"window_id": 2201,
+			"display_index": 0,
+			"target": {
+				"window_id": 2201,
+				"is_minimized": false,
+				"process_start_identity_decimal": "1792461962814398",
+				"bounds": {
+					"x": 0,
+					"width": 1512,
+					"height": 33,
+					"y": 0
+				},
+				"pid": 41114
+			},
+			"availability": {
+				"state": "unavailable",
+				"reason": "not_on_screen",
+				"hint": "macOS reports the window off screen for no reason this listing can see. Bring it forward with desktop_focus, then inspect it again before acting."
+			}
+		},
+		{
+			"is_minimized": false,
+			"display_current_space_id": 1,
+			"display_asleep": false,
+			"process_start_identity_decimal": "1792461962814398",
+			"observation_capability": "pixels_only",
+			"window_title": "",
+			"space_ids": [],
+			"is_on_screen": false,
+			"bounds": {
+				"x": 0,
+				"width": 1512,
+				"height": 33,
+				"y": 0
+			},
+			"observation_reason": "no_matching_accessibility_window",
+			"window_id": 2200,
+			"display_index": 0,
+			"target": {
+				"window_id": 2200,
+				"is_minimized": false,
+				"process_start_identity_decimal": "1792461962814398",
+				"bounds": {
+					"x": 0,
+					"width": 1512,
+					"height": 33,
+					"y": 0
+				},
+				"pid": 41114
+			},
+			"availability": {
+				"state": "unavailable",
+				"reason": "not_on_screen",
+				"hint": "macOS reports the window off screen for no reason this listing can see. Bring it forward with desktop_focus, then inspect it again before acting."
+			}
+		}
+	],
+	"inventory_warnings": [],
+	"app_hidden": false,
+	"pid": 41114,
+	"session_locked": false
+}

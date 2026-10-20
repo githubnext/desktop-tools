@@ -4,12 +4,25 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-19
+
+### Fixed
+
+- The window outline no longer draws over a sheet or Open panel that opens on top of its window, such as an Open panel on System Settings' Search Privacy sheet. The window server keeps a window's sheets with it, so the outline is cut away under them, and it follows them as they open and close. ([#149](https://github.com/githubnext/desktop-tools/issues/149))
+- `desktop_dialog` and `desktop_dialog_answer` read and answer an Open panel stacked on a sheet, such as the one **+** opens on System Settings' Search Privacy sheet. With the app or the parent window as the target, they picked neither and refused the target as ambiguous; the innermost dialog, which the others wait on, is now the one chosen. ([#148](https://github.com/githubnext/desktop-tools/issues/148))
+- A point click on a control below a list that grows as it's read, such as **Search Privacy…** in System Settings > Spotlight, presses it. Finding the control read the whole pane, which made the app list longer and moved the button off the point, so the click was refused as finding no pressable element. ([#147](https://github.com/githubnext/desktop-tools/issues/147))
+
+## [0.16.0] - 2026-10-19
+
 ### Added
 
 - `desktop_select` selects text on a PDF page in Preview. It was refused because the page's text reports itself disabled and has no selection until one is set. To copy it, activate Preview and choose Edit > Copy, since Preview disables Copy in the background. ([#130](https://github.com/githubnext/desktop-tools/issues/130))
 
 ### Changed
 
+- Results are compact, so an agent's context fills far more slowly: the restore, focus, inspect and click loop on a TextEdit window went from 34,721 characters to 5,543. Elements list their fields once, with bounds as `[x, y, width, height]`, real booleans and state only when set; window and app rows keep their target and drop the fields it repeats; detection metadata, timings, diagnostics, coordinate context and checked receipts are left out. A large window lists more of its 200 elements, since the limit applies to the compact result. See [Result shape](docs/tools.md#result-shape). `DESKTOP_TOOLS_VERBOSE=1`, or `verbose` in the client config, returns native results whole. ([#144](https://github.com/githubnext/desktop-tools/issues/144))
+- Window actions (focus, restore, minimize, maximize, full screen, move, resize) return the window's refreshed row instead of the app's whole window inventory and an inspection with a screenshot; inspect before input. ([#144](https://github.com/githubnext/desktop-tools/issues/144))
+- `desktop_windows` counts the untitled off-screen windows that most apps keep, such as menu bar strips, in `hidden_windows` instead of listing them; `all: true` lists them. ([#144](https://github.com/githubnext/desktop-tools/issues/144))
 - The agent's name label under the window outline is a point smaller and tighter, and edged in a darker shade of the outline color instead of white.
 - Peekaboo is vendored in `native/vendor/Peekaboo`, with our changes applied, instead of fetched and patched at build time. Native builds no longer fetch Peekaboo, and `npm run peekaboo-test` runs the vendored tests without `--scratch`. `git diff peekaboo-upstream-4d43dc9 -- native/vendor/Peekaboo` shows our changes to upstream.
 
@@ -240,7 +253,9 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The first release: a signed, notarized Desktop Tools menu bar app, and the desktop tools served over MCP. ([#28](https://github.com/githubnext/desktop-tools/pull/28), [#29](https://github.com/githubnext/desktop-tools/pull/29), [#12](https://github.com/githubnext/desktop-tools/pull/12))
 
-[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/githubnext/desktop-tools/compare/v0.16.0...v0.16.1
+[0.16.0]: https://github.com/githubnext/desktop-tools/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/githubnext/desktop-tools/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/githubnext/desktop-tools/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/githubnext/desktop-tools/compare/v0.13.1...v0.14.0

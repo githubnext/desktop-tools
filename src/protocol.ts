@@ -96,7 +96,7 @@ export type DesktopRequest =
 	| { op: "clipboard-write"; format: "image"; path: string }
 	| { op: "clipboard-write"; format: "files"; paths: string[] }
 	| { op: "apps"; query?: string }
-	| { op: "windows"; pid: number }
+	| { op: "windows"; pid: number; all?: boolean }
 	| { op: "menus"; target: DesktopAppTarget; path?: string[] }
 	| { op: "menu"; target: DesktopAppTarget; path: string[] }
 	| { op: "menubar-items" }

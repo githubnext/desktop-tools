@@ -49,6 +49,7 @@ import {
 	validateNotificationAction,
 } from "./notifications.js";
 import { setCell } from "./cell.js";
+import { compactResult } from "./compact.js";
 import { errorMessage, parseResult } from "./results.js";
 import { buildTable, TABLE_ROWS_MAX, type TableElement, TableError } from "./table.js";
 import { expectAfter, validateExpect, waitFor, type WaitReads } from "./wait.js";
@@ -63,6 +64,11 @@ export type DesktopConfig = {
 	name?: string;
 	/** Agent named in the host's window label, such as "Claude"; read at each call, so it can be set later. */
 	agent?: string;
+	/**
+	 * Return native results whole, with detection metadata, timings, receipts and every window, instead of the compact
+	 * shape written for models. Defaults to `DESKTOP_TOOLS_VERBOSE=1` in the environment.
+	 */
+	verbose?: boolean;
 };
 /** `data` is the parsed final bounded `text`; image bytes stay only in `image`. */
 export type DesktopClientResult = DesktopResult & { data: unknown };
@@ -289,7 +295,10 @@ export function boundedElements(data: Record<string, unknown>, limit = MAX_TEXT)
 	return bounded(data, "ui_elements", limit, scopeContainer);
 }
 
-/** Fits `field` within `limit` by dropping its last values, those `keep` accepts only after all others. */
+/**
+ * Fits `field` within `limit` by dropping its last values, those `keep` accepts only after all others. The limit
+ * applies to the compact result a model reads; the text returned stays whole for internal reads and verbose clients.
+ */
 function bounded(
 	data: Record<string, unknown>,
 	field: string,
@@ -300,8 +309,9 @@ function bounded(
 	if (!Array.isArray(source)) throw new Error(`Native inspection returned no ${field} array.`);
 	const values = [...source];
 	const value = { ...data, [field]: values };
+	const size = (text: string) => Buffer.byteLength(compactResult(text, { allWindows: true }));
 	let text = JSON.stringify(value);
-	while (Buffer.byteLength(text) > limit && values.length) {
+	while (size(text) > limit && values.length) {
 		const index = keep ? values.findLastIndex((v) => !keep(v)) : -1;
 		values.splice(index >= 0 ? index : values.length - 1, 1);
 		text = JSON.stringify({
@@ -310,7 +320,7 @@ function bounded(
 			omitted: source.length - values.length,
 		});
 	}
-	if (Buffer.byteLength(text) > limit) {
+	if (size(text) > limit) {
 		throw new Error("Native inspection metadata exceeds the result limit.");
 	}
 	return text;
@@ -1691,7 +1701,7 @@ async function observeManagement(
 		if (!Array.isArray(windows.windows)) throw new Error("Native window inventory is unavailable.");
 		data.window_inventory_completeness = windows.inventory_completeness;
 		data.window_inventory_warnings = windows.inventory_warnings;
-		data.windows = windows.windows;
+		data.windows = windows.windows.map((row) => ({ ...row, availability: windowAvailability(row, windows) }));
 		if (
 			windows.windows.some((window) =>
 				window.process_start_identity_decimal !== receipt.process_start_identity_decimal
@@ -1705,33 +1715,13 @@ async function observeManagement(
 		if (applicationLevel || request.op === "close" || request.op === "dialog-answer") {
 			return managementResult(data, action, outcome);
 		}
-		if (!windows.windows.some((window) => window.window_id === receipt.window_id)) {
-			throw new Error("The exact window was not returned by the later inventory.");
-		}
-		// Minimization intentionally removes the visible capture target; refreshed inventory owns its state.
-		if (request.op === "minimize") return managementResult(data, action);
-		const observation = await inspect(native, {
-			op: "inspect",
-			pid: receipt.pid,
-			window: receipt.window_id!,
-		}, signal);
-		const fresh = parseResult(observation);
-		if (observation.isError) {
-			data.observation_error = fresh;
-			data.message =
-				"The native action completed. Later inventory or inspection was unavailable; refresh the target before any further action, without repeating the completed action blindly.";
-			return managementResult(data, action);
-		}
-		const current = fresh.target_receipt as Reply["target_receipt"];
-		if (current?.process_start_identity_decimal !== receipt.process_start_identity_decimal) {
-			throw new Error("The application changed process generation before the later inspection.");
-		}
-		return {
-			text: boundedElements({ ...data, ...fresh }),
-			image: observation.image,
-			outcome: "completed",
-			isError: false,
-		};
+		const row = (data.windows as Record<string, unknown>[]).find((window) => window.window_id === receipt.window_id);
+		if (!row) throw new Error("The exact window was not returned by the later inventory.");
+		// A window action returns only that window's refreshed row, whose target the next call takes. Input needs a
+		// new snapshot, so the agent inspects next instead of paying for an inspection attached here.
+		delete data.windows;
+		data.window = row;
+		return managementResult(data, action);
 	} catch (error) {
 		data.observation_error = errorMessage(error);
 		data.message = outcome === "completed"
@@ -1765,9 +1755,13 @@ function managementResult(
 /** Creates a client bound to one host socket and signed client; calls are independent processes. */
 export function createDesktop(config: DesktopConfig): DesktopClient {
 	const native = caller(config);
+	const verbose = config.verbose ?? process.env.DESKTOP_TOOLS_VERBOSE === "1";
 	return async (request, signal) => {
 		const result = await execute(native, request, signal);
-		return { ...result, data: JSON.parse(result.text) as unknown };
+		const text = verbose
+			? result.text
+			: compactResult(result.text, { allWindows: request.op === "windows" && request.all === true });
+		return { ...result, text, data: JSON.parse(text) as unknown };
 	};
 }
 
@@ -2015,6 +2009,9 @@ async function execute(
 				);
 			}
 			query = request.query.trim();
+		}
+		if (request.op === "windows" && request.all !== undefined && typeof request.all !== "boolean") {
+			throw new Error("Choose all true or false.");
 		}
 		const args = request.op === "apps"
 			? ["apps"]
