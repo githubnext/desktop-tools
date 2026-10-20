@@ -13,6 +13,7 @@ struct Snapshot: @unchecked Sendable {
 	/// Pixel size of the image the agent received, for fractional points.
 	let imageSize: CGSize
 	let elements: [String: Element]
+	let focusedID: String?
 	var lastUsed: Date
 	/// An action spends the snapshot; the next action needs a fresh inspection.
 	var spent = false

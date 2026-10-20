@@ -31,6 +31,8 @@ public struct Element: @unchecked Sendable {
 public struct ElementTree: @unchecked Sendable {
 	public var elements: [Element] = []
 	public var windowTitle: String?
+	/// The element keyboard input reaches: the one the walk saw focused, or among several, the one the app names.
+	public var focusedID: String?
 	public var maxDepthReached = false
 	public var maxElementCountReached = false
 	public var maxChildrenPerNodeReached = false
@@ -366,6 +368,11 @@ extension Mac {
 			// Still in WindowServer but not in Accessibility, as a web view's window is while it loads.
 			throw ToolError("internalError: Exact window \(windowID) returned no usable Accessibility elements. Warning: AX tree incomplete at incomplete accessibility read. Retry once after a short wait.")
 		}
+		// Read before the walk so a focus change during it can't be taken for the focus the walk saw.
+		AXUIElementSetMessagingTimeout(app, 0.05)
+		let focusBefore = AX.value(app, kAXFocusedUIElementAttribute).flatMap {
+			CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil
+		}
 		var walk = Walk(deadline: deadline, budget: budget)
 		walk.listsCustomActions = CustomActions.isNotificationCenter(pid)
 		walk.tree.windowTitle = AX.string(window, kAXTitleAttribute)
@@ -373,16 +380,30 @@ extension Mac {
 		if walk.tree.elements.isEmpty {
 			throw ToolError("internalError: Exact window \(windowID) returned no usable Accessibility elements. Warning: AX tree incomplete at incomplete accessibility read. Retry once after a short wait.")
 		}
+		walk.tree.focusedID = focusedID(walk.tree, app: app, before: focusBefore)
 		if !walk.tree.truncated { attachSelection(&walk.tree) }
 		return walk.tree
 	}
 
-	/// The focused text field's selection, which a complete walk records when exactly one element says it has
-	/// focus and still does when read again. Peekaboo also corroborates among several focused elements; the
-	/// spike doesn't.
+	/// Peekaboo's focus receipt: the one element that says it has focus. Several can, as a focused table's cells
+	/// do, and then only a complete walk names one: the app's focused element, unchanged since before the walk.
+	static func focusedID(_ tree: ElementTree, app: AXUIElement, before: AXUIElement?) -> String? {
+		let focused = tree.elements.filter { $0.attributes["isFocused"] == "true" }
+		if focused.count == 1 { return focused[0].id }
+		guard focused.count > 1, !tree.incompleteAccessibilityRead, !tree.deadlineReached, let before else { return nil }
+		AXUIElementSetMessagingTimeout(app, 0.2)
+		guard let raw = AX.value(app, kAXFocusedUIElementAttribute), CFGetTypeID(raw) == AXUIElementGetTypeID()
+		else { return nil }
+		let current = raw as! AXUIElement
+		guard CFEqual(before, current) else { return nil }
+		let matches = focused.filter { CFEqual($0.reference, current) }
+		return matches.count == 1 ? matches[0].id : nil
+	}
+
+	/// The focused text field's selection, which a complete walk records for its focus receipt when that element
+	/// still has focus when read again.
 	static func attachSelection(_ tree: inout ElementTree) {
-		let focused = tree.elements.indices.filter { tree.elements[$0].attributes["isFocused"] == "true" }
-		guard focused.count == 1, let index = focused.first else { return }
+		guard let id = tree.focusedID, let index = tree.elements.firstIndex(where: { $0.id == id }) else { return }
 		let element = tree.elements[index]
 		guard element.type == "textField", element.attributes["subrole"] != "AXSecureTextField" else { return }
 		AXUIElementSetMessagingTimeout(element.reference, 0.2)

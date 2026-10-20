@@ -10,11 +10,8 @@ private let keySequenceGap: UInt32 = 30_000
 private let textRoles: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox"]
 
 extension Snapshot {
-	/// The one element the inspection saw focused, which keys go to when it still has focus.
-	var focused: Element? {
-		let focused = elements.values.filter { $0.attributes["isFocused"] == "true" }
-		return focused.count == 1 ? focused[0] : nil
-	}
+	/// The element the inspection saw focused, which keys go to when it still has focus.
+	var focused: Element? { focusedID.flatMap { elements[$0] } }
 }
 
 extension Tools {

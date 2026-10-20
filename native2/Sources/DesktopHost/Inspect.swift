@@ -137,7 +137,8 @@ extension Tools {
 		await Snapshots.shared.put(Snapshot(
 			id: id, pid: pid, generation: generation, windowID: windowID, windowBounds: window.bounds,
 			imageSize: CGSize(width: jpeg.width, height: jpeg.height),
-			elements: Dictionary(uniqueKeysWithValues: elements.elements.map { ($0.id, $0) }), lastUsed: Date()
+			elements: Dictionary(uniqueKeysWithValues: elements.elements.map { ($0.id, $0) }), focusedID: elements.focusedID,
+			lastUsed: Date()
 		))
 
 		var listed: [Element]
