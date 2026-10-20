@@ -253,7 +253,7 @@ These are the rest of each tool's contract, beyond its description.
 - **After an action,** the automatic observation uses accessibility mode. If it fails, inspect again with pixels mode.
 - **In a Chromium or Electron app,** it first turns on the app's web accessibility, once per launch, unless `web_accessibility` is false. The result's `web_accessibility` says what happened; see [Input](#input).
 
-**`desktop_click`.** A single left click on a supported editable text field, by element or point, also requests keyboard focus. The result says whether focus was verified; use `desktop_select` to choose a range or caret position. Points stay bound to the captured window, even when the returned screenshot was scaled.
+**`desktop_click`.** A single left click on a supported editable text field, by element or point, also requests keyboard focus. The result says whether focus was verified; use `desktop_select` to choose a range or caret position. Points stay bound to the captured window, even when the returned screenshot was scaled. A point click presses the Accessibility element there, and is refused before input when that element belongs to another window, so a covered window can't be clicked through. A sheet that Accessibility lists only inside its parent window, such as System Settings' Search Privacy sheet, or an Open panel on it, takes point clicks from a pixels snapshot of the sheet's own window.
 
 **`desktop_scroll`.** `amount` is in native scroll units. Their distance depends on the route the target supports, not on pixels.
 

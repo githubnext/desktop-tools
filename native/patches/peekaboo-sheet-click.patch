@@ -1,0 +1,231 @@
+diff --git a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/BackgroundInputDriver.swift b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/BackgroundInputDriver.swift
+index 010a92924..70e0d4377 100644
+--- a/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/BackgroundInputDriver.swift
++++ b/Core/PeekabooAutomationKit/Sources/PeekabooAutomationKit/Services/UI/BackgroundInputDriver.swift
+@@ -198,10 +198,80 @@ enum BackgroundInputDriver {
+             // In-memory elements (tests) carry no AX identity and cannot be window-verified.
+             return
+         }
+-        guard AXWindowIDResolver.owningWindowID(of: axElement) == targetWindowID else {
+-            throw PeekabooError.serviceUnavailable(
+-                Self.occludedWindowMessage(at: point, targetWindowID: targetWindowID))
++        guard let owner = AXWindowIDResolver.owner(of: axElement) else {
++            throw Self.occludedWindowRefusal(at: point, targetWindowID: targetWindowID, resolvedWindowID: nil)
+         }
++        if owner.windowID == targetWindowID || owner.sheetWindowID == targetWindowID { return }
++        // A sheet with no AXWindow of its own reaches Accessibility only through its parent's tree, so hit-testing
++        // names the parent even though the sheet is in front at the point. An Open or Save panel's controls name
++        // the panel service's window instead, which is never on screen: the panel is drawn in the target.
++        if self.isSheetWithoutAccessibilityWindow(targetWindowID, attachedTo: owner.windowID) { return }
++        throw Self.occludedWindowRefusal(at: point, targetWindowID: targetWindowID, resolvedWindowID: owner.windowID)
++    }
++
++    /// Hit-testing runs before anything is sent, so these refusals are retry-safe.
++    static func occludedWindowRefusal(
++        at point: CGPoint,
++        targetWindowID: CGWindowID,
++        resolvedWindowID: CGWindowID?) -> DesktopActionFailure
++    {
++        DesktopActionFailure.preDispatchRefusal(
++            reason: .targetUnavailable,
++            message: Self.occludedWindowMessage(
++                at: point,
++                targetWindowID: targetWindowID,
++                resolvedWindowID: resolvedWindowID))
++    }
++
++    /// Whether `sheetID` is an on-screen window of the same app as `parentID`, in front of it, centered on it with
++    /// its top edge inside it, that the app's AXWindows don't list: a sheet whose controls Accessibility reports
++    /// under the parent. An Open or Save panel attached to a sheet can be wider than the parent, so its width
++    /// isn't checked. When `parentID` isn't on screen, as for the panel service's window that an Open or Save
++    /// panel's controls name, any window of the sheet's app behind it can be the parent.
++    @MainActor
++    static func isSheetWithoutAccessibilityWindow(
++        _ sheetID: CGWindowID,
++        attachedTo parentID: CGWindowID,
++        copyWindowInfo: (CGWindowListOption, CGWindowID) -> [[String: Any]]? = { options, relativeToWindow in
++            CGWindowListCopyWindowInfo(options, relativeToWindow) as? [[String: Any]]
++        },
++        accessibilityWindowIDs: @MainActor (pid_t) -> [CGWindowID]? = BackgroundInputDriver.accessibilityWindowIDs) -> Bool
++    {
++        guard sheetID != parentID else { return false }
++        // Front to back.
++        let candidates = self.mouseWindowRouteCandidates(exactWindowID: nil, copyWindowInfo: copyWindowInfo)
++        guard let sheetIndex = candidates.firstIndex(where: { $0.windowID == sheetID }) else { return false }
++        let sheet = candidates[sheetIndex]
++        let attached = { (parent: MouseWindowRouteCandidate) in
++            parent.processIdentifier == sheet.processIdentifier &&
++                parent.layer == 0 &&
++                abs(sheet.bounds.midX - parent.bounds.midX) <= 2 &&
++                sheet.bounds.minY >= parent.bounds.minY &&
++                sheet.bounds.minY < parent.bounds.maxY
++        }
++        let behind = candidates[(sheetIndex + 1)...]
++        let parent: MouseWindowRouteCandidate? = if candidates.contains(where: { $0.windowID == parentID }) {
++            behind.first { $0.windowID == parentID }.flatMap { attached($0) ? $0 : nil }
++        } else {
++            behind.first(where: attached)
++        }
++        guard let parent,
++              sheet.layer == 0,
++              let listed = accessibilityWindowIDs(parent.processIdentifier)
++        else { return false }
++        return !listed.contains(sheetID)
++    }
++
++    /// The window IDs of an app's AXWindows, or nil when Accessibility can't list them.
++    @MainActor
++    static func accessibilityWindowIDs(_ processIdentifier: pid_t) -> [CGWindowID]? {
++        let application = AXUIElementCreateApplication(processIdentifier)
++        _ = AXUIElementSetMessagingTimeout(application, 1)
++        var value: CFTypeRef?
++        guard AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &value) == .success,
++              let windows = value as? [AXUIElement]
++        else { return nil }
++        return windows.compactMap { AXWindowIDResolver.windowID(of: $0) }
+     }
+ 
+     // The worker returns only an immutable retained CF handle; AXorcist remains on MainActor.
+@@ -1636,18 +1706,23 @@ extension BackgroundInputDriver {
+         No pressable accessibility element was found at (\(Int(point.x)), \(Int(point.y))) in \
+         PID \(targetProcessIdentifier). Background clicks press the accessibility element at the \
+         target point, and nothing pressable was found there — the point may be empty, a \
+-        custom-drawn view, or an element that exposes no press action. Re-run with --foreground \
+-        --input-strategy synthOnly to focus the app and send a real mouse click at these coordinates.
++        custom-drawn view, or an element that exposes no press action. Nothing was clicked. Inspect \
++        again and click an element, or click with a modifier to send a real pointer click in the foreground.
+         """
+     }
+ 
+-    static func occludedWindowMessage(at point: CGPoint, targetWindowID: CGWindowID) -> String {
+-        """
++    static func occludedWindowMessage(
++        at point: CGPoint,
++        targetWindowID: CGWindowID,
++        resolvedWindowID: CGWindowID? = nil) -> String
++    {
++        let window = resolvedWindowID.map { "window \($0)" } ?? "a different window"
++        return """
+         Point (\(Int(point.x)), \(Int(point.y))) is occluded for the pinned target window \
+-        \(targetWindowID): accessibility hit-testing resolved an element in a different window of \
+-        the same app. Background clicks press the frontmost element at the point and cannot reach \
+-        an overlapped window. Move the overlapping window aside, or re-run with --foreground to \
+-        raise and click the target window.
++        \(targetWindowID): accessibility hit-testing resolved an element in \(window) of \
++        the same app, and that window is not a sheet attached to the target. Background clicks press \
++        the frontmost element at the point and cannot reach an overlapped window. Nothing was clicked. \
++        Focus the target window, then inspect it again.
+         """
+     }
+ }
+@@ -1718,8 +1793,9 @@ extension BackgroundInputDriver {
+             targetProcessIdentifier: targetProcessIdentifier,
+             targetProcessStartIdentity: expectedWindowIdentity?.ownerProcessStartIdentity)
+         guard let resolved = Self.positionalClickTarget(inCandidates: candidates, at: point, button: button) else {
+-            throw PeekabooError.serviceUnavailable(
+-                Self.noActionableElementMessage(at: point, targetProcessIdentifier: targetProcessIdentifier))
++            throw DesktopActionFailure.preDispatchRefusal(
++                reason: .targetUnavailable,
++                message: Self.noActionableElementMessage(at: point, targetProcessIdentifier: targetProcessIdentifier))
+         }
+         let beforeMutation: @MainActor () throws -> Void = {
+             try Task.checkCancellation()
+diff --git a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/BackgroundInputDriverPositionalTargetTests.swift b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/BackgroundInputDriverPositionalTargetTests.swift
+index 28a0a55a3..b231aadc5 100644
+--- a/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/BackgroundInputDriverPositionalTargetTests.swift
++++ b/Core/PeekabooAutomationKit/Tests/PeekabooAutomationKitTests/BackgroundInputDriverPositionalTargetTests.swift
+@@ -434,8 +434,8 @@ struct BackgroundInputDriverPositionalTargetTests {
+         let message = BackgroundInputDriver.noActionableElementMessage(
+             at: CGPoint(x: 2396, y: 162),
+             targetProcessIdentifier: 92941)
+-        #expect(message.contains("--foreground"))
+-        #expect(message.contains("--input-strategy synthOnly"))
++        #expect(message.contains("modifier"))
++        #expect(message.contains("Nothing was clicked"))
+         #expect(message.contains("(2396, 162)"))
+         #expect(message.contains("92941"))
+         // The message must describe the genuine "nothing pressable here" case, not claim that
+@@ -489,7 +489,82 @@ struct BackgroundInputDriverPositionalTargetTests {
+         let message = BackgroundInputDriver.occludedWindowMessage(at: CGPoint(x: 2396, y: 162), targetWindowID: 3279)
+         #expect(message.contains("3279"))
+         #expect(message.contains("(2396, 162)"))
+-        #expect(message.contains("--foreground"))
++        #expect(message.contains("sheet"))
++        #expect(!message.contains("--foreground"))
++    }
++
++    @Test
++    func `occluded window refusal is retry safe`() {
++        let failure = BackgroundInputDriver.occludedWindowRefusal(
++            at: CGPoint(x: 1, y: 2),
++            targetWindowID: 3,
++            resolvedWindowID: 4)
++        #expect(failure.outcome.dispatchState == .none)
++    }
++
++    private static func window(_ id: Int, pid: Int = 42, layer: Int = 0, _ rect: CGRect) -> [String: Any] {
++        [
++            kCGWindowNumber as String: id,
++            kCGWindowOwnerPID as String: pid,
++            kCGWindowLayer as String: layer,
++            kCGWindowBounds as String: rect.dictionaryRepresentation as NSDictionary,
++        ]
++    }
++
++    private static let parentFrame = CGRect(x: 397, y: 116, width: 740, height: 625)
++    private static let sheetFrame = CGRect(x: 532, y: 241, width: 470, height: 375)
++    private static let panelFrame = CGRect(x: 327, y: 204, width: 880, height: 448)
++
++    @MainActor
++    private static func isSheet(
++        _ sheetID: CGWindowID,
++        attachedTo parentID: CGWindowID,
++        _ windows: [[String: Any]],
++        listed: [CGWindowID]? = [75]) -> Bool
++    {
++        BackgroundInputDriver.isSheetWithoutAccessibilityWindow(
++            sheetID,
++            attachedTo: parentID,
++            copyWindowInfo: { _, _ in windows },
++            accessibilityWindowIDs: { _ in listed })
++    }
++
++    @Test @MainActor
++    func `a sheet in front of its parent with no AXWindow is accepted`() {
++        let accepted = Self.isSheet(756, attachedTo: 75, [Self.window(756, Self.sheetFrame), Self.window(75, Self.parentFrame)])
++        #expect(accepted)
++    }
++
++    @Test @MainActor
++    func `an open panel wider than its parent, on a sheet, is accepted`() {
++        let windows = [Self.window(1654, Self.panelFrame), Self.window(756, Self.sheetFrame), Self.window(75, Self.parentFrame)]
++        let accepted = Self.isSheet(1654, attachedTo: 75, windows)
++        #expect(accepted)
++    }
++
++    @Test @MainActor
++    func `an open panel whose controls name an off-screen service window is accepted`() {
++        let windows = [Self.window(1654, Self.panelFrame), Self.window(756, Self.sheetFrame), Self.window(75, Self.parentFrame)]
++        let accepted = Self.isSheet(1654, attachedTo: 1653, windows)
++        #expect(accepted)
++        // An on-screen window that the panel isn't attached to still refuses.
++        let other = Self.window(9, pid: 7, CGRect(x: 0, y: 0, width: 100, height: 100))
++        let refused = !Self.isSheet(1654, attachedTo: 9, [other] + windows)
++        #expect(refused)
++    }
++
++    @Test @MainActor
++    func `a window Accessibility lists, behind the parent, off its center, or of another app is not a sheet`() {
++        let front = [Self.window(756, Self.sheetFrame), Self.window(75, Self.parentFrame)]
++        let results = [
++            Self.isSheet(756, attachedTo: 75, front, listed: [75, 756]),
++            Self.isSheet(756, attachedTo: 75, front, listed: nil),
++            Self.isSheet(756, attachedTo: 75, front.reversed()),
++            Self.isSheet(756, attachedTo: 75, [Self.window(756, CGRect(x: 0, y: 241, width: 470, height: 375)), front[1]]),
++            Self.isSheet(756, attachedTo: 75, [Self.window(756, pid: 7, Self.sheetFrame), front[1]]),
++            Self.isSheet(756, attachedTo: 75, [Self.window(756, layer: 8, Self.sheetFrame), front[1]]),
++        ]
++        #expect(results == [false, false, false, false, false, false])
+     }
+ }
+ 
