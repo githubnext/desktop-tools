@@ -1,0 +1,167 @@
+// CommandTypeExtensions.swift - Extensions for CommandType conversions
+
+import AXorcist
+import Foundation
+
+// MARK: - CommandType Extension for conversion to AXCommand
+
+@MainActor
+extension CommandType {
+    func toAXCommand(commandEnvelope: CommandEnvelope) -> AXCommand? {
+        guard let builder = Self.commandBuilders[self] else { return nil }
+        return builder(commandEnvelope)
+    }
+
+    private typealias CommandBuilder = @MainActor (CommandEnvelope) -> AXCommand?
+
+    private static let commandBuilders: [CommandType: CommandBuilder] = [
+        .query: Self.createQueryCommand,
+        .performAction: Self.createPerformActionCommand,
+        .getAttributes: Self.createGetAttributesCommand,
+        .describeElement: Self.createDescribeElementCommand,
+        .extractText: Self.createExtractTextCommand,
+        .collectAll: Self.createCollectAllCommand,
+        .batch: Self.createBatchCommand,
+        .setFocusedValue: Self.createSetFocusedValueCommand,
+        .getElementAtPoint: Self.createGetElementAtPointCommand,
+        .getFocusedElement: Self.createGetFocusedElementCommand,
+        .observe: Self.createObserveCommand,
+    ]
+
+    private static func createQueryCommand(_ commandEnvelope: CommandEnvelope) -> AXCommand {
+        .query(QueryCommand(
+            appIdentifier: commandEnvelope.application,
+            locator: commandEnvelope.locator ?? Locator(criteria: []),
+            attributesToReturn: commandEnvelope.attributes,
+            maxDepthForSearch: commandEnvelope.maxDepth ?? 10,
+            includeChildrenBrief: commandEnvelope.includeChildrenBrief,
+            pid: commandEnvelope.pid))
+    }
+
+    private static func createPerformActionCommand(_ commandEnvelope: CommandEnvelope) -> AXCommand? {
+        guard let actionName = commandEnvelope.actionName else { return nil }
+        return .performAction(PerformActionCommand(
+            appIdentifier: commandEnvelope.application,
+            locator: commandEnvelope.locator ?? Locator(criteria: []),
+            action: actionName,
+            value: commandEnvelope.actionValue,
+            maxDepthForSearch: commandEnvelope.maxDepth ?? 10,
+            pid: commandEnvelope.pid))
+    }
+
+    private static func createGetAttributesCommand(_ commandEnvelope: CommandEnvelope) -> AXCommand {
+        .getAttributes(GetAttributesCommand(
+            appIdentifier: commandEnvelope.application,
+            locator: commandEnvelope.locator ?? Locator(criteria: []),
+            attributes: commandEnvelope.attributes ?? [],
+            maxDepthForSearch: commandEnvelope.maxDepth ?? 10,
+            pid: commandEnvelope.pid))
+    }
+
+    private static func createDescribeElementCommand(_ commandEnvelope: CommandEnvelope) -> AXCommand {
+        .describeElement(DescribeElementCommand(
+            appIdentifier: commandEnvelope.application,
+            locator: commandEnvelope.locator ?? Locator(criteria: []),
+            depth: commandEnvelope.maxDepth ?? 3,
+            includeIgnored: commandEnvelope.includeIgnoredElements ?? false,
+            maxSearchDepth: commandEnvelope.maxDepth ?? 10,
+            pid: commandEnvelope.pid))
+    }
+
+    private static func createExtractTextCommand(_ commandEnvelope: CommandEnvelope) -> AXCommand {
+        .extractText(ExtractTextCommand(
+            appIdentifier: commandEnvelope.application,
+            locator: commandEnvelope.locator ?? Locator(criteria: []),
+            maxDepthForSearch: commandEnvelope.maxDepth ?? 10,
+            includeChildren: commandEnvelope.includeChildrenInText ?? false,
+            maxDepth: commandEnvelope.maxDepth,
+            pid: commandEnvelope.pid))
+    }
+
+    private static func createCollectAllCommand(_ commandEnvelope: CommandEnvelope) -> AXCommand {
+        .collectAll(CollectAllCommand(
+            appIdentifier: commandEnvelope.application,
+            attributesToReturn: commandEnvelope.attributes,
+            maxDepth: commandEnvelope.maxDepth ?? 10,
+            filterCriteria: commandEnvelope.filterCriteria,
+            valueFormatOption: ValueFormatOption.smart,
+            pid: commandEnvelope.pid))
+    }
+
+    private static func createBatchCommand(_ commandEnvelope: CommandEnvelope) -> AXCommand? {
+        guard let batchSubCommands = commandEnvelope.subCommands else {
+            axErrorLog("toAXCommand: Batch command missing subCommands in CommandEnvelope.")
+            return nil
+        }
+        var axSubCommands: [AXBatchCommand.SubCommandEnvelope] = []
+        axSubCommands.reserveCapacity(batchSubCommands.count)
+        for subCommand in batchSubCommands {
+            guard let converted = subCommand.command.toAXCommand(commandEnvelope: subCommand) else {
+                axErrorLog("toAXCommand: Failed to convert subCommand '\(subCommand.commandId)' " +
+                    "of type '\(subCommand.command.rawValue)'.")
+                return nil
+            }
+            axSubCommands.append(.init(commandID: subCommand.commandId, command: converted))
+        }
+        return .batch(AXBatchCommand(commands: axSubCommands))
+    }
+
+    private static func createSetFocusedValueCommand(_ commandEnvelope: CommandEnvelope) -> AXCommand? {
+        guard let value = commandEnvelope.actionValue?.value as? String else {
+            axErrorLog("toAXCommand: SetFocusedValue missing string value in actionValue or wrong type.")
+            return nil
+        }
+        return .setFocusedValue(SetFocusedValueCommand(
+            appIdentifier: commandEnvelope.application,
+            locator: commandEnvelope.locator ?? Locator(criteria: []),
+            value: value,
+            maxDepthForSearch: commandEnvelope.maxDepth ?? 10,
+            pid: commandEnvelope.pid))
+    }
+
+    private static func createGetElementAtPointCommand(_ commandEnvelope: CommandEnvelope) -> AXCommand? {
+        guard let point = commandEnvelope.point else {
+            axErrorLog("toAXCommand: GetElementAtPoint missing point.")
+            return nil
+        }
+        return .getElementAtPoint(GetElementAtPointCommand(
+            point: point,
+            appIdentifier: commandEnvelope.application,
+            pid: commandEnvelope.pid,
+            attributesToReturn: commandEnvelope.attributes,
+            includeChildrenBrief: commandEnvelope.includeChildrenBrief))
+    }
+
+    private static func createGetFocusedElementCommand(_ commandEnvelope: CommandEnvelope) -> AXCommand {
+        .getFocusedElement(GetFocusedElementCommand(
+            appIdentifier: commandEnvelope.application,
+            attributesToReturn: commandEnvelope.attributes,
+            includeChildrenBrief: commandEnvelope.includeChildrenBrief,
+            pid: commandEnvelope.pid))
+    }
+
+    private static func createObserveCommand(_ commandEnvelope: CommandEnvelope) -> AXCommand? {
+        guard let notificationsList = commandEnvelope.notifications, !notificationsList.isEmpty else {
+            axErrorLog("toAXCommand: Observe missing notifications list.")
+            return nil
+        }
+        guard
+            let firstNotificationName = notificationsList.first,
+            let axNotification = AXNotification(rawValue: firstNotificationName)
+        else {
+            let invalidName = notificationsList.first ?? "nil"
+            axErrorLog("toAXCommand: invalid notification name \(invalidName) for observe command.")
+            return nil
+        }
+        return .observe(ObserveCommand(
+            appIdentifier: commandEnvelope.application,
+            locator: commandEnvelope.locator,
+            notifications: notificationsList,
+            includeDetails: true,
+            watchChildren: commandEnvelope.watchChildren ?? false,
+            notificationName: axNotification,
+            includeElementDetails: commandEnvelope.includeElementDetails,
+            maxDepthForSearch: commandEnvelope.maxDepth ?? 10,
+            pid: commandEnvelope.pid))
+    }
+}

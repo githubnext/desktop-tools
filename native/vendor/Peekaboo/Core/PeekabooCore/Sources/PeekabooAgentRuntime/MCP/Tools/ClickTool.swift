@@ -1,0 +1,1293 @@
+import CoreGraphics
+import Foundation
+import MCP
+import os.log
+import PeekabooAutomation
+import PeekabooFoundation
+import TachikomaMCP
+
+/// MCP tool for clicking UI elements
+public struct ClickTool: MCPTool {
+    private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "ClickTool")
+    private let context: MCPToolContext
+
+    public let name = "click"
+
+    public var description: String {
+        """
+        Clicks on UI elements or coordinates.
+        Supports element queries, specific IDs from `see` or `inspect_ui`, or raw coordinates.
+        Choose exactly one of on, query, or coords, and at most one of double, triple, right, or middle.
+        Background delivery is the default. Background coordinates require a nonempty snapshot or coordinate_reference
+        from a fresh exact-window `see`; pid alone is never a safe coordinate target. Set `foreground` to true only for
+        intentional shared-pointer input, which may omit the capture reference.
+        \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
+        """
+    }
+
+    public var inputSchema: Value {
+        SchemaBuilder.object(
+            properties: [
+                "query": SchemaBuilder.string(
+                    description: """
+                    Element text or query to click. Exclusive with on and coords; may use the latest UI snapshot.
+                    """,
+                    minLength: 1),
+                "on": SchemaBuilder.string(
+                    description: """
+                    Opaque element ID copied exactly from current `see` or `inspect_ui` output. Exclusive with query
+                    and coords; may use the latest UI snapshot.
+                    """,
+                    minLength: 1),
+                "coords": SchemaBuilder.string(
+                    description: """
+                    Coordinates in 'x,y' format, exclusive with on and query. Background delivery requires a nonempty
+                    snapshot or coordinate_reference from a fresh exact-window see. Without a reference, set
+                    foreground=true for intentional shared-pointer global logical points.
+                    """,
+                    minLength: 1),
+                "coordinate_space": SchemaBuilder.string(
+                    description: """
+                    Optional. Coordinate basis for coords. image_pixels and normalized require coordinate_reference.
+                    """,
+                    enum: CaptureCoordinateSpace.allCases.map(\.rawValue)),
+                "coordinate_reference": SchemaBuilder.string(
+                    description: """
+                    Nonempty snapshot reference_id returned by a fresh exact-window see. Provide this or snapshot for
+                    every background coordinate click; required for image_pixels and normalized coords.
+                    """,
+                    minLength: 1),
+                "snapshot": SchemaBuilder.string(
+                    description: """
+                    Snapshot ID from `see` or `inspect_ui`. Element/query clicks may omit it to use the latest snapshot.
+                    Background coordinate clicks must provide a nonempty ID from a fresh exact-window see.
+                    """,
+                    minLength: 1),
+                "wait_for": SchemaBuilder.number(
+                    description: """
+                    Optional. Maximum milliseconds to re-observe the selected exact window until a query matches.
+                    Default: 5000. Maximum: 60000. A missing snapshot-local on id is reported immediately and is not
+                    remapped onto a later observation. 0 checks the current snapshot once.
+                    """,
+                    minimum: 0,
+                    maximum: 60000,
+                    default: 5000),
+                "double": SchemaBuilder.boolean(
+                    description: "Optional. Double-click instead of single click.",
+                    default: false),
+                "right": SchemaBuilder.boolean(
+                    description: "Optional. Right-click (secondary click) instead of left-click.",
+                    default: false),
+                "middle": SchemaBuilder.boolean(
+                    description: "Optional. Middle-click with the center mouse button.",
+                    default: false),
+                "triple": SchemaBuilder.boolean(
+                    description: "Optional. Triple-click instead of single click.",
+                    default: false),
+                "foreground": SchemaBuilder.boolean(
+                    description: "Use foreground/shared-pointer delivery. Background delivery is the default.",
+                    default: false),
+                "background": SchemaBuilder.boolean(
+                    description: """
+                    Deprecated inverse alias. false explicitly selects foreground shared-pointer delivery.
+                    """,
+                    default: true),
+                "pid": SchemaBuilder.integer(
+                    description: """
+                    Optional process consistency check. It never replaces the exact-window capture receipt.
+                    """,
+                    minimum: 1,
+                    maximum: Int(Int32.max)),
+                "modifiers": SchemaBuilder.array(
+                    items: SchemaBuilder.string(enum: ["cmd", "shift", "option"]),
+                    description: "Foreground-only modifier keys. Requires foreground=true and a fresh exact snapshot."),
+            ],
+            required: [])
+    }
+
+    public init(context: MCPToolContext = .shared) {
+        self.context = context
+    }
+
+    @MainActor
+    public func execute(arguments: ToolArguments) async throws -> ToolResponse {
+        let request: ClickRequest
+        do {
+            request = try ClickRequest(arguments: arguments)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as ClickToolError {
+            return try Self.preDispatchErrorResponse(error)
+        }
+
+        let startTime = Date()
+        var snapshotIdToInvalidate: String?
+        var waitedSnapshotID: String?
+        var actionTargetIdentity: DesktopTargetIdentity?
+
+        do {
+            let resolution = try await self.resolveClickTarget(for: request)
+            snapshotIdToInvalidate = resolution.snapshotIdToInvalidate
+            waitedSnapshotID = resolution.queryWait == nil ? nil : resolution.snapshotId
+            let effectiveTargetProcessIdentity = try await self.backgroundProcessIdentity(
+                request: request,
+                resolution: resolution)
+            try resolution.queryWait?.checkDeadline()
+            let effectiveTargetProcessIdentifier = effectiveTargetProcessIdentity?.processIdentifier
+            let modifierResult: ForegroundModifierClickResult?
+            let actionResult: UIAutomationActionResult<Void>
+            if request.modifiers.isEmpty {
+                actionResult = try await self.context.snapshots.withSnapshotMutation(
+                    snapshotId: resolution.snapshotIdToInvalidate,
+                    operation: {
+                        do {
+                            return try await self.performClick(
+                                resolution: resolution,
+                                intent: request.intent,
+                                deliveryMode: request.deliveryMode,
+                                targetProcessIdentity: effectiveTargetProcessIdentity)
+                        } catch let error as ClickToolError {
+                            throw DesktopActionFailure.preDispatchRefusal(
+                                reason: error.refusalReason,
+                                message: error.message)
+                        }
+                    },
+                    outcome: { $0.outcome })
+                modifierResult = nil
+            } else {
+                let result = try await self.performModifierClick(
+                    resolution: resolution,
+                    intent: request.intent,
+                    modifiers: request.modifiers)
+                actionResult = UIAutomationActionResult(
+                    payload: (),
+                    outcome: result.outcome,
+                    targetIdentity: result.targetIdentity)
+                modifierResult = result.payload
+            }
+            actionTargetIdentity = actionResult.targetIdentity
+            let outcome = actionResult.outcome
+            if request.modifiers.isEmpty {
+                try DesktopActionFailure.requireConfirmedIfReported(
+                    outcome,
+                    operation: "Click")
+            }
+
+            let invalidatedSnapshotId = await MCPDesktopActionSnapshotInvalidator.invalidate(
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: resolution.snapshotIdToInvalidate,
+                outcome: outcome)
+            await self.discardObservation(id: waitedSnapshotID)
+            let executionTime = Date().timeIntervalSince(startTime)
+            return try self.buildResponse(
+                intent: request.intent,
+                resolution: resolution,
+                execution: ClickResponseExecution(
+                    targetProcessIdentifier: effectiveTargetProcessIdentifier,
+                    executionTime: executionTime,
+                    invalidatedSnapshotId: invalidatedSnapshotId,
+                    outcome: outcome,
+                    targetIdentity: actionResult.targetIdentity,
+                    modifiers: request.modifiers,
+                    modifierResult: modifierResult))
+        } catch is CancellationError {
+            await self.discardObservation(id: waitedSnapshotID)
+            throw CancellationError()
+        } catch let error as ClickToolError {
+            await self.discardObservation(id: waitedSnapshotID)
+            return try Self.preDispatchErrorResponse(error)
+        } catch let failure as DesktopActionFailure {
+            await self.discardObservation(id: waitedSnapshotID)
+            var failureFields = (try? MCPDesktopTargetMetadataProjector.fields(actionTargetIdentity)) ?? [:]
+            failureFields["click_type"] = .string(request.intent.automationType.rawValue)
+            if let code = failure.standardErrorCode {
+                failureFields["error_code"] = .string(code.rawValue)
+            }
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: snapshotIdToInvalidate,
+                additionalFields: failureFields)
+        } catch let error as InputDeliveryIndeterminateError {
+            await self.discardObservation(id: waitedSnapshotID)
+            // Target mode does not prove the mechanism: element clicks can use Accessibility while
+            // coordinate clicks synthesize events. Legacy errors do not carry that route.
+            let delivery: DesktopActionOutcome.Delivery? = nil
+            return try await MCPDesktopActionFailureHandler.response(
+                for: error.desktopActionFailure(delivery: delivery),
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: snapshotIdToInvalidate,
+                additionalFields: [
+                    "emitted_units": error.emittedUnitCount.map(Value.int) ?? .null,
+                ])
+        } catch {
+            await self.discardObservation(id: waitedSnapshotID)
+            self.logger.error("Click execution failed: \(error.localizedDescription)")
+            return ToolResponse.error("Failed to perform click: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Private Helpers
+
+    private func getSnapshot(id: String?) async -> UISnapshot? {
+        await self.context.uiSnapshots.getSnapshot(id: id)
+    }
+
+    private func resolveClickTarget(for request: ClickRequest) async throws -> ClickResolution {
+        switch request.target {
+        case let .coordinates(raw):
+            return try await self.resolveCoordinates(raw, request: request)
+        case let .elementId(identifier):
+            let snapshot = try await self.requireSnapshot(id: request.snapshotId)
+            let element = try await self.requireElement(id: identifier, snapshot: snapshot)
+            return ClickResolution(
+                location: element.centerPoint,
+                automationTarget: .elementId(identifier),
+                elementDescription: element.humanDescription,
+                targetApp: snapshot.applicationName,
+                windowTitle: snapshot.windowTitle,
+                elementRole: element.humanRole,
+                elementLabel: element.displayLabel,
+                targetProcessIdentifier: snapshot.applicationProcessId,
+                targetWindowID: snapshot.windowID,
+                expectedWindowIdentity: snapshot.windowMutationIdentity,
+                expectedWindowBounds: snapshot.windowBounds,
+                snapshotId: snapshot.id)
+        case let .query(text):
+            let snapshot = try await self.requireSnapshot(id: request.snapshotId)
+            if let element = try await self.matchingElement(query: text, snapshot: snapshot) {
+                return self.resolution(for: element, snapshot: snapshot)
+            }
+            guard request.waitForMilliseconds > 0 else {
+                throw ClickToolError(
+                    "No elements found matching query: '\(text)'",
+                    refusalReason: .targetUnavailable)
+            }
+            return try await self.waitForQuery(
+                text,
+                in: snapshot,
+                timeoutMilliseconds: request.waitForMilliseconds,
+                usesOriginalCoordinateAuthority: !request.modifiers.isEmpty)
+        }
+    }
+
+    @MainActor
+    private func performModifierClick(
+        resolution: ClickResolution,
+        intent: ClickIntent,
+        modifiers: [PointerModifier]) async throws
+        -> UIAutomationActionResult<ForegroundModifierClickResult>
+    {
+        guard let snapshotID = resolution.modifierSnapshotId ?? resolution.snapshotId,
+              let identity = resolution.expectedWindowIdentity,
+              let bounds = resolution.expectedWindowBounds,
+              resolution.targetWindowID == identity.windowID,
+              bounds.contains(resolution.location)
+        else {
+            throw ClickToolError(
+                "Modifier-click requires a fresh exact-window screenshot snapshot.",
+                refusalReason: .targetUnavailable)
+        }
+        let exactTarget = try UIAutomationTarget.ExactWindow(
+            identity: identity,
+            bounds: bounds)
+        guard let service = self.context.automation as? any ForegroundModifierClickServiceProtocol,
+              service.supportsForegroundModifierClick,
+              service.supportsForegroundModifierClickSnapshotLease
+        else {
+            throw ClickToolError(
+                "This automation host does not support host-leased foreground modifier-click.",
+                refusalReason: .runtimeIncompatible)
+        }
+        let result: UIAutomationActionResult<ForegroundModifierClickResult>
+        try resolution.queryWait?.checkDeadline()
+        do {
+            result = try await service.foregroundModifierClickWithOutcome(
+                ForegroundModifierClickRequest(
+                    point: resolution.location,
+                    clickType: intent.automationType,
+                    modifiers: modifiers,
+                    snapshotID: snapshotID,
+                    windowIdentity: identity,
+                    windowBounds: bounds))
+            _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                result,
+                policy: .confirmedOrDispatched(requiring: .foreground),
+                targetRequirement: .exact(DesktopTargetIdentity(exactWindow: .init(
+                    identity: identity,
+                    bounds: bounds))),
+                operation: "Foreground modifier-click")
+        } catch let error as PeekabooError {
+            guard case .snapshotStale = error else { throw error }
+            throw ClickToolError(
+                "Modifier-click snapshot is stale; observe the exact window again before retrying.",
+                refusalReason: .targetUnavailable)
+        } catch let error as SnapshotTargetReceiptPreDispatchError {
+            throw ClickToolError(
+                "Modifier-click requires a fresh complete exact-window snapshot: \(error.localizedDescription)",
+                refusalReason: .targetUnavailable)
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let cancellation as CancellationError {
+            throw cancellation
+        } catch {
+            throw DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .composite, mode: .foreground),
+                evidence: .completionUnknown,
+                message: "Modifier-click failed without a canonical action outcome.",
+                hint: "Observe the exact target before any retry and do not reuse this snapshot.",
+                causeDescription: error.localizedDescription)
+                .attributed(to: DesktopTargetIdentity(exactWindow: exactTarget).actionTargetReceipt)
+        }
+        return result
+    }
+
+    @MainActor
+    private func performClick(
+        resolution: ClickResolution,
+        intent: ClickIntent,
+        deliveryMode: ClickToolDeliveryMode,
+        targetProcessIdentity: ApplicationProcessIdentity?) async throws -> UIAutomationActionResult<Void>
+    {
+        let target = resolution.automationTarget
+        let snapshotId = resolution.snapshotId
+        if deliveryMode == .background {
+            if intent.automationType.requiresStatelessVariantSupport {
+                guard let targeted = self.context.automation as? any TargetedClickServiceProtocol,
+                      targeted.supportsStatelessClickVariants
+                else {
+                    throw ClickToolError(
+                        "This automation host requires protocol 1.30 background middle/triple-click support.",
+                        refusalReason: .runtimeIncompatible)
+                }
+            }
+            guard let targetProcessIdentity else {
+                throw ClickToolError(
+                    "Background click requires a capture-owned snapshot with an exact target process.",
+                    refusalReason: .targetUnavailable)
+            }
+            if intent.automationType.requiresStatelessVariantSupport,
+               resolution.targetWindowID == nil
+            {
+                throw ClickToolError(
+                    "Background middle- and triple-clicks require a fresh exact-window snapshot.",
+                    refusalReason: .targetUnavailable)
+            }
+            let targetProcessIdentifier = targetProcessIdentity.processIdentifier
+            if case .coordinates = target {
+                try await self.validateCoordinateReceipt(
+                    resolution,
+                    targetProcessIdentifier: targetProcessIdentifier)
+            }
+            guard let automation = self.context.automation as? any TargetedClickServiceProtocol else {
+                throw ClickToolError(
+                    "This automation host does not support background click delivery.",
+                    refusalReason: .runtimeIncompatible)
+            }
+            if let targetWindowID = resolution.targetWindowID {
+                guard let exactWindowAutomation = automation as? any ExactWindowTargetedClickServiceProtocol,
+                      exactWindowAutomation.supportsExactWindowTargetedClicks
+                else {
+                    throw ClickToolError(
+                        "This automation host does not support exact-window background clicks.",
+                        refusalReason: .runtimeIncompatible)
+                }
+                guard let expectedWindowIdentity = resolution.expectedWindowIdentity,
+                      let expectedWindowBounds = resolution.expectedWindowBounds,
+                      expectedWindowIdentity.windowID == targetWindowID,
+                      expectedWindowIdentity.ownerProcessIdentifier == targetProcessIdentifier
+                else {
+                    throw ClickToolError(
+                        "Exact-window snapshot has no capture-time process-generation receipt. Run see again.",
+                        refusalReason: .targetUnavailable)
+                }
+                if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+                    try resolution.queryWait?.checkDeadline()
+                    return try await outcomeAutomation.clickWithOutcome(
+                        target: target,
+                        clickType: intent.automationType,
+                        snapshotId: snapshotId,
+                        expectedWindowIdentity: expectedWindowIdentity,
+                        expectedWindowBounds: expectedWindowBounds)
+                }
+                try resolution.queryWait?.checkDeadline()
+                try await exactWindowAutomation.click(
+                    target: target,
+                    clickType: intent.automationType,
+                    snapshotId: snapshotId,
+                    expectedWindowIdentity: expectedWindowIdentity,
+                    expectedWindowBounds: expectedWindowBounds)
+                return UIAutomationActionResult(payload: (), outcome: nil)
+            } else {
+                guard automation.supportsProcessGenerationPinnedClicks else {
+                    throw ClickToolError(
+                        "This automation host does not support process-generation-pinned background clicks.",
+                        refusalReason: .runtimeIncompatible)
+                }
+                if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+                    return try await outcomeAutomation.clickWithOutcome(
+                        target: target,
+                        clickType: intent.automationType,
+                        snapshotId: snapshotId,
+                        expectedProcessIdentity: targetProcessIdentity)
+                }
+                try await automation.click(
+                    target: target,
+                    clickType: intent.automationType,
+                    snapshotId: snapshotId,
+                    expectedProcessIdentity: targetProcessIdentity)
+                return UIAutomationActionResult(payload: (), outcome: nil)
+            }
+        } else {
+            try resolution.queryWait?.checkDeadline()
+            if let outcomeAutomation = self.context.automation as? any UIAutomationActionOutcomeProviding {
+                return try await outcomeAutomation.clickWithOutcome(
+                    target: target,
+                    clickType: intent.automationType,
+                    snapshotId: snapshotId)
+            }
+            try await self.context.automation.click(
+                target: target,
+                clickType: intent.automationType,
+                snapshotId: snapshotId)
+            return UIAutomationActionResult(payload: (), outcome: nil)
+        }
+    }
+
+    private func backgroundProcessIdentity(
+        request: ClickRequest,
+        resolution: ClickResolution) async throws -> ApplicationProcessIdentity?
+    {
+        guard request.deliveryMode == .background else { return nil }
+        let selectedProcessIdentifier: Int32?
+        if let pid = request.pid {
+            guard pid > 0 else {
+                throw ClickToolError("pid must be greater than 0.")
+            }
+            selectedProcessIdentifier = pid
+        } else {
+            selectedProcessIdentifier = resolution.targetProcessIdentifier
+        }
+        guard let selectedProcessIdentifier else { return nil }
+        if let capturedWindowIdentity = resolution.expectedWindowIdentity {
+            let capturedIdentity = ApplicationProcessIdentity(
+                processIdentifier: capturedWindowIdentity.ownerProcessIdentifier,
+                processStartIdentity: capturedWindowIdentity.ownerProcessStartIdentity)
+            guard capturedIdentity.processIdentifier == selectedProcessIdentifier else {
+                throw ClickToolError(
+                    "The click snapshot belongs to PID \(capturedIdentity.processIdentifier), not " +
+                        "PID \(selectedProcessIdentifier). Run see again before clicking.",
+                    refusalReason: .targetUnavailable)
+            }
+            return capturedIdentity
+        }
+        if let snapshotId = resolution.snapshotId {
+            guard let snapshot = await self.getSnapshot(id: snapshotId) else {
+                throw ClickToolError(
+                    "The click snapshot is unavailable. Run see again before clicking.",
+                    refusalReason: .targetUnavailable)
+            }
+            if let snapshotProcessIdentifier = snapshot.applicationProcessId,
+               snapshotProcessIdentifier != selectedProcessIdentifier
+            {
+                throw ClickToolError(
+                    "The click snapshot belongs to PID \(snapshotProcessIdentifier), not " +
+                        "PID \(selectedProcessIdentifier). Run see again before clicking.",
+                    refusalReason: .targetUnavailable)
+            }
+            guard let capturedIdentity = snapshot.applicationProcessIdentity else {
+                throw ClickToolError(
+                    "The click snapshot has no capture-time process-generation receipt. Run see again before clicking.",
+                    refusalReason: .targetUnavailable)
+            }
+            return capturedIdentity
+        }
+        let application = try await self.context.applications.findApplication(
+            identifier: "PID:\(selectedProcessIdentifier)")
+        guard application.processIdentifier == selectedProcessIdentifier,
+              let currentIdentity = application.processIdentity
+        else {
+            throw ClickToolError(
+                "The runtime host could not pin PID \(selectedProcessIdentifier) to a process generation.",
+                refusalReason: .targetUnavailable)
+        }
+        return currentIdentity
+    }
+
+    private func buildResponse(
+        intent: ClickIntent,
+        resolution: ClickResolution,
+        execution: ClickResponseExecution) throws -> ToolResponse
+    {
+        var message = "\(AgentDisplayTokens.Status.success) \(intent.displayVerb)"
+        if let element = resolution.elementDescription {
+            message += " on \(element)"
+        }
+        message += " at (\(Int(resolution.location.x)), \(Int(resolution.location.y)))"
+        message += " in \(String(format: "%.2f", execution.executionTime))s"
+
+        if execution.outcome?.effect == .unverifiable {
+            message += "; routed events were dispatched, but the application effect is unverifiable"
+        }
+
+        var metaDict: [String: Value] = [
+            "click_location": .object([
+                "x": .double(Double(resolution.location.x)),
+                "y": .double(Double(resolution.location.y)),
+            ]),
+            "execution_time": .double(execution.executionTime),
+            "clicked_element": resolution.elementDescription.map(Value.string) ?? .null,
+            "delivery_mode": .string(execution.targetProcessIdentifier == nil ? "foreground" : "background"),
+            "click_type": .string(intent.automationType.rawValue),
+        ]
+        try metaDict.merge(MCPDesktopTargetMetadataProjector.fields(execution.targetIdentity)) { _, target in target }
+        if let invalidatedSnapshotId = execution.invalidatedSnapshotId {
+            metaDict["invalidated_snapshot"] = .string(invalidatedSnapshotId)
+        }
+        if let processId = execution.targetProcessIdentifier.map({ Int32($0) }) {
+            metaDict["target_pid"] = .double(Double(processId))
+        }
+        if let targetWindowID = resolution.targetWindowID {
+            metaDict["target_window_id"] = .double(Double(targetWindowID))
+        }
+        if let coordinateSpace = resolution.coordinateSpace {
+            metaDict["coordinate_space"] = .string(coordinateSpace.rawValue)
+        }
+        if let coordinateReference = resolution.coordinateReference {
+            metaDict["coordinate_reference"] = .string(coordinateReference)
+        }
+        if !execution.modifiers.isEmpty {
+            metaDict["modifiers"] = .array(execution.modifiers.map { .string($0.rawValue) })
+        }
+        if let modifierResult = execution.modifierResult {
+            metaDict["cursor_restoration"] = .string(modifierResult.cursorRestoration.rawValue)
+            metaDict["focus_restoration"] = .string(modifierResult.focusRestoration.rawValue)
+        }
+
+        let summary = ToolEventSummary(
+            targetApp: resolution.targetApp,
+            windowTitle: resolution.windowTitle,
+            elementRole: resolution.elementRole,
+            elementLabel: resolution.elementLabel,
+            actionDescription: intent.displayVerb,
+            coordinates: ToolEventSummary.Coordinates(
+                x: Double(resolution.location.x),
+                y: Double(resolution.location.y)))
+
+        let metaValue = try ToolEventSummary.merge(
+            summary: summary,
+            into: MCPToolResponseMetadataProjector.metadata(merging: metaDict, outcome: execution.outcome))
+
+        return ToolResponse(
+            content: [.text(text: message, annotations: nil, _meta: nil)],
+            meta: metaValue)
+    }
+
+    private func parseCoordinates(_ raw: String) throws -> CGPoint {
+        let parts = raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count == 2,
+              let x = Double(parts[0]),
+              let y = Double(parts[1])
+        else {
+            throw ClickToolError("Invalid coordinates format. Use 'x,y' (e.g., '100,200').")
+        }
+        return CGPoint(x: x, y: y)
+    }
+
+    private func resolveCoordinates(_ raw: String, request: ClickRequest) async throws -> ClickResolution {
+        let point = try self.parseCoordinates(raw)
+        let referenceID = request.coordinateReference ?? request.snapshotId
+        guard let referenceID else {
+            guard request.deliveryMode == .foreground else {
+                throw ClickToolError(
+                    Self.backgroundCoordinateReferenceMessage,
+                    refusalReason: .targetUnavailable)
+            }
+            return ClickResolution(
+                location: point,
+                automationTarget: .coordinates(point),
+                elementDescription: nil,
+                targetProcessIdentifier: request.pid,
+                snapshotId: nil,
+                coordinateSpace: request.coordinateSpace)
+        }
+
+        let captured = try await self.requireCapturedCoordinateSnapshot(
+            id: referenceID,
+            explicitPID: request.pid,
+            requiresExactWindow: request.deliveryMode == .background)
+        if request.deliveryMode == .foreground {
+            try await self.validateForegroundCoordinateContext(captured)
+        }
+
+        let mappedPoint: CGPoint
+        if let coordinateSpace = request.coordinateSpace {
+            do {
+                mappedPoint = try CaptureCoordinateMapper.globalPoint(
+                    for: point,
+                    in: coordinateSpace,
+                    context: captured.coordinateContext)
+            } catch {
+                throw ClickToolError(error.localizedDescription)
+            }
+        } else {
+            mappedPoint = point
+        }
+        if request.deliveryMode == .background, captured.bounds?.contains(mappedPoint) != true {
+            throw ClickToolError(
+                "Background coordinates are outside captured window \(captured.identity?.windowID ?? 0). " +
+                    "Run see again and use coordinates inside that exact window.")
+        }
+
+        return ClickResolution(
+            location: mappedPoint,
+            automationTarget: .coordinates(mappedPoint),
+            elementDescription: nil,
+            targetApp: captured.snapshot.applicationName,
+            windowTitle: captured.snapshot.windowTitle,
+            targetProcessIdentifier: request.pid ?? captured.processIdentifier,
+            targetWindowID: captured.identity?.windowID,
+            expectedWindowIdentity: captured.identity,
+            expectedWindowBounds: captured.bounds,
+            snapshotId: captured.snapshot.id,
+            coordinateSpace: request.coordinateSpace,
+            coordinateReference: referenceID)
+    }
+
+    private func requireCapturedCoordinateSnapshot(
+        id: String,
+        explicitPID: Int32?,
+        requiresExactWindow: Bool) async throws -> CapturedCoordinateSnapshot
+    {
+        guard let snapshot = await self.getSnapshot(id: id) else {
+            throw ClickToolError(
+                "Coordinate reference '\(id)' is stale or unavailable. Run see for the exact target window.",
+                refusalReason: .targetUnavailable)
+        }
+        guard let coordinateContext = await snapshot.screenshotCoordinateContext,
+              coordinateContext.referenceID == id
+        else {
+            throw ClickToolError(
+                "Snapshot '\(id)' has no matching capture-owned coordinate context. Run see and retry with its " +
+                    "reference_id.",
+                refusalReason: .targetUnavailable)
+        }
+        guard requiresExactWindow else {
+            return CapturedCoordinateSnapshot(
+                snapshot: snapshot,
+                coordinateContext: coordinateContext,
+                processIdentifier: snapshot.applicationProcessId,
+                identity: snapshot.windowMutationIdentity,
+                bounds: coordinateContext.logicalBounds)
+        }
+        let authority: SnapshotTargetReceipt.CoordinateAuthority
+        do {
+            authority = try await snapshot.coordinateAuthority()
+            if let explicitPID, explicitPID != authority.target.identity.ownerProcessIdentifier {
+                throw DesktopTargetIdentityError.contradictoryProcessIdentifier
+            }
+        } catch {
+            throw ClickToolError(
+                "Snapshot '\(id)' is not a capture-owned coordinate reference with exact PID/window generation " +
+                    "and bounds. " +
+                    "Run see for the exact target window and retry with its reference_id.",
+                refusalReason: .targetUnavailable)
+        }
+        return CapturedCoordinateSnapshot(
+            snapshot: snapshot,
+            coordinateContext: coordinateContext,
+            processIdentifier: authority.target.identity.ownerProcessIdentifier,
+            identity: authority.target.identity,
+            bounds: authority.target.bounds)
+    }
+
+    private func validateForegroundCoordinateContext(_ captured: CapturedCoordinateSnapshot) async throws {
+        guard let window = captured.coordinateContext.window,
+              let bounds = captured.coordinateContext.viewport?.sourceLogicalBounds ?? captured.coordinateContext
+                  .logicalBounds
+        else { return }
+        let matches = try await self.context.windows.listWindows(target: .windowId(window.windowID))
+        let exactMatches = matches.filter { $0.windowID == window.windowID }
+        guard !exactMatches.isEmpty,
+              exactMatches.allSatisfy({ current in
+                  guard current.bounds == bounds else { return false }
+                  guard let expectedIdentity = captured.identity else { return true }
+                  return current.mutationIdentity == expectedIdentity
+              })
+        else {
+            throw ClickToolError(
+                "Coordinate reference is stale because its captured window moved, disappeared, or changed owner.",
+                refusalReason: .targetUnavailable)
+        }
+    }
+
+    private func validateCoordinateReceipt(
+        _ resolution: ClickResolution,
+        targetProcessIdentifier: pid_t) async throws
+    {
+        guard let snapshotId = resolution.snapshotId,
+              !snapshotId.isEmpty,
+              let targetWindowID = resolution.targetWindowID,
+              let expectedIdentity = resolution.expectedWindowIdentity,
+              let expectedBounds = resolution.expectedWindowBounds,
+              expectedIdentity.windowID == targetWindowID,
+              expectedIdentity.ownerProcessIdentifier == targetProcessIdentifier,
+              expectedBounds.contains(resolution.location)
+        else {
+            throw ClickToolError(
+                Self.backgroundCoordinateReferenceMessage,
+                refusalReason: .targetUnavailable)
+        }
+
+        let matches = try await self.context.windows.listWindows(target: .windowId(targetWindowID))
+        let exactMatches = matches.filter { $0.windowID == targetWindowID }
+        guard !exactMatches.isEmpty,
+              exactMatches.allSatisfy({
+                  $0.bounds == expectedBounds && $0.mutationIdentity == expectedIdentity
+              })
+        else {
+            throw ClickToolError(
+                "Background coordinate reference '\(snapshotId)' is stale: its exact window moved, " +
+                    "disappeared, changed owner, or changed process generation. Run see again before clicking.",
+                refusalReason: .targetUnavailable)
+        }
+    }
+
+    private static func preDispatchErrorResponse(_ error: ClickToolError) throws -> ToolResponse {
+        MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+            message: error.message,
+            reason: error.refusalReason)
+    }
+
+    fileprivate static let backgroundCoordinateReferenceMessage =
+        "Background coordinate clicks require a nonempty capture-owned snapshot/reference_id from see for the " +
+        "exact target window. PID-only or app-only coordinates are refused; run see, then retry with its snapshot."
+
+    private func requireSnapshot(id: String?) async throws -> UISnapshot {
+        guard let snapshot = await self.getSnapshot(id: id) else {
+            throw ClickToolError(
+                "No active snapshot. Run 'see' or 'inspect_ui' first to capture UI state.",
+                refusalReason: .targetUnavailable)
+        }
+        return snapshot
+    }
+
+    private func requireElement(id: String, snapshot: UISnapshot) async throws -> UIElement {
+        guard let element = await snapshot.getElement(byId: id) else {
+            throw ClickToolError(
+                "Element '\(id)' not found in current snapshot. Run 'see' or 'inspect_ui' to update UI state.",
+                refusalReason: .targetUnavailable)
+        }
+        guard !element.isOCRSemanticEvidence else {
+            throw ClickToolError(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+        }
+        return element
+    }
+
+    private func matchingElement(query: String, elements: [UIElement]) throws -> UIElement? {
+        let searchText = query.lowercased()
+        let matches = elements.filter { element in
+            element.title?.lowercased().contains(searchText) ?? false ||
+                element.label?.lowercased().contains(searchText) ?? false ||
+                element.value?.lowercased().contains(searchText) ?? false
+        }
+
+        guard !matches.isEmpty else { return nil }
+
+        guard let match = SnapshotElementQuerySelector.preferred(in: matches) else {
+            throw ClickToolError(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+        }
+        return match
+    }
+}
+
+extension ClickTool {
+    private func matchingElement(query: String, snapshot: UISnapshot) async throws -> UIElement? {
+        try await self.matchingElement(query: query, elements: snapshot.uiElements)
+    }
+
+    private func resolution(
+        for element: UIElement,
+        snapshot: UISnapshot,
+        queryWait: ClickQueryWait? = nil,
+        originalSnapshotID: String? = nil,
+        modifierSnapshotID: String? = nil) -> ClickResolution
+    {
+        ClickResolution(
+            location: element.centerPoint,
+            automationTarget: .elementId(element.id),
+            elementDescription: element.humanDescription,
+            targetApp: snapshot.applicationName,
+            windowTitle: snapshot.windowTitle,
+            elementRole: element.humanRole,
+            elementLabel: element.displayLabel,
+            targetProcessIdentifier: snapshot.applicationProcessId,
+            targetWindowID: snapshot.windowID,
+            expectedWindowIdentity: snapshot.windowMutationIdentity,
+            expectedWindowBounds: snapshot.windowBounds,
+            snapshotId: snapshot.id,
+            snapshotIdToInvalidate: originalSnapshotID,
+            queryWait: queryWait,
+            modifierSnapshotId: modifierSnapshotID)
+    }
+
+    /// Poll fresh Accessibility evidence inside the existing mutation lane without capturing pixels or focusing.
+    private func waitForQuery(
+        _ query: String,
+        in snapshot: UISnapshot,
+        timeoutMilliseconds: Int,
+        usesOriginalCoordinateAuthority: Bool) async throws -> ClickResolution
+    {
+        guard let windowID = snapshot.windowID,
+              let identity = snapshot.windowMutationIdentity,
+              identity.windowID == windowID
+        else {
+            throw ClickToolError(
+                "wait_for requires the selected snapshot to name one exact window. Run see on that window, " +
+                    "then click with query.",
+                refusalReason: .targetUnavailable)
+        }
+        let wait = ClickQueryWait(query: query, timeoutMilliseconds: timeoutMilliseconds)
+        while wait.remaining > 0 {
+            try Task.checkCancellation()
+            try wait.checkDeadline()
+            let observed = try await self.observeExactWindow(identity: identity, wait: wait)
+            try wait.checkDeadline()
+            let element = try self.matchingElement(
+                query: query,
+                elements: DetectedElementSnapshotConverter.convert(observed.elements.all))
+            if let element {
+                return try await self.storeMatchedObservation(
+                    observed,
+                    for: element,
+                    wait: wait,
+                    originalSnapshotID: snapshot.id,
+                    usesOriginalCoordinateAuthority: usesOriginalCoordinateAuthority)
+            }
+            let remaining = wait.remaining
+            if remaining <= 0 {
+                break
+            }
+            try await Task.sleep(nanoseconds: UInt64(min(remaining, 0.2) * 1_000_000_000))
+        }
+        throw wait.timeoutError
+    }
+
+    private func observeExactWindow(
+        identity: WindowMutationIdentity,
+        wait: ClickQueryWait) async throws -> ElementDetectionResult
+    {
+        let windowContext = WindowContext(
+            applicationProcessId: identity.ownerProcessIdentifier,
+            applicationProcessStartIdentity: identity.ownerProcessStartIdentity,
+            windowID: identity.windowID,
+            windowBounds: identity.capturedBounds,
+            windowMutationIdentity: identity,
+            shouldFocusWebContent: false,
+            includeMenuBarElements: false,
+            requiresFreshAccessibilityTree: true,
+            accessibilityTimeoutSeconds: wait.remaining,
+            allowApplicationScopedAccessibilityFallback: false)
+        do {
+            return try await InspectUITool(context: self.context).observeExactWindow(
+                windowContext: windowContext,
+                deadline: wait.deadline)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch let error as PeekabooError {
+            let reason: DesktopActionOutcome.RefusalReason = if error.category == .permissions {
+                .permissionDenied
+            } else if case .notImplemented = error {
+                .runtimeIncompatible
+            } else {
+                .targetUnavailable
+            }
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: reason,
+                message: "Exact-window observation failed: \(error.localizedDescription)",
+                standardErrorCode: error.code)
+        } catch {
+            throw ClickToolError(
+                "Exact-window observation failed: \(error.localizedDescription)",
+                refusalReason: .targetUnavailable)
+        }
+    }
+
+    private func storeMatchedObservation(
+        _ observation: ElementDetectionResult,
+        for element: UIElement,
+        wait: ClickQueryWait,
+        originalSnapshotID: String,
+        usesOriginalCoordinateAuthority: Bool) async throws -> ClickResolution
+    {
+        try wait.checkDeadline()
+        let snapshotID = try await self.context.snapshots.createSnapshot()
+        do {
+            try wait.checkDeadline()
+            try await self.context.snapshots.storeDetectionResult(
+                snapshotId: snapshotID,
+                result: ElementDetectionResult(
+                    snapshotId: snapshotID,
+                    screenshotPath: "",
+                    elements: observation.elements,
+                    metadata: observation.metadata))
+            // Internal matches never enter the capped UI store or evict the caller's screenshot authority.
+            let snapshot = UISnapshot(id: snapshotID)
+            await snapshot.setTargetMetadata(from: observation.metadata.windowContext)
+            try wait.checkDeadline()
+            return self.resolution(
+                for: element,
+                snapshot: snapshot,
+                queryWait: wait,
+                originalSnapshotID: originalSnapshotID,
+                modifierSnapshotID: usesOriginalCoordinateAuthority ? originalSnapshotID : nil)
+        } catch {
+            await self.discardObservation(id: snapshotID)
+            throw error
+        }
+    }
+
+    private func discardObservation(id: String?) async {
+        guard let id else { return }
+        do {
+            try await self.context.snapshots.cleanSnapshot(snapshotId: id)
+        } catch {
+            self.logger.error(
+                "Temporary query observation cleanup failed: \(error.localizedDescription, privacy: .private)")
+        }
+        await self.context.uiSnapshots.removeSnapshot(id: id)
+    }
+}
+
+// MARK: - Supporting Types
+
+private struct ClickRequest {
+    let target: ClickRequestTarget
+    let snapshotId: String?
+    let intent: ClickIntent
+    let deliveryMode: ClickToolDeliveryMode
+    let pid: Int32?
+    let coordinateSpace: CaptureCoordinateSpace?
+    let coordinateReference: String?
+    let modifiers: [PointerModifier]
+    let waitForMilliseconds: Int
+
+    init(arguments: ToolArguments) throws {
+        let rawCoordinateSpace = Self.nonEmptyString(arguments.getString("coordinate_space"))
+        let coordinateSpace = try rawCoordinateSpace.map { value in
+            guard let space = CaptureCoordinateSpace(rawValue: value) else {
+                throw ClickToolError(
+                    "Invalid coordinate_space '\(value)'. Use global_display_points, image_pixels, or normalized.")
+            }
+            return space
+        }
+        let coordinateReference = Self.nonEmptyString(arguments.getString("coordinate_reference"))
+        let snapshotId = Self.nonEmptyString(arguments.getString("snapshot"))
+        let coords = Self.nonEmptyString(arguments.getString("coords"))
+        let elementId = Self.nonEmptyString(arguments.getString("on"))
+        let query = Self.nonEmptyString(arguments.getString("query"))
+        let targetCount = [coords, elementId, query].compactMap(\.self).count
+        guard targetCount > 0 else {
+            throw ClickToolError("Must specify exactly one of 'query', 'on', or 'coords'.")
+        }
+        guard targetCount == 1 else {
+            throw ClickToolError("Click targets are mutually exclusive; specify exactly one of query, on, or coords.")
+        }
+
+        if let coords {
+            self.target = .coordinates(coords)
+            if let coordinateSpace, coordinateSpace.requiresReference, coordinateReference == nil {
+                throw ClickToolError("\(coordinateSpace.rawValue) coordinates require coordinate_reference from see.")
+            }
+        } else if let elementId {
+            guard coordinateSpace == nil, coordinateReference == nil else {
+                throw ClickToolError("coordinate_space and coordinate_reference are only valid with coords.")
+            }
+            self.target = .elementId(elementId)
+        } else if let query {
+            guard coordinateSpace == nil, coordinateReference == nil else {
+                throw ClickToolError("coordinate_space and coordinate_reference are only valid with coords.")
+            }
+            self.target = .query(query)
+        } else {
+            throw ClickToolError("Must specify exactly one of 'query', 'on', or 'coords'.")
+        }
+
+        self.snapshotId = snapshotId
+        if let snapshotId, let coordinateReference, snapshotId != coordinateReference {
+            throw ClickToolError("snapshot and coordinate_reference must match when both are provided.")
+        }
+        self.coordinateSpace = coordinateSpace
+        self.coordinateReference = coordinateReference
+        self.waitForMilliseconds = try Self.waitForMilliseconds(arguments)
+        self.modifiers = try Self.parseModifiers(arguments)
+        let isDouble = arguments.getBool("double") ?? false
+        let isRight = arguments.getBool("right") ?? false
+        let isMiddle = arguments.getBool("middle") ?? false
+        let isTriple = arguments.getBool("triple") ?? false
+        self.intent = try ClickIntent(
+            double: isDouble,
+            right: isRight,
+            middle: isMiddle,
+            triple: isTriple)
+        let foreground = arguments.getBool("foreground") ?? false
+        self.deliveryMode = if foreground || arguments.getBool("background") == false {
+            .foreground
+        } else {
+            .background
+        }
+        if let rawPID = arguments.getNumber("pid") {
+            guard let pid = Int32(exactly: rawPID) else {
+                throw ClickToolError("pid is outside the supported Int32 range.")
+            }
+            self.pid = pid
+        } else {
+            self.pid = nil
+        }
+        if case .coordinates = self.target,
+           self.deliveryMode == .background,
+           snapshotId == nil,
+           coordinateReference == nil
+        {
+            throw ClickToolError(
+                ClickTool.backgroundCoordinateReferenceMessage,
+                refusalReason: .targetUnavailable)
+        }
+        if !self.modifiers.isEmpty {
+            guard self.deliveryMode == .foreground else {
+                throw ClickToolError("modifiers require foreground=true")
+            }
+            guard self.pid == nil else {
+                throw ClickToolError("modifier-click derives its exact target from snapshot; remove pid")
+            }
+            guard let snapshotId, snapshotId.lowercased() != "latest" else {
+                throw ClickToolError(
+                    "modifier-click requires one explicit fresh screenshot snapshot",
+                    refusalReason: .targetUnavailable)
+            }
+            if let coordinateReference, coordinateReference != snapshotId {
+                throw ClickToolError("snapshot and coordinate_reference must match for modifier-click")
+            }
+            guard !self.modifiers.contains(.control), !isRight else {
+                throw ClickToolError("modifier-click cannot use Control or right-click contextual input")
+            }
+        }
+    }
+
+    private static func parseModifiers(_ arguments: ToolArguments) throws -> [PointerModifier] {
+        guard let value = arguments.getValue(for: "modifiers") else { return [] }
+        guard case let .array(items) = value, !items.isEmpty else {
+            throw ClickToolError("modifiers must be a non-empty array")
+        }
+        var seen = Set<String>()
+        return try items.enumerated().map { index, item in
+            guard case let .string(raw) = item else {
+                throw ClickToolError("modifiers[\(index)] must be a string")
+            }
+            let canonical = switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "cmd", "command": PointerModifier.command
+            case "shift": PointerModifier.shift
+            case "option", "alt": PointerModifier.option
+            case "ctrl", "control": PointerModifier.control
+            default: throw ClickToolError("Unsupported modifier '\(raw)'")
+            }
+            guard seen.insert(canonical.rawValue).inserted else {
+                throw ClickToolError("Duplicate modifier '\(canonical.rawValue)'")
+            }
+            return canonical
+        }
+    }
+
+    private static func waitForMilliseconds(_ arguments: ToolArguments) throws -> Int {
+        guard let raw = arguments.getNumber("wait_for") else { return 5000 }
+        guard raw.isFinite, raw >= 0, raw <= 60000 else {
+            throw ClickToolError(
+                "wait_for must be a finite number of milliseconds from 0 through 60000.")
+        }
+        return Int(raw.rounded(.down))
+    }
+
+    private static func nonEmptyString(_ value: String?) -> String? {
+        guard let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !normalized.isEmpty
+        else { return nil }
+        return normalized
+    }
+}
+
+private enum ClickRequestTarget {
+    case coordinates(String)
+    case elementId(String)
+    case query(String)
+}
+
+private enum ClickToolDeliveryMode {
+    case background
+    case foreground
+}
+
+private struct ClickQueryWait {
+    let query: String
+    let timeoutMilliseconds: Int
+    let deadline: ContinuousClock.Instant
+
+    init(query: String, timeoutMilliseconds: Int) {
+        self.query = query
+        self.timeoutMilliseconds = timeoutMilliseconds
+        self.deadline = .now.advanced(by: .milliseconds(timeoutMilliseconds))
+    }
+
+    var remaining: TimeInterval {
+        let duration = ContinuousClock.now.duration(to: self.deadline).components
+        return max(0, Double(duration.seconds) + Double(duration.attoseconds) / 1e18)
+    }
+
+    var timeoutError: ClickToolError {
+        ClickToolError(
+            "No elements found matching query: '\(self.query)' within \(self.timeoutMilliseconds)ms",
+            refusalReason: .targetUnavailable)
+    }
+
+    func checkDeadline() throws {
+        try Task.checkCancellation()
+        guard ContinuousClock.now < self.deadline else { throw self.timeoutError }
+    }
+}
+
+private struct ClickResolution {
+    let location: CGPoint
+    let automationTarget: ClickTarget
+    let elementDescription: String?
+    let targetApp: String?
+    let windowTitle: String?
+    let elementRole: String?
+    let elementLabel: String?
+    let targetProcessIdentifier: Int32?
+    let targetWindowID: Int?
+    let expectedWindowIdentity: WindowMutationIdentity?
+    let expectedWindowBounds: CGRect?
+    let snapshotId: String?
+    let snapshotIdToInvalidate: String?
+    let coordinateSpace: CaptureCoordinateSpace?
+    let coordinateReference: String?
+    let queryWait: ClickQueryWait?
+    let modifierSnapshotId: String?
+
+    init(
+        location: CGPoint,
+        automationTarget: ClickTarget,
+        elementDescription: String?,
+        targetApp: String? = nil,
+        windowTitle: String? = nil,
+        elementRole: String? = nil,
+        elementLabel: String? = nil,
+        targetProcessIdentifier: Int32? = nil,
+        targetWindowID: Int? = nil,
+        expectedWindowIdentity: WindowMutationIdentity? = nil,
+        expectedWindowBounds: CGRect? = nil,
+        snapshotId: String?,
+        snapshotIdToInvalidate: String? = nil,
+        coordinateSpace: CaptureCoordinateSpace? = nil,
+        coordinateReference: String? = nil,
+        queryWait: ClickQueryWait? = nil,
+        modifierSnapshotId: String? = nil)
+    {
+        self.location = location
+        self.automationTarget = automationTarget
+        self.elementDescription = elementDescription
+        self.targetApp = targetApp
+        self.windowTitle = windowTitle
+        self.elementRole = elementRole
+        self.elementLabel = elementLabel
+        self.targetProcessIdentifier = targetProcessIdentifier
+        self.targetWindowID = targetWindowID
+        self.expectedWindowIdentity = expectedWindowIdentity
+        self.expectedWindowBounds = expectedWindowBounds
+        self.snapshotId = snapshotId
+        self.snapshotIdToInvalidate = snapshotIdToInvalidate ?? snapshotId
+        self.coordinateSpace = coordinateSpace
+        self.coordinateReference = coordinateReference
+        self.queryWait = queryWait
+        self.modifierSnapshotId = modifierSnapshotId
+    }
+}
+
+private struct ClickResponseExecution {
+    let targetProcessIdentifier: pid_t?
+    let executionTime: TimeInterval
+    let invalidatedSnapshotId: String?
+    let outcome: DesktopActionOutcome?
+    let targetIdentity: DesktopTargetIdentity?
+    let modifiers: [PointerModifier]
+    let modifierResult: ForegroundModifierClickResult?
+}
+
+private struct CapturedCoordinateSnapshot {
+    let snapshot: UISnapshot
+    let coordinateContext: CaptureCoordinateContext
+    let processIdentifier: Int32?
+    let identity: WindowMutationIdentity?
+    let bounds: CGRect?
+}
+
+private struct ClickIntent {
+    let automationType: ClickType
+    let displayVerb: String
+
+    init(double: Bool, right: Bool, middle: Bool, triple: Bool) throws {
+        let variants = [double, right, middle, triple]
+        guard variants.filter(\.self).count <= 1 else {
+            throw ClickToolError(
+                "Click variants are mutually exclusive; use only one of double, right, middle, or triple.")
+        }
+        if middle {
+            self.automationType = .middle
+            self.displayVerb = "Middle-clicked"
+        } else if triple {
+            self.automationType = .triple
+            self.displayVerb = "Triple-clicked"
+        } else if right {
+            self.automationType = .right
+            self.displayVerb = "Right-clicked"
+        } else if double {
+            self.automationType = .double
+            self.displayVerb = "Double-clicked"
+        } else {
+            self.automationType = .single
+            self.displayVerb = "Clicked"
+        }
+    }
+}
+
+private struct ClickToolError: Error {
+    let message: String
+    let refusalReason: DesktopActionOutcome.RefusalReason
+
+    init(
+        _ message: String,
+        refusalReason: DesktopActionOutcome.RefusalReason = .invalidRequest)
+    {
+        self.message = message
+        self.refusalReason = refusalReason
+    }
+}
+
+extension UIElement {
+    fileprivate var centerPoint: CGPoint {
+        CGPoint(x: self.frame.midX, y: self.frame.midY)
+    }
+
+    fileprivate var humanDescription: String {
+        "\(self.role): \(self.title ?? self.label ?? "untitled")"
+    }
+
+    fileprivate var humanRole: String? {
+        self.roleDescription ?? self.role
+    }
+
+    fileprivate var displayLabel: String? {
+        self.title ?? self.label ?? self.value
+    }
+}

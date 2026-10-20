@@ -1,0 +1,527 @@
+import Algorithms
+import Foundation
+import Tachikoma
+
+// MARK: - Event Types
+
+/// Events emitted during agent execution
+public enum AgentEvent: Sendable {
+    case started(task: String)
+    case assistantMessage(content: String)
+    case thinkingMessage(content: String) // New case for thinking/reasoning content
+    case toolCallStarted(name: String, arguments: String)
+    case toolCallUpdated(name: String, arguments: String)
+    case toolCallCompleted(name: String, result: String)
+    case verificationCompleted(toolName: String, result: VerificationResult)
+    case desktopContextRefreshed(summary: String)
+    case error(message: String)
+    case completed(summary: String, usage: Usage?)
+    case queueDrained
+}
+
+/// Protocol for receiving agent events
+@MainActor
+public protocol AgentEventDelegate: AnyObject, Sendable {
+    /// Read once per execution. Opting out skips progress events without changing provider streaming or results.
+    var receivesAgentEvents: Bool { get }
+
+    /// Called when an agent event is emitted
+    func agentDidEmitEvent(_ event: AgentEvent)
+}
+
+extension AgentEventDelegate {
+    public var receivesAgentEvents: Bool {
+        true
+    }
+}
+
+// MARK: - Agent Execution Types
+
+/// Result of agent task execution containing response content, metadata, and tool usage information
+public struct AgentExecutionResult: Sendable {
+    /// The generated response content from the AI model
+    public let content: String
+
+    /// Complete conversation messages including tool calls and responses
+    public let messages: [ModelMessage]
+
+    /// Session identifier for tracking conversation state
+    public let sessionId: String?
+
+    /// Token usage statistics from the AI provider
+    public let usage: Usage?
+
+    /// Additional metadata about the execution
+    public let metadata: AgentMetadata
+
+    public init(
+        content: String,
+        messages: [ModelMessage] = [],
+        sessionId: String? = nil,
+        usage: Usage? = nil,
+        metadata: AgentMetadata)
+    {
+        self.content = content
+        self.messages = messages
+        self.sessionId = sessionId
+        self.usage = usage
+        self.metadata = metadata
+    }
+}
+
+/// Metadata about agent execution including performance metrics and model information
+public struct AgentMetadata: Sendable {
+    /// Total execution time in seconds
+    public let executionTime: TimeInterval
+
+    /// Number of tool calls made during execution
+    public let toolCallCount: Int
+
+    /// Model name used for generation
+    public let modelName: String
+
+    /// Timestamp when execution started
+    public let startTime: Date
+
+    /// Timestamp when execution completed
+    public let endTime: Date
+
+    /// Additional context-specific metadata
+    public let context: [String: String]
+
+    public init(
+        executionTime: TimeInterval,
+        toolCallCount: Int,
+        modelName: String,
+        startTime: Date,
+        endTime: Date,
+        context: [String: String] = [:])
+    {
+        self.executionTime = executionTime
+        self.toolCallCount = toolCallCount
+        self.modelName = modelName
+        self.startTime = startTime
+        self.endTime = endTime
+        self.context = context
+    }
+}
+
+// MARK: - Session Management Types
+
+/// Summary information about an agent session
+public struct SessionSummary: Sendable, Codable {
+    /// Unique session identifier
+    public let id: String
+
+    /// Model name used in this session
+    public let modelName: String
+
+    /// When the session was created
+    public let createdAt: Date
+
+    /// When the session was last accessed
+    public let lastAccessedAt: Date
+
+    /// Number of messages in the session
+    public let messageCount: Int
+
+    /// Session status
+    public let status: SessionStatus
+
+    /// Brief description of the session
+    public let summary: String?
+
+    /// Immutable maximum tool authority retained by the session.
+    public let toolExecutionPolicy: MCPToolExecutionPolicy
+
+    /// Saved ceiling only; each invocation still needs a trusted opt-in.
+    public let temporaryClipboardPasteMaximum: Bool?
+
+    public init(
+        id: String,
+        modelName: String,
+        createdAt: Date,
+        lastAccessedAt: Date,
+        messageCount: Int,
+        status: SessionStatus,
+        summary: String? = nil,
+        toolExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
+        temporaryClipboardPasteMaximum: Bool? = nil)
+    {
+        self.id = id
+        self.modelName = modelName
+        self.createdAt = createdAt
+        self.lastAccessedAt = lastAccessedAt
+        self.messageCount = messageCount
+        self.status = status
+        self.summary = summary
+        self.toolExecutionPolicy = toolExecutionPolicy
+        self.temporaryClipboardPasteMaximum = temporaryClipboardPasteMaximum
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case modelName
+        case createdAt
+        case lastAccessedAt
+        case messageCount
+        case status
+        case summary
+        case toolExecutionPolicy
+        case temporaryClipboardPasteMaximum
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.modelName = try container.decode(String.self, forKey: .modelName)
+        self.createdAt = try container.decode(Date.self, forKey: .createdAt)
+        self.lastAccessedAt = try container.decode(Date.self, forKey: .lastAccessedAt)
+        self.messageCount = try container.decode(Int.self, forKey: .messageCount)
+        self.status = try container.decode(SessionStatus.self, forKey: .status)
+        self.summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        self.toolExecutionPolicy = try container.decodeIfPresent(
+            MCPToolExecutionPolicy.self,
+            forKey: .toolExecutionPolicy) ?? .backgroundOnly
+        self.temporaryClipboardPasteMaximum = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .temporaryClipboardPasteMaximum)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.id, forKey: .id)
+        try container.encode(self.modelName, forKey: .modelName)
+        try container.encode(self.createdAt, forKey: .createdAt)
+        try container.encode(self.lastAccessedAt, forKey: .lastAccessedAt)
+        try container.encode(self.messageCount, forKey: .messageCount)
+        try container.encode(self.status, forKey: .status)
+        try container.encodeIfPresent(self.summary, forKey: .summary)
+        try container.encode(self.toolExecutionPolicy, forKey: .toolExecutionPolicy)
+        try container.encodeIfPresent(self.temporaryClipboardPasteMaximum, forKey: .temporaryClipboardPasteMaximum)
+    }
+}
+
+/// Status of an agent session
+public enum SessionStatus: String, Codable, Sendable {
+    case active
+    case completed
+    case failed
+    case expired
+}
+
+/// Complete agent session with full conversation history
+public struct AgentSession: Sendable, Codable {
+    /// Unique session identifier
+    public let id: String
+
+    /// Model name used in this session
+    public let modelName: String
+
+    /// Credential-free provider-qualified model selection used to resume this session.
+    public let modelSelection: String?
+
+    /// Hash of the canonical provider endpoint used by this session.
+    public let modelEndpointIdentity: String?
+
+    /// Credential-free provider kind used to prevent namespace or protocol drift.
+    public let modelProviderIdentity: String?
+
+    /// Immutable maximum tool authority for this resumable session.
+    ///
+    /// Older session files omit this field and are interpreted conservatively as background-only.
+    public let toolExecutionPolicy: MCPToolExecutionPolicy?
+
+    /// Additive stored ceiling. Missing means false, and never supplies fresh invocation authority.
+    public let temporaryClipboardPasteMaximum: Bool?
+
+    /// Complete conversation history
+    public let messages: [ModelMessage]
+
+    /// Session metadata
+    public let metadata: SessionMetadata
+
+    /// When the session was created
+    public let createdAt: Date
+
+    /// When the session was last updated
+    public let updatedAt: Date
+
+    public init(
+        id: String,
+        modelName: String,
+        modelSelection: String? = nil,
+        modelEndpointIdentity: String? = nil,
+        modelProviderIdentity: String? = nil,
+        toolExecutionPolicy: MCPToolExecutionPolicy? = .backgroundOnly,
+        temporaryClipboardPasteMaximum: Bool? = nil,
+        messages: [ModelMessage],
+        metadata: SessionMetadata,
+        createdAt: Date,
+        updatedAt: Date)
+    {
+        self.id = id
+        self.modelName = modelName
+        self.modelSelection = modelSelection
+        self.modelEndpointIdentity = modelEndpointIdentity
+        self.modelProviderIdentity = modelProviderIdentity
+        self.toolExecutionPolicy = toolExecutionPolicy
+        self.temporaryClipboardPasteMaximum = temporaryClipboardPasteMaximum
+        self.messages = messages
+        self.metadata = metadata
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public var effectiveToolExecutionPolicy: MCPToolExecutionPolicy {
+        switch self.toolExecutionPolicy {
+        case .foregroundAllowed:
+            .foregroundAllowed
+        case .backgroundOnly, .unrestricted, nil:
+            .backgroundOnly
+        }
+    }
+
+    public var maximumToolExecutionAuthority: MCPToolExecutionAuthority {
+        MCPToolExecutionAuthority(
+            basePolicy: self.effectiveToolExecutionPolicy,
+            temporaryClipboardPasteGranted: self.temporaryClipboardPasteMaximum == true)
+    }
+}
+
+/// Metadata associated with an agent session
+public struct SessionMetadata: Sendable, Codable {
+    /// Total tokens used across all requests
+    public let totalTokens: Int
+
+    /// Total cost if available
+    public let totalCost: Double?
+
+    /// Number of tool calls made
+    public let toolCallCount: Int
+
+    /// Total execution time in seconds
+    public let totalExecutionTime: TimeInterval
+
+    /// Additional custom metadata
+    public let customData: [String: String]
+
+    public init(
+        totalTokens: Int = 0,
+        totalCost: Double? = nil,
+        toolCallCount: Int = 0,
+        totalExecutionTime: TimeInterval = 0,
+        customData: [String: String] = [:])
+    {
+        self.totalTokens = totalTokens
+        self.totalCost = totalCost
+        self.toolCallCount = toolCallCount
+        self.totalExecutionTime = totalExecutionTime
+        self.customData = customData
+    }
+}
+
+/// Errors raised while resolving session persistence paths.
+public enum AgentSessionManagerError: Error, LocalizedError, Equatable, Sendable {
+    case invalidSessionID
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidSessionID:
+            "Invalid session ID."
+        }
+    }
+}
+
+/// Manages agent conversation sessions with persistence and caching
+@MainActor
+public final class AgentSessionManager: @unchecked Sendable {
+    private let fileManager = FileManager.default
+    private let sessionDirectory: URL
+    private var sessionCache: [String: AgentSession] = [:]
+
+    /// Maximum number of sessions to keep in memory cache
+    public static let maxCacheSize = 50
+
+    /// Maximum age for sessions before they're considered expired
+    public static let maxSessionAge: TimeInterval = 30 * 24 * 60 * 60 // 30 days
+
+    public init(sessionDirectory: URL? = nil) throws {
+        if let sessionDirectory {
+            self.sessionDirectory = sessionDirectory.standardizedFileURL
+        } else {
+            // Default to ~/.peekaboo/sessions/
+            let homeDir = self.fileManager.homeDirectoryForCurrentUser
+            self.sessionDirectory = homeDir.appendingPathComponent(".peekaboo/sessions").standardizedFileURL
+        }
+
+        // Create session directory if it doesn't exist
+        try self.fileManager.createDirectory(at: self.sessionDirectory, withIntermediateDirectories: true)
+    }
+
+    /// List all available sessions
+    public func listSessions() -> [SessionSummary] {
+        // List all available sessions
+        do {
+            let sessionFiles = try fileManager.contentsOfDirectory(
+                at: self.sessionDirectory,
+                includingPropertiesForKeys: nil)
+
+            return sessionFiles.compactMap { url in
+                guard url.pathExtension == "json" else { return nil }
+
+                do {
+                    let data = try Data(contentsOf: url)
+                    let session = try JSONDecoder().decode(AgentSession.self, from: data)
+                    guard try self.sessionFileURL(for: session.id) == url.standardizedFileURL else {
+                        return nil
+                    }
+
+                    return SessionSummary(
+                        id: session.id,
+                        modelName: session.modelName,
+                        createdAt: session.createdAt,
+                        lastAccessedAt: session.updatedAt,
+                        messageCount: session.messages.count,
+                        status: self.sessionStatus(for: session, lastAccessedAt: session.updatedAt),
+                        summary: self.generateSessionSummary(from: session.messages),
+                        toolExecutionPolicy: session.effectiveToolExecutionPolicy,
+                        temporaryClipboardPasteMaximum: session.temporaryClipboardPasteMaximum)
+                } catch {
+                    return nil
+                }
+            }.sorted { $0.lastAccessedAt > $1.lastAccessedAt }
+        } catch {
+            return []
+        }
+    }
+
+    /// Save a session to persistent storage
+    public func saveSession(_ session: AgentSession) throws {
+        // Save a session to persistent storage
+        let sessionFile = try self.sessionFileURL(for: session.id)
+        let data = try JSONEncoder().encode(session)
+        try data.write(to: sessionFile, options: .atomic)
+
+        self.sessionCache[session.id] = session
+        self.evictOldCacheEntries()
+    }
+
+    /// Load a session from storage
+    public func loadSession(id: String) async throws -> AgentSession? {
+        let sessionFile = try self.sessionFileURL(for: id)
+        if let cachedSession = self.sessionCache[id] {
+            return cachedSession
+        }
+
+        // Load from disk
+        guard self.fileManager.fileExists(atPath: sessionFile.path) else {
+            return nil
+        }
+
+        let data = try Data(contentsOf: sessionFile)
+        let session = try JSONDecoder().decode(AgentSession.self, from: data)
+        guard session.id == id else {
+            throw AgentSessionManagerError.invalidSessionID
+        }
+
+        self.sessionCache[id] = session
+        self.evictOldCacheEntries()
+
+        return session
+    }
+
+    /// Delete a session
+    public func deleteSession(id: String) async throws {
+        // Delete a session
+        let sessionFile = try self.sessionFileURL(for: id)
+        try self.fileManager.removeItem(at: sessionFile)
+
+        self.sessionCache.removeValue(forKey: id)
+    }
+
+    /// Clean up expired sessions
+    public func cleanupExpiredSessions() async throws {
+        // Clean up expired sessions
+        let sessions = self.listSessions()
+        let expiredSessions = sessions.filter { self.isSessionExpired($0.lastAccessedAt) }
+
+        for session in expiredSessions {
+            try await self.deleteSession(id: session.id)
+        }
+    }
+
+    // MARK: - Private Methods
+
+    private func sessionFileURL(for id: String) throws -> URL {
+        guard !id.isEmpty,
+              id != ".",
+              id != "..",
+              !id.contains("/"),
+              !id.contains("\\"),
+              !id.utf8.contains(0)
+        else {
+            throw AgentSessionManagerError.invalidSessionID
+        }
+
+        let fileName = "\(id).json"
+        let sessionFile = self.sessionDirectory
+            .appendingPathComponent(fileName, isDirectory: false)
+            .standardizedFileURL
+        guard sessionFile.deletingLastPathComponent().standardizedFileURL.path == self.sessionDirectory.path,
+              sessionFile.lastPathComponent == fileName
+        else {
+            throw AgentSessionManagerError.invalidSessionID
+        }
+        return sessionFile
+    }
+
+    private func sessionStatus(for session: AgentSession, lastAccessedAt: Date) -> SessionStatus {
+        if self.isSessionExpired(lastAccessedAt) {
+            return .expired
+        }
+
+        switch session.metadata.customData["status"] {
+        case SessionStatus.completed.rawValue:
+            return .completed
+        case SessionStatus.failed.rawValue, "cancelled":
+            return .failed
+        case SessionStatus.expired.rawValue:
+            return .expired
+        default:
+            return .active
+        }
+    }
+
+    private func isSessionExpired(_ lastAccessed: Date) -> Bool {
+        Date().timeIntervalSince(lastAccessed) > Self.maxSessionAge
+    }
+
+    private func generateSessionSummary(from messages: [ModelMessage]) -> String? {
+        messages.firstNonNil { message in
+            guard message.role == .user, !message.isDesktopContextDataMessage else { return nil }
+            if case let .text(text) = message.content.first {
+                return String(text.prefix(100))
+            }
+            return nil
+        }
+    }
+
+    private func evictOldCacheEntries() {
+        guard self.sessionCache.count > Self.maxCacheSize else { return }
+
+        // Remove oldest entries
+        let excess = self.sessionCache.count - Self.maxCacheSize
+        guard excess > 0 else { return }
+
+        let oldestKeys = self.sessionCache
+            .lazy
+            .sorted { $0.value.updatedAt < $1.value.updatedAt }
+            .prefix(excess)
+            .map(\.key)
+
+        for key in oldestKeys {
+            self.sessionCache.removeValue(forKey: key)
+        }
+    }
+}

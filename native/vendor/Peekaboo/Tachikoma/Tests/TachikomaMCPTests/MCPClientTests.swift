@@ -1,0 +1,494 @@
+import Foundation
+import MCP
+import Testing
+@testable import Tachikoma
+@testable import TachikomaMCP
+
+struct MCPClientTests {
+    @Test
+    func `MCPServerConfig initialization with all parameters`() {
+        let config = MCPServerConfig(
+            transport: "stdio",
+            command: "npx",
+            args: ["test-server", "--verbose"],
+            env: ["API_KEY": "test123"],
+            enabled: true,
+            timeout: 30,
+            autoReconnect: true,
+            description: "Test server",
+        )
+
+        #expect(config.transport == "stdio")
+        #expect(config.command == "npx")
+        #expect(config.args == ["test-server", "--verbose"])
+        #expect(config.env["API_KEY"] == "test123")
+        #expect(config.enabled == true)
+        #expect(config.timeout == 30)
+        #expect(config.autoReconnect == true)
+        #expect(config.description == "Test server")
+    }
+
+    @Test
+    func `MCPServerConfig initialization with minimal parameters`() {
+        let config = MCPServerConfig(command: "test")
+
+        #expect(config.transport == "stdio")
+        #expect(config.command == "test")
+        #expect(config.args.isEmpty)
+        #expect(config.env.isEmpty)
+        #expect(config.enabled == true)
+        #expect(config.timeout == 30) // Default is 30, not nil
+        #expect(config.autoReconnect == true) // Default is true, not false
+        #expect(config.description == nil)
+    }
+
+    @Test
+    func `MCPClient initialization`() {
+        let config = MCPServerConfig(
+            command: "test-command",
+            args: ["arg1"],
+            description: "Test",
+        )
+
+        _ = MCPClient(name: "test-client", config: config)
+    }
+
+    @Test
+    func `Protocol negotiation never retries cancellation`() async throws {
+        let transport = CancellationTransport()
+        let client = MCPClient(name: "cancelled", config: MCPServerConfig(command: "unused"))
+        let params = InitializeParams(
+            protocolVersion: "2025-03-26",
+            clientInfo: ClientInfo(name: "test", version: "1.0"),
+            capabilities: ClientCapabilities(),
+        )
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await client.initialize(using: transport, params: params)
+        }
+        #expect(transport.requestCount == 1)
+    }
+
+    @Test
+    func `MCPError descriptions`() {
+        #expect(MCPError.serverDisabled.errorDescription == "MCP server is disabled")
+        #expect(MCPError.notConnected.errorDescription == "MCP client is not connected")
+        #expect(MCPError.transportClosed.errorDescription == "MCP transport closed")
+        #expect(MCPError.invalidResponse.errorDescription == "Invalid response from MCP server")
+        #expect(MCPError.unsupportedTransport("test").errorDescription == "Unsupported transport: test")
+        #expect(MCPError.connectionFailed("timeout").errorDescription == "Connection failed: timeout")
+        #expect(MCPError.executionFailed("error").errorDescription == "Execution failed: error")
+    }
+
+    @Test
+    func `ToolArguments convenience methods`() {
+        let args = ToolArguments(raw: [
+            "text": "hello",
+            "number": 42,
+            "float": 3.14,
+            "bool": true,
+            "array": ["a", "b", "c"],
+            "null": NSNull(),
+        ])
+
+        // Test getString
+        #expect(args.getString("text") == "hello")
+        #expect(args.getString("number") == "42")
+        #expect(args.getString("bool") == "true")
+        #expect(args.getString("missing") == nil)
+
+        // Test getInt
+        #expect(args.getInt("number") == 42)
+        #expect(args.getInt("float") == nil)
+        #expect(args.getInt("missing") == nil)
+
+        // Test getNumber
+        #expect(args.getNumber("number") == 42.0)
+        #expect(args.getNumber("float") == 3.14)
+        #expect(args.getNumber("missing") == nil)
+
+        // Test getBool
+        #expect(args.getBool("bool") == true)
+        #expect(args.getBool("missing") == nil)
+
+        // Test getStringArray
+        let stringArray = args.getStringArray("array")
+        #expect(stringArray == ["a", "b", "c"])
+        #expect(args.getStringArray("missing") == nil)
+
+        // Test isEmpty
+        #expect(args.isEmpty == false)
+        let emptyArgs = ToolArguments(raw: [:])
+        #expect(emptyArgs.isEmpty == true)
+    }
+
+    @Test
+    func `ToolArguments from Value`() {
+        let value = Value.object([
+            "name": .string("test"),
+            "count": .int(42),
+            "active": .bool(true),
+        ])
+
+        let args = ToolArguments(value: value)
+
+        #expect(args.getString("name") == "test")
+        #expect(args.getInt("count") == 42)
+        #expect(args.getBool("active") == true)
+    }
+
+    @Test
+    func `ToolArguments raw dictionary preserves nested structures`() {
+        let value = Value.object([
+            "text": .string("hello"),
+            "number": .int(5),
+            "options": .object([
+                "enabled": .bool(true),
+                "threshold": .double(0.75),
+            ]),
+            "list": .array([
+                .string("first"),
+                .int(2),
+                .object(["deep": .string("value")]),
+            ]),
+            "none": .null,
+        ])
+
+        let args = ToolArguments(value: value)
+        let dictionary = args.rawDictionary
+
+        #expect(dictionary["text"] as? String == "hello")
+        #expect(dictionary["number"] as? Int == 5)
+
+        if let options = dictionary["options"] as? [String: Any] {
+            #expect(options["enabled"] as? Bool == true)
+            #expect(options["threshold"] as? Double == 0.75)
+        } else {
+            Issue.record("Expected nested options dictionary")
+        }
+
+        if let list = dictionary["list"] as? [Any] {
+            #expect(list.count == 3)
+            #expect(list.first as? String == "first")
+            #expect(list.dropFirst().first as? Int == 2)
+            if let third = list.last as? [String: Any] {
+                #expect(third["deep"] as? String == "value")
+            } else {
+                Issue.record("Expected nested object in list")
+            }
+        } else {
+            Issue.record("Expected list array")
+        }
+
+        #expect(dictionary["none"] is NSNull)
+    }
+
+    @Test
+    func `ToolResponse creation methods`() {
+        let legacyInitializer: ([MCP.Tool.Content], Bool, Value?) -> ToolResponse =
+            ToolResponse.init(content:isError:meta:)
+        // Text response
+        let textResponse = ToolResponse.text("Success")
+        #expect(textResponse.content.count == 1)
+        #expect(textResponse.isError == false)
+        if case .text(text: let text, annotations: _, _meta: _) = textResponse.content.first {
+            #expect(text == "Success")
+        } else {
+            Issue.record("Expected text content")
+        }
+
+        // Error response
+        let errorResponse = ToolResponse.error("Failed")
+        #expect(errorResponse.isError == true)
+        if case .text(text: let text, annotations: _, _meta: _) = errorResponse.content.first {
+            #expect(text == "Failed")
+        } else {
+            Issue.record("Expected text content")
+        }
+
+        // Image response
+        let imageData = Data("test".utf8)
+        let imageResponse = ToolResponse.image(data: imageData, mimeType: "image/png")
+        #expect(imageResponse.content.count == 1)
+        if case let .image(data: data, mimeType: mimeType, annotations: _, _meta: _) = imageResponse.content.first {
+            #expect(data == imageData.base64EncodedString())
+            #expect(mimeType == "image/png")
+        } else {
+            Issue.record("Expected image content")
+        }
+
+        // Multi-content response
+        let multiResponse = ToolResponse.multiContent([
+            .text(text: "Part 1", annotations: nil, _meta: nil),
+            .text(text: "Part 2", annotations: nil, _meta: nil),
+        ])
+        #expect(multiResponse.content.count == 2)
+        #expect(legacyInitializer([], false, nil).content.isEmpty)
+    }
+
+    @Test
+    func `ToolResponse with metadata`() {
+        let meta = Value.object([
+            "executionTime": .double(1.5),
+            "status": .string("ok"),
+        ])
+
+        let response = ToolResponse.text("Result", meta: meta)
+
+        #expect(response.meta != nil)
+        if case let .object(metaDict) = response.meta {
+            #expect(metaDict["executionTime"] == .double(1.5))
+            #expect(metaDict["status"] == .string("ok"))
+        } else {
+            Issue.record("Expected metadata object")
+        }
+    }
+
+    @Test
+    func `CallTool result conversion preserves structured content and metadata`() {
+        let result = CallTool.Result(
+            content: [.text(text: "failed", annotations: nil, _meta: nil)],
+            structuredContent: .object(["code": .int(42)]),
+            isError: true,
+            _meta: Metadata(additionalFields: ["retrySafe": .bool(false)]),
+        )
+
+        let response = ToolResponse(callToolResult: result)
+
+        #expect(response.isError == true)
+        #expect(response.structuredContent == .object(["code": .int(42)]))
+        #expect(response.meta == .object(["retrySafe": .bool(false)]))
+    }
+
+    @Test
+    func `MCPToolProvider initialization`() {
+        let config = MCPServerConfig(command: "test")
+        let client = MCPClient(name: "test", config: config)
+        _ = MCPToolProvider(client: client)
+    }
+
+    @Test
+    func `MCPToolProvider as DynamicToolProvider`() {
+        let config = MCPServerConfig(command: "test")
+        let client = MCPClient(name: "test-server", config: config)
+        let provider = MCPToolProvider(client: client)
+
+        // Test that it conforms to DynamicToolProvider
+        _ = provider as DynamicToolProvider
+    }
+
+    @Test
+    func `Tool metadata structure`() {
+        let tool = MCP.Tool(
+            name: "test-tool",
+            description: "A test tool",
+            inputSchema: .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "message": .object([
+                        "type": .string("string"),
+                    ]),
+                ]),
+            ]),
+        )
+
+        #expect(tool.name == "test-tool")
+        #expect(tool.description == "A test tool")
+        if case let .object(schema) = tool.inputSchema {
+            #expect(schema["type"] == .string("object"))
+            if case let .object(props) = schema["properties"] {
+                #expect(props["message"] != nil)
+            }
+        } else {
+            Issue.record("Expected object schema")
+        }
+    }
+
+    @Test
+    func `Value encoding and decoding`() throws {
+        let originalValue = Value.object([
+            "string": .string("test"),
+            "number": .int(42),
+            "float": .double(3.14),
+            "bool": .bool(true),
+            "null": .null,
+            "array": .array([.string("a"), .string("b")]),
+            "object": .object(["nested": .string("value")]),
+        ])
+
+        // Encode to JSON
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(originalValue)
+
+        // Decode back
+        let decoder = JSONDecoder()
+        let decodedValue = try decoder.decode(Value.self, from: data)
+
+        #expect(originalValue == decodedValue)
+    }
+
+    @Test
+    func `ToolArguments decoding`() throws {
+        struct TestArgs: Decodable {
+            let name: String
+            let count: Int
+            let active: Bool
+        }
+
+        let args = ToolArguments(raw: [
+            "name": "test",
+            "count": 42,
+            "active": true,
+        ])
+
+        let decoded = try args.decode(TestArgs.self)
+        #expect(decoded.name == "test")
+        #expect(decoded.count == 42)
+        #expect(decoded.active == true)
+    }
+}
+
+private final class CancellationTransport: MCPTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _requestCount = 0
+
+    var requestCount: Int {
+        self.lock.withLock { self._requestCount }
+    }
+
+    func connect(config _: MCPServerConfig) async throws {}
+
+    func disconnect() async {}
+
+    func sendRequest<R: Decodable>(
+        method _: String,
+        params _: some Encodable,
+    ) async throws
+        -> R
+    {
+        self.lock.withLock { self._requestCount += 1 }
+        throw CancellationError()
+    }
+
+    func sendNotification(
+        method _: String,
+        params _: some Encodable,
+    ) async throws {}
+}
+
+// MARK: - Mock MCP Tool for Testing
+
+private struct MockMCPTool: MCPTool {
+    let name: String = "mock_tool"
+    let description: String = "A mock tool for testing"
+
+    var inputSchema: Value {
+        .object([
+            "type": .string("object"),
+            "properties": .object([
+                "message": .object([
+                    "type": .string("string"),
+                    "description": .string("Test message"),
+                ]),
+            ]),
+            "required": .array([.string("message")]),
+        ])
+    }
+
+    func execute(arguments: ToolArguments) async throws -> ToolResponse {
+        guard let message = arguments.getString("message") else {
+            return .error("Missing required 'message' parameter")
+        }
+
+        return .text("Received: \(message)")
+    }
+}
+
+struct MockToolTests {
+    @Test
+    func `MCP tool output schema defaults to nil and preserves existential overrides`() {
+        let defaultTool: any MCPTool = MockMCPTool()
+        let schema = Value.object([
+            "type": .string("object"),
+            "properties": .object([
+                "status": .object(["type": .string("string")]),
+            ]),
+            "required": .array([.string("status")]),
+        ])
+        let typedTool: any MCPTool = OutputSchemaMCPTool(outputSchema: schema)
+
+        #expect(defaultTool.outputSchema == nil)
+        #expect(typedTool.outputSchema == schema)
+    }
+
+    @Test
+    func `Mock tool execution with valid arguments`() async throws {
+        let tool = MockMCPTool()
+
+        let args = ToolArguments(raw: ["message": "Hello World"])
+        let response = try await tool.execute(arguments: args)
+
+        #expect(response.isError == false)
+        if case .text(text: let text, annotations: _, _meta: _) = response.content.first {
+            #expect(text == "Received: Hello World")
+        } else {
+            Issue.record("Expected text response")
+        }
+    }
+
+    @Test
+    func `Mock tool execution with missing arguments`() async throws {
+        let tool = MockMCPTool()
+
+        let args = ToolArguments(raw: [:])
+        let response = try await tool.execute(arguments: args)
+
+        #expect(response.isError == true)
+        if case .text(text: let text, annotations: _, _meta: _) = response.content.first {
+            #expect(text == "Missing required 'message' parameter")
+        } else {
+            Issue.record("Expected error text")
+        }
+    }
+
+    @Test
+    func `Mock tool schema validation`() {
+        let tool = MockMCPTool()
+
+        #expect(tool.name == "mock_tool")
+        #expect(tool.description == "A mock tool for testing")
+
+        if case let .object(schema) = tool.inputSchema {
+            #expect(schema["type"] == .string("object"))
+
+            if
+                case let .object(properties) = schema["properties"],
+                case let .object(messageSchema) = properties["message"]
+            {
+                #expect(messageSchema["type"] == .string("string"))
+                #expect(messageSchema["description"] == .string("Test message"))
+            } else {
+                Issue.record("Expected properties.message object")
+            }
+
+            if case let .array(required) = schema["required"] {
+                #expect(required.contains(.string("message")))
+            } else {
+                Issue.record("Expected required array")
+            }
+        } else {
+            Issue.record("Expected object schema")
+        }
+    }
+}
+
+private struct OutputSchemaMCPTool: MCPTool {
+    let outputSchema: Value?
+    let name = "output_schema"
+    let description = "Advertises a structured result"
+    let inputSchema = Value.object(["type": .string("object")])
+
+    func execute(arguments _: ToolArguments) async throws -> ToolResponse {
+        .text("ok")
+    }
+}

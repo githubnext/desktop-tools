@@ -1,0 +1,1394 @@
+import CoreGraphics
+import Foundation
+import MCP
+import os.log
+import PeekabooAutomation
+import PeekabooFoundation
+import TachikomaMCP
+import UniformTypeIdentifiers
+
+// swiftlint:disable type_body_length
+/// MCP tool for serialized temporary clipboard payloads and ownership-aware cleanup.
+public struct PasteTool: MCPTool {
+    private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "PasteTool")
+    private let context: MCPToolContext
+    private let transactionGate: any ClipboardPasteTransactionGating
+
+    public let name = "paste"
+
+    public var description: String {
+        if self.context.executionPolicy == .backgroundOnly {
+            let clipboardGuidance = self.context.executionAuthority.temporaryClipboardPasteGranted
+                ? """
+                This invocation also permits one bounded temporary dataBase64+uti payload (optional alsoText and
+                restore_delay_ms) to a fresh exact non-dialog snapshot. Use snapshot alone, with no app/PID/window
+                selectors. This briefly changes the General clipboard and restores it only while still owned;
+                newer clipboard contents are preserved. Prepared Cmd+V delivery remains unverified and retry-unsafe:
+                observe the exact target before continuing and never blindly replay the paste.
+                """
+                : "Clipboard-backed payloads are unavailable without trusted temporary-clipboard permission."
+            return """
+            Deliver one direct text payload to an explicit app or PID UI target, optionally pinned to one exact
+            window, under immutable background-only authority. This route does not touch the shared clipboard.
+            Provide exactly one of app or pid and at most one of window_id, window_title, or window_index.
+            Current-clipboard, file/image paths, targetless input, and foreground delivery are unavailable.
+            If delivery fails after it begins, a prefix may already be present; observe the exact target before
+            retrying.
+            \(clipboardGuidance)
+            """
+        }
+
+        return """
+        Paste the current clipboard, or temporarily set the clipboard, paste (Cmd+V), then restore it while still owned.
+        If another app copies newer contents, preserve that update instead of restoring the prior clipboard.
+
+        Use this when you want fewer steps than:
+        - clipboard set
+        - foreground raw press cmd+v --foreground
+        - clipboard restore
+
+        Targeting:
+        - Provide app/pid for process-targeted background paste.
+        - app and pid are alternatives. Provide at most one window selector; title/index require app or pid.
+        - Add window_id, window_title, or window_index for atomic exact-window background delivery. Peekaboo pins the
+          selected window ID, owner PID, and bounds through dispatch instead of falling back to a sibling window.
+        - Set foreground=true only for intentional focus-changing/global paste.
+
+        Payload:
+        - Omit payload fields to paste the current clipboard.
+        - Or provide text OR filePath/imagePath OR dataBase64+uti (optionally alsoText).
+
+        Result honesty:
+        - Targeted text uses direct background text delivery without touching the clipboard. If delivery fails or is
+          cancelled after it begins, a prefix may already be present; Peekaboo returns an indeterminate, retry-unsafe
+          error and requires a fresh observation.
+        - Targeted Cmd+V delivery has no receiver acknowledgement, so binary/current-clipboard calls return an
+          explicit may-have-pasted error after cleanup and unlocking. Observe the target; do not retry blindly.
+        """
+    }
+
+    public var inputSchema: Value {
+        let foregroundCapable = self.context.executionPolicy != .backgroundOnly
+        let temporaryClipboardGranted = self.context.executionAuthority.temporaryClipboardPasteGranted
+        var properties: [String: Value] = [
+            "app": SchemaBuilder.string(description: "Target app name/bundle ID, or 'PID:<n>'."),
+            "pid": SchemaBuilder.integer(description: "Target process ID (alternative to app)."),
+            "window_id": SchemaBuilder.integer(
+                description: foregroundCapable
+                    ? "Exact window ID for atomic background delivery, or foreground focus when requested."
+                    : "Exact window ID; requires app/pid and pins atomic background delivery to that exact window."),
+            "window_title": SchemaBuilder.string(
+                description: foregroundCapable
+                    ? "Window title substring for atomic exact-window background delivery."
+                    : "Window title substring; requires app/pid and pins atomic exact-window background delivery."),
+            "window_index": SchemaBuilder
+                .integer(description: "Window index (0-based); requires app/pid and pins that exact window."),
+            "text": SchemaBuilder.string(
+                description: "Plain text. Background delivery leaves the clipboard untouched; a failure after " +
+                    "dispatch begins is retry-unsafe because a prefix may already be present."),
+        ]
+        if foregroundCapable {
+            properties["filePath"] = SchemaBuilder.string(
+                description: "Path to a file to paste (file bytes placed on clipboard).")
+            properties["imagePath"] = SchemaBuilder
+                .string(description: "Path to an image to paste (alias of filePath).")
+            properties["allowLarge"] = SchemaBuilder.boolean(
+                description: "Allow payloads larger than 10 MB.",
+                default: false)
+            properties["foreground"] = SchemaBuilder.boolean(
+                description: "Optional. Focus a target or intentionally send foreground/global Cmd+V.",
+                default: false)
+        }
+        if foregroundCapable || temporaryClipboardGranted {
+            properties["dataBase64"] = SchemaBuilder.string(
+                description: "Base64-encoded payload to paste; limited to 10 MB without foreground authority.")
+            properties["uti"] = SchemaBuilder
+                .string(description: "UTI for dataBase64, or a foreground-authorized file.")
+            properties["alsoText"] = SchemaBuilder.string(description: "Optional plain-text companion for dataBase64.")
+            properties["restore_delay_ms"] = SchemaBuilder.integer(
+                description: "Delay before restoring the previous clipboard (ms). Default: 150. Maximum: 10000.",
+                minimum: 0,
+                maximum: 10000,
+                default: 150)
+        }
+        if !foregroundCapable, temporaryClipboardGranted {
+            properties["snapshot"] = SchemaBuilder.string(
+                description: "Fresh exact non-dialog snapshot for dataBase64+uti; no app/PID/window selectors.")
+        }
+        return SchemaBuilder.object(
+            properties: properties,
+            required: foregroundCapable || temporaryClipboardGranted ? [] : ["text"])
+    }
+
+    public init(context: MCPToolContext = .shared) {
+        self.init(context: context, transactionGate: NativeClipboardPasteTransactionGate())
+    }
+
+    init(context: MCPToolContext, transactionGate: any ClipboardPasteTransactionGating) {
+        self.context = context
+        self.transactionGate = transactionGate
+    }
+
+    func validateArgumentSemantics(_ arguments: ToolArguments) throws {
+        _ = try MCPInteractionTarget(
+            app: arguments.getString("app"),
+            pid: arguments.validatedInt("pid"),
+            windowTitle: arguments.getString("window_title"),
+            windowIndex: arguments.validatedInt("window_index"),
+            windowId: arguments.validatedInt("window_id"))
+        try Self.validatePayloadShape(arguments)
+        try self.validateTemporaryPayloadBounds(arguments)
+        _ = try Self.restoreDelayMilliseconds(arguments)
+    }
+
+    @MainActor
+    public func execute(arguments: ToolArguments) async throws -> ToolResponse {
+        let startTime = Date()
+        var setupFocusResult: MCPInteractionFocusResult?
+        let clipboardMutation = PasteClipboardMutation()
+
+        do {
+            let target = try MCPInteractionTarget(
+                app: arguments.getString("app"),
+                pid: arguments.validatedInt("pid"),
+                windowTitle: arguments.getString("window_title"),
+                windowIndex: arguments.validatedInt("window_index"),
+                windowId: arguments.validatedInt("window_id"))
+
+            let foreground = arguments.getBool("foreground") ?? false
+            let snapshotID = arguments.getString("snapshot")
+            let expectedPIDIdentity = try self.explicitPIDIdentity(target: target)
+            let restoreDelayMs = try Self.restoreDelayMilliseconds(arguments)
+            let payload = try self.makePayload(arguments: arguments)
+
+            if case let .explicit(request, text?) = payload, !foreground {
+                let destination = try await self.resolveDeliveryDestination(
+                    target: target,
+                    foreground: false,
+                    expectedPIDIdentity: expectedPIDIdentity,
+                    snapshotID: snapshotID)
+                guard destination.processIdentifier != nil else {
+                    throw PasteToolError(
+                        "Background text paste requires an app or pid target.",
+                        refusalReason: .invalidRequest)
+                }
+                return try await self.performBackgroundTextPaste(
+                    text: text,
+                    request: request,
+                    target: target,
+                    destination: destination,
+                    startedAt: startTime)
+            }
+
+            if case .current = payload {
+                let outcome = try await self.transactionGate.withExclusiveTransaction {
+                    let destination = try await self.resolveDeliveryDestination(
+                        target: target,
+                        foreground: foreground,
+                        expectedPIDIdentity: expectedPIDIdentity)
+                    if destination.processIdentifier == nil {
+                        setupFocusResult = try await target.focusResultIfRequested(windows: self.context.windows)
+                    }
+                    return try await self.performCurrentClipboardPaste(
+                        destination: destination,
+                        restoreDelayMs: restoreDelayMs)
+                }
+                let actionResult: UIAutomationActionResult<Void>
+                do {
+                    actionResult = try self.combinedPasteActionResult(
+                        outcome.actionResult,
+                        focusResult: setupFocusResult)
+                } catch {
+                    // `combining` already preserves the completed focus in its failure.
+                    setupFocusResult = nil
+                    throw error
+                }
+                return try await self.currentClipboardResponse(
+                    outcome: outcome,
+                    actionResult: actionResult,
+                    target: target,
+                    restoreDelayMs: restoreDelayMs,
+                    startedAt: startTime)
+            }
+
+            guard case let .explicit(request, _) = payload else {
+                throw PasteToolError("Invalid paste payload.", refusalReason: .invalidRequest)
+            }
+            guard let clipboardProvider = self.context.clipboard as? any ClipboardTemporaryWriteProviding else {
+                throw PasteToolError(
+                    "This clipboard provider does not support ownership-aware temporary writes.",
+                    refusalReason: .runtimeIncompatible)
+            }
+            let outcome = try await self.transactionGate.withExclusiveTransaction {
+                let destination = try await self.resolveDeliveryDestination(
+                    target: target,
+                    foreground: foreground,
+                    expectedPIDIdentity: expectedPIDIdentity,
+                    snapshotID: snapshotID,
+                    requiresClipboardClaim: true)
+                if destination.processIdentifier == nil {
+                    setupFocusResult = try await target.focusResultIfRequested(windows: self.context.windows)
+                }
+                return try await self.performClipboardPasteTransaction(
+                    request: request,
+                    clipboardProvider: clipboardProvider,
+                    clipboardMutation: clipboardMutation,
+                    destination: destination,
+                    restoreDelayMs: restoreDelayMs)
+            }
+            let actionResult: UIAutomationActionResult<Void>
+            do {
+                actionResult = try self.combinedPasteActionResult(
+                    outcome.actionResult,
+                    focusResult: setupFocusResult)
+            } catch {
+                // `combining` already preserves the completed focus in its failure.
+                setupFocusResult = nil
+                throw error
+            }
+
+            return try await self.explicitClipboardResponse(
+                outcome: outcome,
+                actionResult: actionResult,
+                target: target,
+                restoreDelayMs: restoreDelayMs,
+                startedAt: startTime)
+        } catch let error as MCPInteractionTargetError {
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: error.localizedDescription,
+                reason: error.refusalReason)
+        } catch let failure as DesktopActionFailure {
+            return try await self.failureResponse(
+                failure,
+                focusResult: setupFocusResult,
+                clipboardCleanupStatus: clipboardMutation.cleanupStatus)
+        } catch let error as ClipboardPasteOutcomeError {
+            return try await self.pasteOutcomeResponse(error, focusResult: setupFocusResult)
+        } catch let error as PasteToolError {
+            return try await self.pasteToolErrorResponse(error, focusResult: setupFocusResult)
+        } catch {
+            return try await self.unexpectedErrorResponse(
+                error,
+                focusResult: setupFocusResult,
+                clipboardCleanupStatus: clipboardMutation.cleanupStatus)
+        }
+    }
+
+    @MainActor
+    private func explicitClipboardResponse(
+        outcome: ClipboardPasteTransactionOutcome,
+        actionResult: UIAutomationActionResult<Void>,
+        target: MCPInteractionTarget,
+        restoreDelayMs: Int,
+        startedAt: Date) async throws -> ToolResponse
+    {
+        let executionTime = Date().timeIntervalSince(startedAt)
+        let message = if outcome.restoreErrorDescription != nil {
+            "\(AgentDisplayTokens.Status.warning) Pasted (Cmd+V), but clipboard restoration failed " +
+                "in \(String(format: "%.2f", executionTime))s. Do not retry the paste; " +
+                "the previous clipboard contents may be unavailable."
+        } else if outcome.cleanupStatus == .preservedNewerContents {
+            "Paste input sent; a newer clipboard update was preserved instead of restoring prior contents " +
+                "in \(String(format: "%.2f", executionTime))s."
+        } else {
+            "\(AgentDisplayTokens.Status.success) Pasted (Cmd+V) and restored clipboard " +
+                "in \(String(format: "%.2f", executionTime))s"
+        }
+
+        let pastedObject: [String: Value] = [
+            "uti": .string(outcome.setResult.utiIdentifier),
+            "size": .int(outcome.setResult.data.count),
+            "textPreview": outcome.setResult.textPreview.map(Value.string) ?? .null,
+        ]
+
+        let restoredUti: Value = outcome.restoreResult.map { .string($0.utiIdentifier) } ?? .null
+        let restoredSize: Value = outcome.restoreResult.map { .int($0.data.count) } ?? .null
+        let restoredObject: [String: Value] = [
+            "uti": restoredUti,
+            "size": restoredSize,
+        ]
+
+        var metaFields: [String: Value] = [
+            "pasted": .object(pastedObject),
+            "previous_clipboard_present": .bool(outcome.previousClipboardPresent),
+            "restored": .object(restoredObject),
+            "restore_succeeded": .bool(outcome.cleanupStatus == .restored && outcome
+                .restoreErrorDescription == nil),
+            "clipboard_cleanup_status": outcome.cleanupStatus.map { .string($0.rawValue) } ?? .null,
+            "restore_error": outcome.restoreErrorDescription.map(Value.string) ?? .null,
+            "restore_delay_ms": .int(restoreDelayMs),
+            "execution_time": .double(executionTime),
+            "delivery_mode": .string(outcome.targetPID == nil ? "foreground" : "background"),
+            "target_pid": outcome.targetPID.map { .int(Int($0)) } ?? .null,
+            "target_window_id": outcome.targetWindowID.map(Value.int) ?? .null,
+        ]
+        try metaFields.merge(Self.targetMetadataFields(actionResult.targetIdentity)) { _, target in target }
+        let meta = try MCPToolResponseMetadataProjector.metadata(
+            merging: metaFields,
+            outcome: actionResult.outcome)
+
+        let resolvedWindowTitle = try? await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
+        if Task.isCancelled {
+            throw ClipboardPasteOutcomeError(
+                kind: .indeterminate,
+                causeDescription: "The caller cancelled after Cmd+V dispatch completed.",
+                clipboardRestoreAttempted: true,
+                clipboardRestoreErrorDescription: outcome.restoreErrorDescription,
+                targetProcessIdentifier: outcome.targetPID,
+                clipboardCleanupStatus: outcome.cleanupStatus)
+        }
+        let summary = ToolEventSummary(
+            targetApp: target.appIdentifier,
+            windowTitle: resolvedWindowTitle,
+            actionDescription: "Paste",
+            notes: outcome.setResult.utiIdentifier)
+
+        return ToolResponse(
+            content: [.text(text: message, annotations: nil, _meta: nil)],
+            meta: ToolEventSummary.merge(summary: summary, into: meta))
+    }
+
+    @MainActor
+    private func failureResponse(
+        _ failure: DesktopActionFailure,
+        focusResult: MCPInteractionFocusResult?,
+        clipboardCleanupStatus: ClipboardTemporaryCleanupStatus? = nil) async throws -> ToolResponse
+    {
+        var standardErrorFields = ObservationActionResultSupport.standardErrorFields(failure)
+        if let clipboardCleanupStatus {
+            standardErrorFields["clipboard_cleanup_status"] = .string(clipboardCleanupStatus.rawValue)
+        }
+        let failure = if let focusResult,
+                         failure.outcome.delivery == ClipboardMutationResultSemantics.delivery,
+                         failure.targetReceipt == nil
+        {
+            focusResult.preservingGlobalFailure(failure, operation: "Paste")
+        } else {
+            focusResult?.preservingFailure(failure, operation: "Paste") ?? failure
+        }
+        return try await MCPDesktopActionFailureHandler.response(
+            for: failure,
+            uiSnapshots: self.context.uiSnapshots,
+            snapshotID: nil,
+            additionalFields: standardErrorFields)
+    }
+
+    @MainActor
+    private func pasteOutcomeResponse(
+        _ error: ClipboardPasteOutcomeError,
+        focusResult: MCPInteractionFocusResult?) async throws -> ToolResponse
+    {
+        if let focusResult {
+            let leaf = DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .clipboardTransaction, mode: .foreground),
+                evidence: .completionUnknown,
+                message: error.localizedDescription,
+                hint: "Observe the focused target and clipboard before retrying.",
+                causeDescription: error.causeDescription)
+            return try await self.failureResponse(
+                focusResult.preservingFailure(leaf, operation: "Paste"),
+                focusResult: nil,
+                clipboardCleanupStatus: error.clipboardCleanupStatus)
+        }
+        self.logger.error("Paste outcome was \(error.kind.rawValue, privacy: .public)")
+        return ToolResponse.error(
+            error.localizedDescription,
+            meta: .object([
+                "paste_outcome": .string(error.kind.rawValue),
+                "may_have_pasted": .bool(true),
+                "retry_safe": .bool(false),
+                "clipboard_restore_attempted": .bool(error.clipboardRestoreAttempted),
+                "clipboard_restore_succeeded": error.clipboardRestoreSucceeded.map(Value.bool) ?? .null,
+                "clipboard_cleanup_status": error.clipboardCleanupStatus.map { .string($0.rawValue) } ?? .null,
+                "clipboard_restore_error": error.clipboardRestoreErrorDescription.map(Value.string) ?? .null,
+                "target_pid": error.targetProcessIdentifier.map { .int(Int($0)) } ?? .null,
+                "requires_fresh_observation": .bool(true),
+            ]))
+    }
+
+    @MainActor
+    private func pasteToolErrorResponse(
+        _ error: PasteToolError,
+        focusResult: MCPInteractionFocusResult?) async throws -> ToolResponse
+    {
+        guard let focusResult else {
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: error.message,
+                reason: error.refusalReason)
+        }
+        let failure = DesktopActionFailure.preDispatchRefusal(
+            reason: error.refusalReason,
+            message: error.message)
+        return try await self.failureResponse(
+            focusResult.preservingFailure(failure, operation: "Paste"),
+            focusResult: nil)
+    }
+
+    @MainActor
+    private func unexpectedErrorResponse(
+        _ error: any Error,
+        focusResult: MCPInteractionFocusResult?,
+        clipboardCleanupStatus: ClipboardTemporaryCleanupStatus? = nil) async throws -> ToolResponse
+    {
+        if let focusResult {
+            return try await self.failureResponse(
+                focusResult.preservingFailure(error, operation: "Paste"),
+                focusResult: nil,
+                clipboardCleanupStatus: clipboardCleanupStatus)
+        }
+        self.logger.error("Paste failed: \(error.localizedDescription)")
+        return ToolResponse.error(
+            "Paste failed: \(error.localizedDescription)",
+            meta: clipboardCleanupStatus.map { .object(["clipboard_cleanup_status": .string($0.rawValue)]) })
+    }
+
+    @MainActor
+    private func directTextOutcomeResponse(
+        _ error: InputDeliveryIndeterminateError,
+        requestedCharacterCount: Int,
+        destination: UIAutomationTarget) async throws -> ToolResponse
+    {
+        self.logger.error("Direct text paste outcome was indeterminate")
+        guard let identity = try UIAutomationActionResultSemantics.targetIdentity(for: destination) else {
+            throw PasteToolError(
+                "Background text paste requires a process-generation target.",
+                refusalReason: .targetUnavailable)
+        }
+        let failure = error
+            .desktopActionFailure(delivery: UIAutomationActionResultSemantics.keyboardDelivery(for: destination))
+            .attributed(to: identity.actionTargetReceipt)
+        return try await MCPDesktopActionFailureHandler.response(
+            for: failure,
+            uiSnapshots: self.context.uiSnapshots,
+            snapshotID: nil,
+            additionalFields: [
+                "paste_outcome": .string("indeterminate"),
+                "paste_method": .string("background_text"),
+                "delivery_mode": .string("background"),
+                "may_have_pasted": .bool(true),
+                "partial_text_possible": .bool(true),
+                "retry_safe": .bool(false),
+                "clipboard_mutated": .bool(false),
+                "clipboard_restore_attempted": .bool(false),
+                "clipboard_restore_succeeded": .null,
+                "clipboard_restore_error": .null,
+                "requested_characters": .int(requestedCharacterCount),
+                "characters_typed": error.emittedUnitCount.map(Value.int) ?? .null,
+                "target_pid": destination.processIdentifier.map { .int(Int($0)) } ?? .null,
+                "target_window_id": destination.exactWindow.map { .int($0.identity.windowID) } ?? .null,
+            ])
+    }
+
+    @MainActor
+    private func pasteHotkeyRoute(
+        for destination: UIAutomationTarget,
+        requiresClipboardClaim: Bool = false) throws -> PasteHotkeyRoute
+    {
+        if destination.exactWindow != nil {
+            do {
+                if requiresClipboardClaim {
+                    return try .guardedExact(ExactWindowKeyboardRuntime.requirePreparedClipboardGuardedPasteProvider(
+                        automation: self.context.automation,
+                        operation: "Exact-window paste"))
+                }
+                return try .exact(ExactWindowKeyboardRuntime.requireOutcomeProvider(
+                    automation: self.context.automation,
+                    operation: "Exact-window paste"))
+            } catch {
+                throw PasteToolError(
+                    error.localizedDescription,
+                    refusalReason: .runtimeIncompatible)
+            }
+        }
+        if destination.processIdentifier != nil {
+            guard let automation = self.context.automation as? any TargetedHotkeyServiceProtocol,
+                  automation.supportsTargetedHotkeys,
+                  automation.supportsProcessGenerationPinnedHotkeys
+            else {
+                throw PasteToolError(
+                    "This automation host does not support background paste delivery.",
+                    refusalReason: .runtimeIncompatible)
+            }
+            return .process(automation)
+        }
+        return .foreground
+    }
+
+    @MainActor
+    private func dispatchPasteHotkey(
+        route: PasteHotkeyRoute,
+        destination: UIAutomationTarget,
+        clipboardClaim: GeneralPasteboardWriteClaim? = nil) async throws -> UIAutomationActionResult<Void>
+    {
+        if clipboardClaim != nil {
+            guard case .guardedExact = route else {
+                throw PasteToolError("A retained clipboard claim cannot use an unguarded hotkey route.")
+            }
+        }
+        switch route {
+        case let .guardedExact(automation):
+            guard let exactWindow = destination.exactWindow,
+                  exactWindow.focusedElement != nil,
+                  let clipboardClaim
+            else {
+                throw PasteToolError("Guarded paste requires exact focus and a retained clipboard write claim.")
+            }
+            let result = try await automation.hotkeyWithOutcome(
+                keys: "cmd,v",
+                holdDuration: 50,
+                target: exactWindow,
+                clipboardClaim: clipboardClaim,
+                preparation: .blankWindowChrome)
+            return try self.validatedExactPasteResult(result, prepared: true)
+        case let .exact(automation):
+            guard let exactWindow = destination.exactWindow,
+                  let keyboardTarget = exactWindow.keyboardTarget
+            else {
+                throw PasteToolError("Exact-window paste requires a focused-element receipt.")
+            }
+            let result = try await automation.hotkeyWithOutcome(
+                keys: "cmd,v",
+                holdDuration: 50,
+                target: keyboardTarget)
+            return try self.validatedExactPasteResult(result)
+        case let .process(automation):
+            guard let processIdentity = destination.processIdentity else {
+                throw PasteToolError("Background paste requires a process-generation receipt.")
+            }
+            if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+                let result = try await outcomeAutomation.hotkeyWithOutcome(
+                    keys: "cmd,v",
+                    holdDuration: 50,
+                    expectedProcessIdentity: processIdentity)
+                if result.outcome != nil {
+                    _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+                        result,
+                        policy: .confirmed,
+                        operation: "Paste hotkey",
+                        rejectedOutcomeMessage: "Paste hotkey did not return a confirmed outcome.")
+                }
+                return result
+            }
+            try await automation.hotkey(keys: "cmd,v", holdDuration: 50, expectedProcessIdentity: processIdentity)
+            return UIAutomationActionResult(payload: (), outcome: nil)
+        case .foreground:
+            if let outcomeAutomation = self.context.automation as? any UIAutomationActionOutcomeProviding {
+                let result = try await outcomeAutomation.hotkeyWithOutcome(keys: "cmd,v", holdDuration: 50)
+                try DesktopActionFailure.requireConfirmedIfReported(
+                    result.outcome,
+                    operation: "Paste hotkey")
+                return result
+            }
+            try await self.context.automation.hotkey(keys: "cmd,v", holdDuration: 50)
+            return UIAutomationActionResult(payload: (), outcome: nil)
+        }
+    }
+
+    @MainActor
+    private func validatedExactPasteResult(
+        _ result: UIAutomationActionResult<Void>, prepared: Bool = false) throws -> UIAutomationActionResult<Void>
+    {
+        let validated = try prepared
+            ? ExactWindowKeyboardRuntime.validatePreparedPasteReceipt(result, operation: "Exact-window paste")
+            : ExactWindowKeyboardRuntime.validateRouteReceipt(result, operation: "Exact-window paste")
+        _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            validated,
+            policy: .confirmed,
+            operation: "Paste hotkey",
+            rejectedOutcomeMessage: "Paste hotkey did not return a confirmed outcome.")
+        return validated
+    }
+
+    @MainActor
+    private func performClipboardPasteTransaction(
+        request: ClipboardWriteRequest,
+        clipboardProvider: any ClipboardTemporaryWriteProviding,
+        clipboardMutation: PasteClipboardMutation,
+        destination: UIAutomationTarget,
+        restoreDelayMs: Int) async throws -> ClipboardPasteTransactionOutcome
+    {
+        let hotkeyRoute = try self.pasteHotkeyRoute(for: destination, requiresClipboardClaim: true)
+
+        try Task.checkCancellation()
+        let transaction: any ClipboardTemporaryWriteTransaction
+        do {
+            transaction = try clipboardProvider.prepareTemporaryWrite()
+        } catch let failure as DesktopActionFailure {
+            throw failure
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: error.localizedDescription)
+        }
+        try Task.checkCancellation()
+
+        let claimProvider: (any ClipboardTemporaryWriteClaimProviding)?
+        if case .guardedExact = hotkeyRoute {
+            guard let provider = transaction as? any ClipboardTemporaryWriteClaimProviding else {
+                throw PasteToolError(
+                    "This clipboard transaction cannot retain a General pasteboard write claim.",
+                    refusalReason: .runtimeIncompatible)
+            }
+            claimProvider = provider
+        } else {
+            claimProvider = nil
+        }
+        var restorePending = false
+        func restoreBeforeDispatchFailure(_ primaryError: any Error) throws -> Never {
+            var cleanupErrorDescription: String?
+            do {
+                clipboardMutation.cleanupStatus = try transaction.cleanup().status
+            } catch {
+                cleanupErrorDescription = error.localizedDescription
+            }
+            restorePending = false
+            throw ClipboardTemporaryWriteFailure.make(
+                primaryError,
+                didMutate: transaction.didMutate,
+                cleanupStatus: clipboardMutation.cleanupStatus,
+                cleanupErrorDescription: cleanupErrorDescription)
+        }
+        defer {
+            if restorePending {
+                do {
+                    clipboardMutation.cleanupStatus = try transaction.cleanup().status
+                } catch {
+                    self.logger.error(
+                        "Failed to restore clipboard after paste error: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        restorePending = true
+        let setResult: ClipboardReadResult
+        let clipboardClaim: GeneralPasteboardWriteClaim?
+        do {
+            if let claimProvider {
+                let write = try claimProvider.writeWithClaim(request)
+                setResult = write.result
+                clipboardClaim = write.claim
+            } else {
+                setResult = try transaction.write(request)
+                clipboardClaim = nil
+            }
+            try Task.checkCancellation()
+        } catch {
+            try restoreBeforeDispatchFailure(error)
+        }
+
+        let dispatchFailure: DesktopActionFailure?
+        let dispatchErrorDescription: String?
+        let actionResult: UIAutomationActionResult<Void>?
+        do {
+            actionResult = try await self.dispatchPasteHotkey(
+                route: hotkeyRoute,
+                destination: destination,
+                clipboardClaim: clipboardClaim)
+            dispatchFailure = nil
+            dispatchErrorDescription = nil
+        } catch let failure as DesktopActionFailure {
+            actionResult = nil
+            dispatchFailure = failure
+            dispatchErrorDescription = nil
+        } catch {
+            actionResult = nil
+            dispatchFailure = nil
+            dispatchErrorDescription = error.localizedDescription
+        }
+
+        let restoreResult: ClipboardReadResult?
+        let restoreErrorDescription: String?
+        do {
+            await ClipboardPasteTransactionGate.waitForPasteConsumption(milliseconds: restoreDelayMs)
+            let cleanup = try transaction.cleanup()
+            clipboardMutation.cleanupStatus = cleanup.status
+            if case let .restored(value) = cleanup {
+                restoreResult = value
+            } else {
+                restoreResult = nil
+            }
+            restoreErrorDescription = nil
+        } catch {
+            restoreResult = nil
+            restoreErrorDescription = error.localizedDescription
+            self.logger.error("Failed to restore clipboard: \(error.localizedDescription)")
+        }
+        restorePending = false
+
+        if let dispatchFailure {
+            if let clipboardFailure = ClipboardTemporaryWriteFailure.refusedInput(
+                dispatchFailure,
+                didMutate: transaction.didMutate,
+                cleanupStatus: clipboardMutation.cleanupStatus,
+                cleanupErrorDescription: restoreErrorDescription)
+            {
+                throw clipboardFailure
+            }
+            guard let restoreErrorDescription else { throw dispatchFailure }
+            throw ClipboardPasteOutcomeError(
+                kind: .indeterminate,
+                causeDescription: "\(dispatchFailure.localizedDescription); clipboard restoration also failed: " +
+                    restoreErrorDescription,
+                clipboardRestoreAttempted: true,
+                clipboardRestoreErrorDescription: restoreErrorDescription,
+                targetProcessIdentifier: destination.processIdentifier,
+                clipboardCleanupStatus: clipboardMutation.cleanupStatus)
+        }
+        if dispatchErrorDescription != nil || Task.isCancelled {
+            throw ClipboardPasteOutcomeError(
+                kind: .indeterminate,
+                causeDescription: dispatchErrorDescription ?? "The caller cancelled after Cmd+V dispatch began.",
+                clipboardRestoreAttempted: true,
+                clipboardRestoreErrorDescription: restoreErrorDescription,
+                targetProcessIdentifier: destination.processIdentifier,
+                clipboardCleanupStatus: clipboardMutation.cleanupStatus)
+        }
+        if destination.processIdentifier != nil {
+            throw ClipboardPasteOutcomeError(
+                kind: .unverified,
+                causeDescription: "The targeted event API does not acknowledge receiver consumption.",
+                clipboardRestoreAttempted: true,
+                clipboardRestoreErrorDescription: restoreErrorDescription,
+                targetProcessIdentifier: destination.processIdentifier,
+                clipboardCleanupStatus: clipboardMutation.cleanupStatus)
+        }
+        guard let actionResult else {
+            preconditionFailure("A successful paste dispatch must retain its action result")
+        }
+
+        return ClipboardPasteTransactionOutcome(
+            setResult: setResult,
+            previousClipboardPresent: transaction.priorClipboardPresent,
+            restoreResult: restoreResult,
+            restoreErrorDescription: restoreErrorDescription,
+            cleanupStatus: clipboardMutation.cleanupStatus,
+            targetPID: destination.processIdentifier,
+            targetWindowID: destination.exactWindow?.identity.windowID,
+            actionResult: actionResult)
+    }
+
+    @MainActor
+    private func performCurrentClipboardPaste(
+        destination: UIAutomationTarget,
+        restoreDelayMs: Int) async throws -> CurrentClipboardPasteOutcome
+    {
+        let hotkeyRoute = try self.pasteHotkeyRoute(for: destination)
+
+        let currentClipboard = try self.context.clipboard.get(prefer: nil)
+        try Task.checkCancellation()
+        let dispatchFailure: DesktopActionFailure?
+        let dispatchErrorDescription: String?
+        let actionResult: UIAutomationActionResult<Void>?
+        do {
+            actionResult = try await self.dispatchPasteHotkey(route: hotkeyRoute, destination: destination)
+            dispatchFailure = nil
+            dispatchErrorDescription = nil
+        } catch let failure as DesktopActionFailure {
+            actionResult = nil
+            dispatchFailure = failure
+            dispatchErrorDescription = nil
+        } catch {
+            actionResult = nil
+            dispatchFailure = nil
+            dispatchErrorDescription = error.localizedDescription
+        }
+
+        await ClipboardPasteTransactionGate.waitForPasteConsumption(milliseconds: restoreDelayMs)
+        if let dispatchFailure {
+            throw dispatchFailure
+        }
+        if dispatchErrorDescription != nil || Task.isCancelled {
+            throw ClipboardPasteOutcomeError(
+                kind: .indeterminate,
+                causeDescription: dispatchErrorDescription ?? "The caller cancelled after Cmd+V dispatch began.",
+                clipboardRestoreAttempted: false,
+                targetProcessIdentifier: destination.processIdentifier)
+        }
+        if destination.processIdentifier != nil {
+            throw ClipboardPasteOutcomeError(
+                kind: .unverified,
+                causeDescription: "The targeted event API does not acknowledge receiver consumption.",
+                clipboardRestoreAttempted: false,
+                targetProcessIdentifier: destination.processIdentifier)
+        }
+        guard let actionResult else {
+            preconditionFailure("A successful paste dispatch must retain its action result")
+        }
+        return CurrentClipboardPasteOutcome(
+            clipboard: currentClipboard,
+            targetPID: destination.processIdentifier,
+            targetWindowID: destination.exactWindow?.identity.windowID,
+            actionResult: actionResult)
+    }
+
+    @MainActor
+    private func performBackgroundTextPaste(
+        text: String,
+        request: ClipboardWriteRequest,
+        target: MCPInteractionTarget,
+        destination: UIAutomationTarget,
+        startedAt: Date) async throws -> ToolResponse
+    {
+        guard let targetPID = destination.processIdentifier else {
+            throw PasteToolError("Background text paste requires a resolved target process.")
+        }
+        let actionResult: UIAutomationActionResult<TypeResult>
+        if let exactWindow = destination.exactWindow {
+            let outcomeAutomation = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
+                automation: self.context.automation,
+                operation: "Exact-window background text delivery")
+            guard let keyboardTarget = exactWindow.keyboardTarget else {
+                throw PasteToolError("Exact-window paste requires a focused-element receipt.")
+            }
+            try Task.checkCancellation()
+            do {
+                actionResult = try await ExactWindowKeyboardRuntime.validateRouteReceipt(
+                    outcomeAutomation.typeActionsWithOutcome(
+                        [.text(text)],
+                        cadence: .fixed(milliseconds: 0),
+                        snapshotId: nil,
+                        target: keyboardTarget),
+                    operation: "Exact-window background text delivery")
+            } catch let error as InputDeliveryIndeterminateError {
+                return try await self.directTextOutcomeResponse(
+                    Self.pasteDeliveryError(from: error),
+                    requestedCharacterCount: text.count,
+                    destination: destination)
+            }
+        } else {
+            guard let automation = self.context.automation as? any TargetedTypeServiceProtocol,
+                  automation.supportsTargetedTypeActions,
+                  automation.supportsProcessGenerationPinnedTypeActions,
+                  let processIdentity = destination.processIdentity
+            else {
+                throw PasteToolError(
+                    "This automation host does not support background text delivery.",
+                    refusalReason: .runtimeIncompatible)
+            }
+            try Task.checkCancellation()
+            do {
+                if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+                    actionResult = try await outcomeAutomation.typeActionsWithOutcome(
+                        [.text(text)],
+                        cadence: .fixed(milliseconds: 0),
+                        snapshotId: nil,
+                        expectedProcessIdentity: processIdentity)
+                } else {
+                    actionResult = try await UIAutomationActionResult(
+                        payload: automation.typeActions(
+                            [.text(text)],
+                            cadence: .fixed(milliseconds: 0),
+                            snapshotId: nil,
+                            expectedProcessIdentity: processIdentity),
+                        outcome: nil)
+                }
+            } catch let error as InputDeliveryIndeterminateError {
+                return try await self.directTextOutcomeResponse(
+                    Self.pasteDeliveryError(from: error),
+                    requestedCharacterCount: text.count,
+                    destination: destination)
+            }
+        }
+        let validatedActionResult = try self.validatedBackgroundTextResult(
+            actionResult,
+            destination: destination)
+        let typeResult = validatedActionResult.payload
+        if Task.isCancelled {
+            return try await self.directTextOutcomeResponse(
+                InputDeliveryIndeterminateError(
+                    operation: .paste,
+                    emittedUnitCount: typeResult.totalCharacters,
+                    causeDescription: "The caller cancelled after direct text dispatch completed."),
+                requestedCharacterCount: text.count,
+                destination: destination)
+        }
+        let setResult = try Self.readResult(for: request)
+        let executionTime = Date().timeIntervalSince(startedAt)
+        let resultIdentity = validatedActionResult.targetIdentity
+        let resultTarget = resultIdentity?.target ?? destination
+        var metaFields: [String: Value] = [
+            "pasted": .object([
+                "uti": .string(setResult.utiIdentifier),
+                "size": .int(setResult.data.count),
+                "textPreview": setResult.textPreview.map(Value.string) ?? .null,
+            ]),
+            "paste_method": .string("background_text"),
+            "characters_typed": .int(typeResult.totalCharacters),
+            "execution_time": .double(executionTime),
+            "delivery_mode": .string("background"),
+            "target_pid": resultTarget.processIdentifier.map { .int(Int($0)) } ?? .int(Int(targetPID)),
+            "target_window_id": resultTarget.exactWindow.map { .int($0.identity.windowID) } ?? .null,
+        ]
+        try metaFields.merge(Self.targetMetadataFields(resultIdentity)) { _, target in target }
+        let summary = ToolEventSummary(
+            targetApp: target.appIdentifier,
+            windowTitle: nil,
+            actionDescription: "Paste text",
+            notes: setResult.utiIdentifier)
+        return try ToolResponse(
+            content: [.text(
+                text: "\(AgentDisplayTokens.Status.success) Pasted text in the background " +
+                    "in \(String(format: "%.2f", executionTime))s",
+                annotations: nil,
+                _meta: nil)],
+            meta: ToolEventSummary.merge(
+                summary: summary,
+                into: MCPToolResponseMetadataProjector.metadata(
+                    merging: metaFields,
+                    outcome: validatedActionResult.outcome)))
+    }
+
+    private static func pasteDeliveryError(
+        from error: InputDeliveryIndeterminateError) -> InputDeliveryIndeterminateError
+    {
+        InputDeliveryIndeterminateError(
+            operation: .paste,
+            emittedUnitCount: error.emittedUnitCount,
+            causeDescription: error.causeDescription ?? error.localizedDescription)
+    }
+
+    private func validatedBackgroundTextResult(
+        _ result: UIAutomationActionResult<TypeResult>,
+        destination: UIAutomationTarget) throws -> UIAutomationActionResult<TypeResult>
+    {
+        guard let authorizedPlan = AuthorizedDesktopTargetPlan.current else {
+            try DesktopActionFailure.requireConfirmedIfReported(
+                result.outcome,
+                operation: "Background text paste")
+            return result
+        }
+
+        guard let destinationIdentity = try UIAutomationActionResultSemantics.targetIdentity(for: destination) else {
+            throw PasteToolError(
+                "Background text paste requires a process-generation target.",
+                refusalReason: .targetUnavailable)
+        }
+        let authorizedIdentity: DesktopTargetIdentity
+        do {
+            authorizedIdentity = try authorizedPlan.coalescing(
+                destinationIdentity,
+                operation: "Background text paste")
+        } catch let failure as DesktopActionFailure {
+            throw failure.attributed(to: authorizedPlan.targetIdentity.actionTargetReceipt)
+        }
+
+        let resultIdentity = try UIAutomationActionResultSemantics.validateTarget(
+            result.targetIdentity,
+            outcome: result.outcome,
+            requirement: .compatible(authorizedIdentity),
+            operation: "Background text paste",
+            message: "Background text paste returned without its exact target identity.",
+            hint: "Observe the exact target before retrying and update the runtime host.",
+            contradictoryMessage: "Background text paste returned a target different from its authorization.",
+            fallbackDelivery: UIAutomationActionResultSemantics.keyboardDelivery(for: destination))
+        let outcome = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            result.outcome,
+            policy: .confirmed(requiring: .background),
+            operation: "Background text paste",
+            targetReceipt: resultIdentity?.actionTargetReceipt ?? authorizedIdentity.actionTargetReceipt,
+            missingOutcomeMessage: "Background text paste returned without a canonical outcome.",
+            rejectedOutcomeMessage: "Background text paste did not return a confirmed outcome.",
+            missingOutcomeHint: "Observe the exact target before retrying and update the runtime host.",
+            disallowedDeliveryMessage: "Background text paste reported foreground delivery.",
+            disallowedDeliveryHint: "Observe the exact target before retrying and update the runtime host.",
+            missingOutcomeDelivery: UIAutomationActionResultSemantics.keyboardDelivery(for: destination),
+            missingOutcomeUnitCount: .one)
+        guard let resultIdentity else {
+            preconditionFailure("An accepted background text outcome must retain one coalesced target identity")
+        }
+        return UIAutomationActionResult(
+            payload: result.payload,
+            outcome: outcome,
+            targetIdentity: resultIdentity)
+    }
+
+    @MainActor
+    private func currentClipboardResponse(
+        outcome: CurrentClipboardPasteOutcome,
+        actionResult: UIAutomationActionResult<Void>,
+        target: MCPInteractionTarget,
+        restoreDelayMs: Int,
+        startedAt: Date) async throws -> ToolResponse
+    {
+        let executionTime = Date().timeIntervalSince(startedAt)
+        var metaFields: [String: Value] = [
+            "pasted": .object([
+                "uti": .string(outcome.clipboard?.utiIdentifier ?? "current-clipboard"),
+                "size": .int(outcome.clipboard?.data.count ?? 0),
+                "textPreview": .null,
+            ]),
+            "paste_method": .string("current_clipboard"),
+            "previous_clipboard_present": .bool(outcome.clipboard != nil),
+            "clipboard_mutated": .bool(false),
+            "restore_delay_ms": .int(restoreDelayMs),
+            "execution_time": .double(executionTime),
+            "delivery_mode": .string(outcome.targetPID == nil ? "foreground" : "background"),
+            "target_pid": outcome.targetPID.map { .int(Int($0)) } ?? .null,
+            "target_window_id": outcome.targetWindowID.map(Value.int) ?? .null,
+        ]
+        try metaFields.merge(Self.targetMetadataFields(actionResult.targetIdentity)) { _, target in target }
+        let meta = try MCPToolResponseMetadataProjector.metadata(
+            merging: metaFields,
+            outcome: actionResult.outcome)
+        let resolvedWindowTitle = try? await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
+        if Task.isCancelled {
+            throw ClipboardPasteOutcomeError(
+                kind: .indeterminate,
+                causeDescription: "The caller cancelled after Cmd+V dispatch completed.",
+                clipboardRestoreAttempted: false,
+                targetProcessIdentifier: outcome.targetPID)
+        }
+        let summary = ToolEventSummary(
+            targetApp: target.appIdentifier,
+            windowTitle: resolvedWindowTitle,
+            actionDescription: "Paste current clipboard")
+        return ToolResponse(
+            content: [.text(
+                text: "\(AgentDisplayTokens.Status.success) Pasted the current clipboard " +
+                    "in \(String(format: "%.2f", executionTime))s",
+                annotations: nil,
+                _meta: nil)],
+            meta: ToolEventSummary.merge(summary: summary, into: meta))
+    }
+
+    private func combinedPasteActionResult(
+        _ leaf: UIAutomationActionResult<Void>,
+        focusResult: MCPInteractionFocusResult?) throws -> UIAutomationActionResult<Void>
+    {
+        guard let focusResult else { return leaf }
+        guard leaf.outcome != nil else {
+            let legacyLeaf = UIAutomationActionResult(
+                payload: leaf.payload,
+                outcome: .dispatchedUnverified(
+                    route: focusResult.outcome.route,
+                    delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one),
+                targetIdentity: leaf.targetIdentity)
+            return try focusResult.combining(legacyLeaf, operation: "Paste")
+        }
+        return try focusResult.combining(leaf, operation: "Paste")
+    }
+
+    private static func targetMetadataFields(
+        _ identity: DesktopTargetIdentity?) throws -> [String: Value]
+    {
+        guard let identity else { return [:] }
+        return try ["target_receipt": Value(identity.actionTargetReceipt)]
+    }
+
+    @MainActor
+    private func resolveDeliveryDestination(
+        target: MCPInteractionTarget,
+        foreground: Bool,
+        expectedPIDIdentity: UInt64?,
+        snapshotID: String? = nil,
+        requiresClipboardClaim: Bool = false) async throws -> UIAutomationTarget
+    {
+        if foreground {
+            try Self.validateExplicitPIDIdentity(target: target, expectedPIDIdentity: expectedPIDIdentity)
+            return .foreground
+        }
+        let plannedTarget: UIAutomationTarget
+        if snapshotID != nil {
+            guard let plan = try self.context.authorizedDesktopTargetPlan(operation: "Snapshot paste") else {
+                throw PasteToolError(
+                    "Snapshot paste requires background target authority.",
+                    refusalReason: .invalidRequest)
+            }
+            _ = try plan.requireExactWindow(operation: "Snapshot paste")
+            plannedTarget = plan.targetIdentity.target
+        } else {
+            plannedTarget = try await target.requireBackgroundKeyboardTarget(
+                applications: self.context.applications,
+                windows: self.context.windows)
+        }
+        let authorizedTarget = try self.authorizedBackgroundDestination(plannedTarget)
+        guard let processIdentifier = authorizedTarget.processIdentifier else {
+            throw PasteToolError("Background paste requires a resolved target process.")
+        }
+        if target.pid != nil {
+            guard let expectedPIDIdentity,
+                  authorizedTarget.processIdentity?.processStartIdentity == expectedPIDIdentity
+            else {
+                throw PasteToolError("Target process PID \(processIdentifier) changed identity while waiting.")
+            }
+        }
+        guard authorizedTarget.exactWindow != nil else { return authorizedTarget }
+        do {
+            if requiresClipboardClaim {
+                _ = try ExactWindowKeyboardRuntime.requirePreparedClipboardGuardedPasteProvider(
+                    automation: self.context.automation,
+                    operation: "Exact-window paste")
+            } else {
+                _ = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
+                    automation: self.context.automation,
+                    operation: "Exact-window paste")
+            }
+        } catch {
+            throw PasteToolError(
+                error.localizedDescription,
+                refusalReason: .runtimeIncompatible)
+        }
+        guard self.context.automation is any TargetedFocusedElementServiceProtocol else {
+            throw PasteToolError(
+                "This automation host does not support focused exact-window background paste.",
+                refusalReason: .runtimeIncompatible)
+        }
+        let focusedTarget = try await authorizedTarget.pinningCurrentFocusedElement(using: self.context.automation)
+        return try self.authorizedBackgroundDestination(focusedTarget)
+    }
+
+    private func explicitPIDIdentity(target: MCPInteractionTarget) throws -> UInt64? {
+        guard let pid = target.pid else { return nil }
+        let processIdentifier = try Self.checkedProcessIdentifier(pid)
+        if let plan = AuthorizedDesktopTargetPlan.current {
+            guard plan.processIdentity.processIdentifier == processIdentifier else {
+                throw PasteToolError("Authorized paste target does not match pid \(pid).")
+            }
+            return plan.processIdentity.processStartIdentity
+        }
+        guard let identity = ClipboardPasteTransactionGate.processStartIdentity(processIdentifier) else {
+            throw PasteToolError("Could not verify process identity for pid \(pid).")
+        }
+        return identity
+    }
+
+    private static func validateExplicitPIDIdentity(
+        target: MCPInteractionTarget,
+        expectedPIDIdentity: UInt64?) throws
+    {
+        guard let pid = target.pid else { return }
+        let processIdentifier = try Self.checkedProcessIdentifier(pid)
+        guard let expectedPIDIdentity,
+              ClipboardPasteTransactionGate.processStartIdentity(processIdentifier) == expectedPIDIdentity
+        else {
+            throw PasteToolError("Target process PID \(pid) changed identity while waiting.")
+        }
+    }
+
+    static func checkedProcessIdentifier(_ value: Int) throws -> pid_t {
+        guard value > 0, let processIdentifier = pid_t(exactly: value) else {
+            throw MCPInteractionTargetError.invalidProcessIdentifier
+        }
+        return processIdentifier
+    }
+
+    private static func restoreDelayMilliseconds(_ arguments: ToolArguments) throws -> Int {
+        let restoreDelayMs = try arguments.validatedInt("restore_delay_ms") ?? 150
+        guard (0...ClipboardPasteTransactionGate.maximumRestoreDelayMilliseconds).contains(restoreDelayMs) else {
+            throw PasteToolError(
+                "restore_delay_ms must be between 0 and 10000ms",
+                refusalReason: .invalidRequest)
+        }
+        return restoreDelayMs
+    }
+
+    private static func validatePayloadShape(_ arguments: ToolArguments) throws {
+        let stringKeys = [
+            "app", "window_title", "text", "filePath", "imagePath", "dataBase64", "uti", "alsoText", "snapshot",
+        ]
+        for key in stringKeys {
+            guard let value = arguments.getValue(for: key) else { continue }
+            guard case .string = value else {
+                throw PasteToolError("Parameter '\(key)' must be a string.", refusalReason: .invalidRequest)
+            }
+        }
+        for key in ["allowLarge", "foreground"] {
+            guard let value = arguments.getValue(for: key) else { continue }
+            guard case .bool = value else {
+                throw PasteToolError("Parameter '\(key)' must be a boolean.", refusalReason: .invalidRequest)
+            }
+        }
+
+        let hasText = arguments.getValue(for: "text") != nil
+        let hasFilePath = arguments.getValue(for: "filePath") != nil
+        let hasImagePath = arguments.getValue(for: "imagePath") != nil
+        let hasData = arguments.getValue(for: "dataBase64") != nil
+        let primaryPayloadCount = [hasText, hasFilePath || hasImagePath, hasData].count(where: { $0 })
+        guard primaryPayloadCount <= 1 else {
+            throw PasteToolError(
+                "Provide exactly one of text, filePath/imagePath, or dataBase64+uti.",
+                refusalReason: .invalidRequest)
+        }
+        guard !(hasFilePath && hasImagePath) else {
+            throw PasteToolError(
+                "filePath and imagePath are aliases; provide only one.",
+                refusalReason: .invalidRequest)
+        }
+        if hasData, arguments.getValue(for: "uti") == nil {
+            throw PasteToolError("dataBase64 requires uti.", refusalReason: .invalidRequest)
+        }
+        let hasPayloadModifier = ["uti", "alsoText", "allowLarge"].contains {
+            arguments.getValue(for: $0) != nil
+        }
+        if primaryPayloadCount == 0, hasPayloadModifier {
+            throw PasteToolError(
+                "Provide text, filePath/imagePath, or dataBase64+uti before payload modifiers.",
+                refusalReason: .invalidRequest)
+        }
+    }
+
+    private func makePayload(arguments: ToolArguments) throws -> PasteToolPayload {
+        if arguments.getValue(for: "text") != nil, let text = arguments.getString("text") {
+            let request = try ClipboardPayloadBuilder.textRequest(
+                text: text,
+                alsoText: nil,
+                allowLarge: arguments.getBool("allowLarge") ?? false)
+            return .explicit(request: request, text: text)
+        }
+
+        if let filePath = arguments.getString("filePath") ?? arguments.getString("imagePath") {
+            let url = ClipboardPathResolver.fileURL(from: filePath)
+            let forced = arguments.getString("uti").flatMap(UTType.init(_:))
+            let request = try ClipboardPayloadBuilder.dataRequest(
+                fileURL: url,
+                uti: forced,
+                alsoText: arguments.getString("alsoText"),
+                allowLarge: arguments.getBool("allowLarge") ?? false)
+            return .explicit(request: request, text: Self.backgroundPlainText(from: request))
+        }
+
+        if let b64 = arguments.getString("dataBase64"), let utiId = arguments.getString("uti") {
+            try self.validateTemporaryPayloadBounds(arguments)
+            let request = try ClipboardPayloadBuilder.base64Request(
+                base64: b64,
+                utiIdentifier: utiId,
+                alsoText: arguments.getString("alsoText"),
+                allowLarge: arguments.getBool("allowLarge") ?? false)
+            if self.context.executionPolicy == .backgroundOnly,
+               self.context.executionAuthority.temporaryClipboardPasteGranted
+            {
+                let size = request.representations.reduce(0) { $0 + $1.data.count } +
+                    (request.alsoText?.utf8.count ?? 0)
+                guard size <= ClipboardPayloadBuilder.defaultSizeLimit else {
+                    throw PasteToolError("Temporary clipboard payload exceeds 10 MB.", refusalReason: .invalidRequest)
+                }
+            }
+            return .explicit(request: request, text: Self.backgroundPlainText(from: request))
+        }
+
+        let payloadModifiers = ["uti", "alsoText", "allowLarge"]
+        if payloadModifiers.contains(where: { arguments.getValue(for: $0) != nil }) ||
+            arguments.getValue(for: "dataBase64") != nil
+        {
+            throw ClipboardServiceError.writeFailed(
+                "Provide text, filePath/imagePath, or dataBase64+uti.")
+        }
+        return .current
+    }
+
+    private func validateTemporaryPayloadBounds(_ arguments: ToolArguments) throws {
+        guard self.context.executionPolicy == .backgroundOnly,
+              self.context.executionAuthority.temporaryClipboardPasteGranted,
+              let base64 = arguments.getString("dataBase64")
+        else { return }
+        let limit = ClipboardPayloadBuilder.defaultSizeLimit
+        let companionSize = arguments.getString("alsoText")?.utf8.count ?? 0
+        guard companionSize <= limit,
+              base64.utf8.count <= ((limit - companionSize + 2) / 3) * 4
+        else {
+            throw PasteToolError("Temporary clipboard payload exceeds 10 MB.", refusalReason: .invalidRequest)
+        }
+    }
+
+    private func authorizedBackgroundDestination(_ candidate: UIAutomationTarget) throws -> UIAutomationTarget {
+        guard AuthorizedDesktopTargetPlan.current != nil else { return candidate }
+        guard let identity = try UIAutomationActionResultSemantics.targetIdentity(for: candidate) else {
+            throw PasteToolError(
+                "Background text paste requires a process-generation target.",
+                refusalReason: .targetUnavailable)
+        }
+        return try self.context.coalesceAuthorizedDesktopTarget(
+            identity,
+            operation: "Background text paste").target
+    }
+}
+
+// swiftlint:enable type_body_length
+
+extension PasteTool: MCPToolArgumentSemanticValidating {}
+
+extension PasteTool {
+    fileprivate static func readResult(for request: ClipboardWriteRequest) throws -> ClipboardReadResult {
+        guard let primary = request.representations.first else {
+            throw ClipboardServiceError.writeFailed("No representations provided.")
+        }
+        let textPreview: String? = if let text = request.alsoText {
+            String(text.prefix(80))
+        } else if primary.utiIdentifier == UTType.plainText.identifier ||
+            primary.utiIdentifier == UTType.utf8PlainText.identifier,
+            let string = String(data: primary.data, encoding: .utf8)
+        {
+            String(string.prefix(80))
+        } else {
+            nil
+        }
+        return ClipboardReadResult(
+            utiIdentifier: primary.utiIdentifier,
+            data: primary.data,
+            textPreview: textPreview)
+    }
+
+    fileprivate static func backgroundPlainText(from request: ClipboardWriteRequest) -> String? {
+        guard let primary = request.representations.first,
+              primary.utiIdentifier == UTType.plainText.identifier ||
+              primary.utiIdentifier == UTType.utf8PlainText.identifier
+        else {
+            return nil
+        }
+        return String(data: primary.data, encoding: .utf8)
+    }
+}
+
+private enum PasteToolPayload: Sendable {
+    case current
+    case explicit(request: ClipboardWriteRequest, text: String?)
+}
+
+private enum PasteHotkeyRoute {
+    case foreground
+    case process(any TargetedHotkeyServiceProtocol)
+    case exact(any UIAutomationActionOutcomeProviding)
+    case guardedExact(any PreparedClipboardGuardedExactWindowHotkeyServiceProtocol)
+}
+
+private struct ClipboardPasteTransactionOutcome: Sendable {
+    let setResult: ClipboardReadResult
+    let previousClipboardPresent: Bool
+    let restoreResult: ClipboardReadResult?
+    let restoreErrorDescription: String?
+    let cleanupStatus: ClipboardTemporaryCleanupStatus?
+    let targetPID: pid_t?
+    let targetWindowID: Int?
+    let actionResult: UIAutomationActionResult<Void>
+}
+
+@MainActor
+private final class PasteClipboardMutation {
+    var cleanupStatus: ClipboardTemporaryCleanupStatus?
+}
+
+private struct CurrentClipboardPasteOutcome: Sendable {
+    let clipboard: ClipboardReadResult?
+    let targetPID: pid_t?
+    let targetWindowID: Int?
+    let actionResult: UIAutomationActionResult<Void>
+}
+
+private struct PasteToolError: LocalizedError {
+    let message: String
+    let refusalReason: DesktopActionOutcome.RefusalReason
+
+    init(
+        _ message: String,
+        refusalReason: DesktopActionOutcome.RefusalReason = .targetUnavailable)
+    {
+        self.message = message
+        self.refusalReason = refusalReason
+    }
+
+    var errorDescription: String? {
+        self.message
+    }
+}

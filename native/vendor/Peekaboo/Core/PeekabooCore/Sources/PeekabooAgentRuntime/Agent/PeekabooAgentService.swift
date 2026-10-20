@@ -1,0 +1,589 @@
+import CoreGraphics
+import Foundation
+import MCP
+import os.log
+import PeekabooAutomation
+import PeekabooFoundation
+import Tachikoma
+
+// MARK: - Peekaboo Agent Service
+
+enum AgentToolConstructionContext {
+    @TaskLocal static var browserCapabilities: BrowserToolCapabilitySession?
+}
+
+final class AgentRemoteBrowserTaskWaiter<T: Sendable>: @unchecked Sendable {
+    typealias WaitResult = Result<T, any Error>
+
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, any Error>?
+    private var result: WaitResult?
+
+    func value() async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            self.install(continuation)
+        }
+    }
+
+    func finish(_ result: WaitResult) {
+        self.lock.lock()
+        guard self.result == nil else {
+            self.lock.unlock()
+            return
+        }
+        self.result = result
+        let continuation = self.continuation
+        self.continuation = nil
+        self.lock.unlock()
+        continuation?.resume(with: result)
+    }
+
+    private func install(_ continuation: CheckedContinuation<T, any Error>) {
+        self.lock.lock()
+        if let result = self.result {
+            self.lock.unlock()
+            continuation.resume(with: result)
+            return
+        }
+        self.continuation = continuation
+        self.lock.unlock()
+    }
+}
+
+/// Fans one provider generation out to cancellation-responsive callers without one observer task per caller.
+final class AgentRemoteBrowserTaskWaiters<T: Sendable>: @unchecked Sendable {
+    typealias WaitResult = Result<T, any Error>
+
+    private let lock = NSLock()
+    private var waiters: [UUID: AgentRemoteBrowserTaskWaiter<T>] = [:]
+    private var result: WaitResult?
+
+    var pendingCount: Int {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.waiters.count
+    }
+
+    func value() async throws -> T {
+        let waiterID = UUID()
+        let waiter = AgentRemoteBrowserTaskWaiter<T>()
+        let result = self.register(waiterID: waiterID, waiter: waiter)
+        if let result {
+            waiter.finish(result)
+        }
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await waiter.value()
+        } onCancel: {
+            self.cancel(waiterID: waiterID, waiter: waiter)
+        }
+    }
+
+    func finish(_ result: WaitResult) {
+        self.lock.lock()
+        guard self.result == nil else {
+            self.lock.unlock()
+            return
+        }
+        self.result = result
+        let waiters = Array(self.waiters.values)
+        self.waiters.removeAll()
+        self.lock.unlock()
+        for waiter in waiters {
+            waiter.finish(result)
+        }
+    }
+
+    private func register(
+        waiterID: UUID,
+        waiter: AgentRemoteBrowserTaskWaiter<T>) -> WaitResult?
+    {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        guard let result = self.result else {
+            self.waiters[waiterID] = waiter
+            return nil
+        }
+        return result
+    }
+
+    private func cancel(waiterID: UUID, waiter: AgentRemoteBrowserTaskWaiter<T>) {
+        self.lock.lock()
+        let registered = self.waiters.removeValue(forKey: waiterID)
+        self.lock.unlock()
+        guard registered === waiter else { return }
+        waiter.finish(.failure(CancellationError()))
+    }
+}
+
+enum AgentRemoteBrowserOpeningTask {
+    case inFlight(
+        id: UUID,
+        task: Task<any BrowserMCPScopedSessionEnding, any Error>,
+        waiters: AgentRemoteBrowserTaskWaiters<any BrowserMCPScopedSessionEnding>)
+    case retryable(id: UUID)
+
+    var id: UUID {
+        switch self {
+        case let .inFlight(id, _, _), let .retryable(id): id
+        }
+    }
+}
+
+struct AgentSessionDeletionTombstone {
+    enum Phase: Equatable {
+        case deleting
+        case deleted
+    }
+
+    let deletionGeneration: UUID
+    var phase: Phase = .deleting
+    var browserCleanupStarted = false
+    var browserCleanupPending = false
+    var browserCleanupConfirmed = false
+    var invalidatedExecutionGenerations: Set<UUID>
+}
+
+/// Service that integrates the new agent architecture with PeekabooCore services
+@available(macOS 14.0, *)
+@MainActor
+public final class PeekabooAgentService: AgentServiceProtocol {
+    let services: any PeekabooServiceProviding
+    let sessionManager: AgentSessionManager
+    let defaultLanguageModel: LanguageModel
+    var currentModel: LanguageModel?
+    var cachedSmartCaptureService: SmartCaptureService?
+    var snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
+    var capturePreflightRefusal: MCPToolCapturePreflightRefusal?
+    var browserCleanupDebtPending = false
+    var remoteBrowserClients: [String: any BrowserMCPScopedSessionEnding] = [:]
+    var remoteBrowserCapabilities: [String: BrowserToolCapabilitySession] = [:]
+    var remoteBrowserOpeningTasks: [String: AgentRemoteBrowserOpeningTask] = [:]
+    var remoteBrowserQueuedOpeningIDs: [String: UUID] = [:]
+    var remoteBrowserQueuedOpeningWaiterCounts: [UUID: Int] = [:]
+    var remoteBrowserOpeningSessionID: String?
+    var remoteBrowserEndingTasks: [String: (
+        id: UUID,
+        task: Task<Bool, Never>,
+        waiters: AgentRemoteBrowserTaskWaiters<Bool>)] = [:]
+    var remoteBrowserCleanupDebt = Set<String>()
+    var agentSessionExecutionGenerations: [String: Set<UUID>] = [:]
+    var agentSessionBrowserExecutionGenerations: [String: Set<UUID>] = [:]
+    var agentSessionDeletionTombstones: [String: AgentSessionDeletionTombstone] = [:]
+    public let snapshotExecutionGate: MCPToolSnapshotExecutionGate
+    let logger = os.Logger(subsystem: "boo.peekaboo", category: "agent")
+    var phaseTimingObserver: ((AgentPhaseTiming) -> Void)?
+    var isVerbose: Bool = false
+
+    /// Construction-only propagation. Every built tool captures the resulting immutable context,
+    /// so concurrent sessions cannot change one another's authority after construction.
+    @TaskLocal static var toolConstructionExecutionAuthority: MCPToolExecutionAuthority = .backgroundOnly
+    @TaskLocal static var toolConstructionSnapshotOwner = MCPToolSnapshotOwner.legacyProcess
+    @TaskLocal static var toolConstructionBrowserClient: (any BrowserMCPClientProviding)?
+
+    /// The default model used by this agent service
+    public var defaultModel: String {
+        self.defaultLanguageModel.description
+    }
+
+    /// Credential-free provider-qualified reference for callers that need to resolve the default model.
+    public var defaultModelSelection: String {
+        self.modelSelectionReference(for: self.defaultLanguageModel)
+    }
+
+    /// Credential-free provider-qualified reference suitable for session persistence.
+    func persistedModelSelection(for model: LanguageModel) -> String? {
+        let selection: String
+        switch model {
+        case .azureOpenAI, .openaiCompatible, .anthropicCompatible, .together, .replicate:
+            return nil
+        case let .custom(provider):
+            selection = provider.modelId
+        default:
+            selection = self.modelSelectionReference(for: model)
+        }
+
+        guard let resolved = self.resolveConfiguredModel(selection),
+              resolved == model
+        else {
+            return nil
+        }
+        return selection
+    }
+
+    private func modelSelectionReference(for model: LanguageModel) -> String {
+        switch model {
+        case let .openai(model): "openai/\(model.modelId)"
+        case let .anthropic(model): "anthropic/\(model.modelId)"
+        case let .google(model): "google/\(model.userFacingModelId)"
+        case let .mistral(model): "mistral/\(model.rawValue)"
+        case let .groq(model): "groq/\(model.rawValue)"
+        case let .grok(model): "grok/\(model.modelId)"
+        case let .ollama(model): "ollama/\(model.modelId)"
+        case let .lmstudio(model): "lmstudio/\(model.modelId)"
+        case let .minimax(model): "minimax/\(model.modelId)"
+        case let .minimaxCN(model): "minimax-cn/\(model.modelId)"
+        case let .kimi(model): "kimi/\(model.modelId)"
+        case let .openRouter(modelID): "openrouter/\(modelID)"
+        case let .together(modelID): "together/\(modelID)"
+        case let .replicate(modelID): "replicate/\(modelID)"
+        case let .custom(provider): provider.modelId
+        case .azureOpenAI, .openaiCompatible, .anthropicCompatible:
+            model.description
+        }
+    }
+
+    public func resolveConfiguredModel(_ selection: String) -> LanguageModel? {
+        PeekabooAIService(configuration: self.services.configuration).resolveConfiguredModel(selection)
+    }
+
+    /// Get the masked API key for the current model
+    public var maskedApiKey: String? {
+        get async {
+            // Get the current model
+            let model = self.currentModel ?? self.defaultLanguageModel
+
+            // Get the configuration
+            let config = TachikomaConfiguration.current
+
+            // Determine the provider based on the model
+            let apiKey: String? = switch model {
+            case .ollama, .lmstudio:
+                "local"
+            case .openai:
+                config.getAPIKey(for: .openai)
+            case .anthropic:
+                config.getAPIKey(for: .anthropic)
+            case .google:
+                config.getAPIKey(for: .google)
+            case .minimax:
+                config.getAPIKey(for: .minimax)
+            case .minimaxCN:
+                config.getAPIKey(for: .minimaxCN)
+            case .kimi:
+                config.getAPIKey(for: .kimi)
+            case .mistral:
+                config.getAPIKey(for: .mistral)
+            case .groq:
+                config.getAPIKey(for: .groq)
+            case .grok:
+                config.getAPIKey(for: .grok)
+            case .azureOpenAI:
+                config.getAPIKey(for: .azureOpenAI)
+            case .openRouter:
+                config.getAPIKey(for: .custom("openrouter"))
+            case .together:
+                config.getAPIKey(for: .custom("together"))
+            case .replicate:
+                config.getAPIKey(for: .custom("replicate"))
+            case .openaiCompatible, .anthropicCompatible:
+                nil // Custom endpoints may have keys embedded
+            case let .custom(provider):
+                provider.apiKey
+            }
+
+            // Mask the API key
+            guard let key = apiKey, !key.isEmpty else {
+                return nil
+            }
+
+            // Show first 5 and last 5 characters
+            if key.count > 15 {
+                let prefix = String(key.prefix(5))
+                let suffix = String(key.suffix(5))
+                return "\(prefix)...\(suffix)"
+            } else if key.count > 8 {
+                // For shorter keys, show less
+                let prefix = String(key.prefix(3))
+                let suffix = String(key.suffix(3))
+                return "\(prefix)...\(suffix)"
+            } else {
+                // Very short keys, just show asterisks
+                return String(repeating: "*", count: key.count)
+            }
+        }
+    }
+
+    public init(
+        services: any PeekabooServiceProviding,
+        defaultModel: LanguageModel = .anthropic(.opus5),
+        snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
+        snapshotExecutionGate: MCPToolSnapshotExecutionGate = MCPToolSnapshotExecutionGate(),
+        sessionManager: AgentSessionManager? = nil)
+        throws
+    {
+        self.services = services
+        self.sessionManager = try sessionManager ?? AgentSessionManager()
+        self.defaultLanguageModel = defaultModel
+        self.snapshotMutationCoordinator = snapshotMutationCoordinator
+        self.snapshotExecutionGate = snapshotExecutionGate
+    }
+
+    public func configureSnapshotMutationCoordinator(
+        _ coordinator: (any MCPToolSnapshotMutationCoordinating)?)
+    {
+        self.snapshotMutationCoordinator = coordinator
+    }
+
+    public func configureCapturePreflightRefusal(_ refusal: MCPToolCapturePreflightRefusal?) {
+        self.capturePreflightRefusal = refusal
+    }
+
+    // MARK: - AgentServiceProtocol Conformance
+
+    /// Execute a task using the AI agent
+    public func executeTask(
+        _ task: String,
+        maxSteps: Int = 20,
+        dryRun: Bool = false,
+        queueMode: QueueMode = .oneAtATime,
+        eventDelegate: (any AgentEventDelegate)? = nil) async throws -> AgentExecutionResult
+    {
+        try await self.executeTask(
+            task,
+            maxSteps: maxSteps,
+            sessionId: nil,
+            model: nil,
+            dryRun: dryRun,
+            queueMode: queueMode,
+            eventDelegate: eventDelegate,
+            verbose: self.isVerbose)
+    }
+
+    /// Execute a task with audio content
+    public func executeTaskWithAudio(
+        audioContent: AudioContent,
+        maxSteps: Int = 20,
+        dryRun: Bool = false,
+        queueMode: QueueMode = .oneAtATime,
+        eventDelegate: (any AgentEventDelegate)? = nil) async throws -> AgentExecutionResult
+    {
+        let maxSteps = try AgentStepBudget.validate(maxSteps)
+        if dryRun {
+            let transcript = audioContent.transcript
+            let durationSeconds = Int(audioContent.duration ?? 0)
+            let description = transcript ?? "[Audio message - duration: \(durationSeconds)s]"
+            return self.makeAudioDryRunResult(description: description)
+        }
+
+        let input = audioContent.transcript ?? "[Audio message without transcript]"
+
+        if let eventDelegate {
+            return try await self.executeAudioStreamingTask(
+                input: input,
+                maxSteps: maxSteps,
+                queueMode: queueMode,
+                eventDelegate: eventDelegate)
+        }
+
+        let sessionContext = try await self.prepareSession(
+            task: input,
+            model: self.defaultLanguageModel,
+            label: "audio",
+            logBehavior: .verboseOnly)
+        return try await self.executeWithoutStreaming(
+            context: sessionContext,
+            model: self.defaultLanguageModel,
+            maxSteps: maxSteps)
+    }
+
+    /// Clean up any cached sessions or resources
+    public func cleanup() async {
+        let cutoff = Date().addingTimeInterval(-7 * 24 * 60 * 60)
+        let sessionIDs = self.sessionManager.listSessions()
+            .filter { $0.lastAccessedAt < cutoff }
+            .map(\.id)
+        let claims = self.installAgentSessionDeletionTombstones(for: sessionIDs)
+
+        for sessionID in sessionIDs {
+            guard let deletionGeneration = claims[sessionID] else { continue }
+            do {
+                _ = try await self.deletePersistedAgentSession(
+                    id: sessionID,
+                    deletionGeneration: deletionGeneration)
+            } catch {
+                continue
+            }
+        }
+        if await !(self.drainBrowserCleanupDebt()) {
+            self.logger.error("Browser session cleanup debt remains after expired-session cleanup")
+        }
+    }
+
+    // MARK: - Agent Creation
+
+    // MARK: - Execution Methods
+
+    /// Execute a task with the automation agent (with session support)
+    public func executeTask(
+        _ task: String,
+        maxSteps: Int = 20,
+        sessionId: String? = nil,
+        model: LanguageModel? = nil,
+        dryRun: Bool = false,
+        queueMode: QueueMode = .oneAtATime,
+        eventDelegate: (any AgentEventDelegate)? = nil,
+        verbose: Bool = false,
+        enhancementOptions: AgentEnhancementOptions? = .default,
+        persistSession: Bool = true,
+        toolExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly) async throws -> AgentExecutionResult
+    {
+        try await self.executeTask(
+            task,
+            maxSteps: maxSteps,
+            sessionId: sessionId,
+            model: model,
+            dryRun: dryRun,
+            queueMode: queueMode,
+            eventDelegate: eventDelegate,
+            verbose: verbose,
+            enhancementOptions: enhancementOptions,
+            persistSession: persistSession,
+            toolExecutionAuthority: MCPToolExecutionAuthority(basePolicy: toolExecutionPolicy))
+    }
+
+    public func executeTask(
+        _ task: String,
+        maxSteps: Int = 20,
+        sessionId: String? = nil,
+        model: LanguageModel? = nil,
+        dryRun: Bool = false,
+        queueMode: QueueMode = .oneAtATime,
+        eventDelegate: (any AgentEventDelegate)? = nil,
+        verbose: Bool = false,
+        enhancementOptions: AgentEnhancementOptions? = .default,
+        persistSession: Bool = true,
+        toolExecutionAuthority: MCPToolExecutionAuthority) async throws -> AgentExecutionResult
+    {
+        let maxSteps = try AgentStepBudget.validate(maxSteps)
+        // Store the verbose flag for this execution
+        self.isVerbose = verbose
+        if verbose {
+            print("DEBUG: Verbose mode enabled in PeekabooAgentService")
+        }
+
+        // Set verbose mode in Tachikoma configuration
+        TachikomaConfiguration.current.setVerbose(verbose)
+
+        let selectedModel = self.resolveModel(model)
+
+        if dryRun {
+            return AgentExecutionResult(
+                content: "Dry run completed. Task would be: \(task)",
+                messages: [],
+                sessionId: nil,
+                usage: nil,
+                metadata: AgentMetadata(
+                    executionTime: 0,
+                    toolCallCount: 0,
+                    modelName: self.safeModelDisplayName(for: selectedModel),
+                    startTime: Date(),
+                    endTime: Date()))
+        }
+
+        // If we have an event delegate, emit events even for non-streaming models.
+        if let eventDelegate {
+            return try await self.withAgentEventDelivery(task: task, delegate: eventDelegate) { eventHandler in
+                let sessionContext = try await self.prepareSession(
+                    task: task,
+                    model: selectedModel,
+                    label: "streaming",
+                    logBehavior: .always,
+                    persistSession: persistSession,
+                    toolExecutionAuthority: toolExecutionAuthority)
+
+                return if selectedModel.supportsStreaming {
+                    try await self.executeWithStreaming(
+                        context: sessionContext,
+                        model: selectedModel,
+                        maxSteps: maxSteps,
+                        queueMode: queueMode,
+                        eventHandler: eventHandler,
+                        enhancementOptions: enhancementOptions)
+                } else {
+                    try await self.executeWithoutStreaming(
+                        context: sessionContext,
+                        model: selectedModel,
+                        maxSteps: maxSteps,
+                        eventHandler: eventHandler,
+                        enhancementOptions: enhancementOptions)
+                }
+            }
+        } else {
+            // Non-streaming execution
+            let sessionContext = try await self.prepareSession(
+                task: task,
+                model: selectedModel,
+                label: "(non-streaming)",
+                logBehavior: .verboseOnly,
+                persistSession: persistSession,
+                toolExecutionAuthority: toolExecutionAuthority)
+            return try await self.executeWithoutStreaming(
+                context: sessionContext,
+                model: selectedModel,
+                maxSteps: maxSteps,
+                enhancementOptions: enhancementOptions)
+        }
+    }
+
+    /// Execute a task with streaming output
+    public func executeTaskStreaming(
+        _ task: String,
+        sessionId: String? = nil,
+        model: LanguageModel? = nil,
+        toolExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
+        streamHandler: @Sendable @escaping (String) async -> Void) async throws -> AgentExecutionResult
+    {
+        try await self.executeTaskStreaming(
+            task,
+            sessionId: sessionId,
+            model: model,
+            toolExecutionAuthority: MCPToolExecutionAuthority(basePolicy: toolExecutionPolicy),
+            streamHandler: streamHandler)
+    }
+
+    public func executeTaskStreaming(
+        _ task: String,
+        sessionId: String? = nil,
+        model: LanguageModel? = nil,
+        toolExecutionAuthority: MCPToolExecutionAuthority,
+        streamHandler: @Sendable @escaping (String) async -> Void) async throws -> AgentExecutionResult
+    {
+        // Execute a task with streaming output
+        let selectedModel = self.resolveModel(model)
+        if !selectedModel.supportsStreaming {
+            let sessionContext = try await self.prepareSession(
+                task: task,
+                model: selectedModel,
+                label: "(non-streaming)",
+                logBehavior: .verboseOnly,
+                toolExecutionAuthority: toolExecutionAuthority)
+            let result = try await self.executeWithoutStreaming(
+                context: sessionContext,
+                model: selectedModel,
+                maxSteps: 20)
+            await streamHandler(result.content)
+            return result
+        }
+
+        let sessionContext = try await self.prepareSession(
+            task: task,
+            model: selectedModel,
+            label: "streaming-api",
+            logBehavior: .always,
+            toolExecutionAuthority: toolExecutionAuthority)
+        return try await self.executeWithStreaming(
+            context: sessionContext,
+            model: selectedModel,
+            maxSteps: 20,
+            queueMode: .oneAtATime,
+            eventHandler: nil,
+            textHandler: streamHandler)
+    }
+
+    func resolveModel(_ requestedModel: LanguageModel?) -> LanguageModel {
+        requestedModel ?? self.defaultLanguageModel
+    }
+
+    // MARK: - Tool Creation
+}

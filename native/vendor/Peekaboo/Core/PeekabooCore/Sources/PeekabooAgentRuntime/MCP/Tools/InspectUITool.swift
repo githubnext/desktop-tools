@@ -1,0 +1,513 @@
+import Foundation
+import MCP
+import os.log
+import PeekabooAutomation
+import PeekabooAutomationKit
+import PeekabooFoundation
+import TachikomaMCP
+
+/// MCP tool for inspecting UI text and control state via the accessibility tree without capturing a screenshot.
+public struct InspectUITool: MCPTool {
+    private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "InspectUITool")
+    private let context: MCPToolContext
+
+    public let name = "inspect_ui"
+
+    public var description: String {
+        """
+        Inspects the accessibility tree of the active UI and returns visible text, labels,
+        buttons, text fields, and control state. No screenshot is captured.
+
+        Use this when you only need to read UI text or discover interactive elements and do not
+        need a visual screenshot. Inspection does not focus the target by default. For visual layout
+        or when AX text is incomplete, use `see`. The CLI equivalent is `peekaboo see --tree --no-screenshot`.
+        """
+    }
+
+    public var inputSchema: Value {
+        SchemaBuilder.object(
+            properties: [
+                "app_target": SchemaBuilder.string(
+                    description: """
+                    Optional. Specifies the app/window to inspect via Accessibility.
+                    Omit, use an empty string, or use 'frontmost' for the current foreground application.
+                    Use 'AppName' (e.g., 'Safari') for a specific application.
+                    Use 'PID:PROCESS_ID' to target a specific process.
+                    Use 'AppName:WindowTitle' or 'PID:PROCESS_ID:WindowTitle' for a specific window title.
+                    Screen and menu bar targets require screenshots; use `see` for those.
+                    """),
+                "window_id": SchemaBuilder.integer(
+                    description: """
+                    Optional. Exact CoreGraphics window ID. Requires an application or PID app_target; Peekaboo
+                    verifies the window belongs to that owner. Numeric app_target suffixes remain window indexes.
+                    """,
+                    minimum: 1,
+                    maximum: Int(UInt32.max)),
+                "snapshot": SchemaBuilder.string(
+                    description: """
+                    Optional. Snapshot ID for UI automation tracking. A new snapshot is created when absent.
+                    """),
+                "web_focus": SchemaBuilder.boolean(
+                    description: "Optional. Allow an AXPress retry on sparse Chromium/Tauri web content.",
+                    default: false),
+                "fresh": SchemaBuilder.boolean(
+                    description: "Optional. Require a fresh, uncached Accessibility tree; refuse if unavailable.",
+                    default: false),
+                "max_depth": SchemaBuilder.integer(
+                    description: "Optional. Maximum AX traversal depth. Env fallback: PEEKABOO_AX_MAX_DEPTH.",
+                    minimum: 1),
+                "max_elements": SchemaBuilder.integer(
+                    description: "Optional. Maximum AX elements to collect. Env fallback: PEEKABOO_AX_MAX_ELEMENTS.",
+                    minimum: 1),
+                "max_children": SchemaBuilder.integer(
+                    description: """
+                    Optional. Maximum AX children per node. Env fallback: PEEKABOO_AX_MAX_CHILDREN.
+                    Increase this for flat Qt/Electron panels with many sibling controls.
+                    """,
+                    minimum: 1),
+                ObservedElementTableMetadata.argumentName: SchemaBuilder.boolean(
+                    description: ObservedElementTableMetadata.argumentDescription,
+                    default: false),
+            ],
+            required: [])
+    }
+
+    public init(context: MCPToolContext = .shared) {
+        self.context = context
+    }
+
+    @MainActor
+    public func execute(arguments: ToolArguments) async throws -> ToolResponse {
+        let request: InspectUIRequest
+        do {
+            request = try InspectUIRequest(arguments: arguments)
+        } catch {
+            return Self.failureResponse(error)
+        }
+        var newlyCreatedSnapshotID: String?
+        var newlyCreatedSnapshotWasPending = false
+        var activeSnapshotID: String?
+        var observationActionResult: UIAutomationActionResult<ElementDetectionResult>?
+
+        do {
+            let target = try self.parseTarget(request.appTarget, windowIDValue: request.windowIDValue)
+            let selection = try await self.getOrCreateSnapshot(snapshotId: request.snapshotId)
+            let snapshot = selection.snapshot
+            newlyCreatedSnapshotID = selection.isNew ? snapshot.id : nil
+            newlyCreatedSnapshotWasPending = selection.isNew && MCPToolContext.snapshotObservationStartedAt != nil
+            activeSnapshotID = snapshot.id
+            let windowContext = try self.makeWindowContext(
+                for: target,
+                webFocus: request.webFocus,
+                fresh: request.fresh,
+                traversalBudget: request.traversalBudget)
+
+            let validatedActionResult = try await self.inspectActionResult(
+                windowContext: windowContext,
+                requiresOutcome: request.webFocus,
+                requiresTarget: request.webFocus && target.requiresStableMutationTarget)
+            observationActionResult = validatedActionResult
+            let result = validatedActionResult.payload
+            try DesktopObservationEvidencePolicy.requireFreshAccessibilityEvidence(
+                result.metadata,
+                requested: request.fresh)
+            try Self.requireUsableAXOnlyEvidence(result, requestedWindowID: windowContext.windowID)
+            let snapshotResult = self.bindResult(result, to: snapshot.id)
+
+            try await self.context.snapshots.storeDetectionResult(
+                snapshotId: snapshot.id,
+                result: snapshotResult)
+            await snapshot.setTargetMetadata(from: snapshotResult.metadata.windowContext)
+            await snapshot.setUIElements(self.convertElements(snapshotResult.elements.all))
+
+            let summaryText = await self.buildSummary(
+                snapshot: snapshot,
+                result: snapshotResult,
+                target: target)
+
+            var metadataValues: [String: Value] = [
+                "snapshot_id": .string(snapshot.id),
+                "element_count": .double(Double(snapshotResult.elements.all.count)),
+                "actionable_count": .double(Double(snapshotResult.elements.all.count(where: \.isEnabled))),
+                "truncated": .bool(snapshotResult.metadata.truncationInfo?.isTruncated == true),
+            ]
+            if let usedCache = snapshotResult.metadata.usedAccessibilityCache {
+                metadataValues["used_cache"] = .bool(usedCache)
+            }
+            if let focusedElement = snapshot.focusedElement {
+                metadataValues["focused_element"] = try Value(focusedElement)
+            }
+            if let completedAt = snapshotResult.metadata.desktopMutationCompletedAt {
+                metadataValues["desktop_mutation_completed_at"] =
+                    .double(completedAt.timeIntervalSinceReferenceDate)
+            }
+            if let allowed = snapshotResult.metadata.desktopMutationPreservationAllowed {
+                metadataValues["desktop_mutation_preservation_allowed"] = .bool(allowed)
+            }
+            if request.includeElements {
+                metadataValues[ObservedElementTableMetadata.key] = try ObservedElementTableMetadata.value(
+                    for: snapshotResult.elements.all,
+                    metadata: snapshotResult.metadata)
+            }
+            let metadata = try ObservationActionResultSupport.metadata(
+                merging: metadataValues,
+                result: validatedActionResult)
+
+            var summary = ToolEventSummary(
+                targetApp: snapshotResult.metadata.windowContext?.applicationName,
+                windowTitle: snapshotResult.metadata.windowContext?.windowTitle,
+                actionDescription: "Inspect UI",
+                notes: String(describing: target))
+            summary.captureApp = snapshotResult.metadata.windowContext?.applicationName
+            summary.captureWindow = snapshotResult.metadata.windowContext?.windowTitle
+
+            let mergedMeta = ToolEventSummary.merge(summary: summary, into: metadata)
+
+            return ToolResponse(
+                content: [.text(text: summaryText, annotations: nil, _meta: nil)],
+                meta: mergedMeta)
+        } catch {
+            let presentedError = ObservationActionResultSupport.preservingFailure(
+                error,
+                after: observationActionResult,
+                operation: "inspect_ui")
+            if let newlyCreatedSnapshotID {
+                let preserveReservation = newlyCreatedSnapshotWasPending &&
+                    PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: presentedError)
+                if !preserveReservation {
+                    try? await self.context.snapshots.cleanSnapshot(snapshotId: newlyCreatedSnapshotID)
+                    await self.context.uiSnapshots.removeSnapshot(id: newlyCreatedSnapshotID)
+                }
+            }
+            self.logger.error("Inspect UI tool execution failed: \(presentedError.localizedDescription)")
+            if let failure = presentedError as? DesktopActionFailure {
+                return try await MCPDesktopActionFailureHandler.response(
+                    for: failure,
+                    uiSnapshots: self.context.uiSnapshots,
+                    snapshotID: activeSnapshotID,
+                    additionalFields: ObservationActionResultSupport.standardErrorFields(error))
+            }
+            return Self.failureResponse(presentedError)
+        }
+    }
+
+    @MainActor
+    func observeExactWindow(
+        windowContext: WindowContext,
+        deadline: ContinuousClock.Instant) async throws -> ElementDetectionResult
+    {
+        try Task.checkCancellation()
+        guard let identity = windowContext.windowMutationIdentity,
+              let bounds = identity.capturedBounds,
+              windowContext.applicationProcessId == identity.ownerProcessIdentifier,
+              windowContext.applicationProcessStartIdentity == identity.ownerProcessStartIdentity,
+              windowContext.windowID == identity.windowID,
+              windowContext.windowBounds == bounds,
+              windowContext.shouldFocusWebContent != true,
+              windowContext.includeMenuBarElements == false,
+              windowContext.requiresFreshAccessibilityTree == true,
+              windowContext.allowApplicationScopedAccessibilityFallback != true
+        else {
+            throw PeekabooError.invalidInput("Query polling requires one fresh, read-only exact-window receipt.")
+        }
+        _ = try DesktopTargetPlanning.DesktopTargetIdentityCoalescer.resolve([
+            .init(
+                processIdentifier: windowContext.applicationProcessId,
+                processIdentity: identity.processIdentity,
+                windowID: windowContext.windowID,
+                windowIdentity: identity,
+                windowBounds: bounds),
+        ])
+        let remaining = ContinuousClock.now.duration(to: deadline).components
+        let seconds = Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18
+        guard seconds > 0 else {
+            throw PeekabooError.timeout("The query wait expired before its Accessibility observation started.")
+        }
+        let requestContext = WindowContext(
+            applicationName: windowContext.applicationName,
+            applicationBundleId: windowContext.applicationBundleId,
+            applicationBundlePath: windowContext.applicationBundlePath,
+            applicationExecutablePath: windowContext.applicationExecutablePath,
+            applicationProcessId: identity.ownerProcessIdentifier,
+            applicationProcessStartIdentity: identity.ownerProcessStartIdentity,
+            windowTitle: windowContext.windowTitle,
+            windowID: identity.windowID,
+            windowBounds: bounds,
+            windowMutationIdentity: identity,
+            shouldFocusWebContent: false,
+            includeMenuBarElements: false,
+            traversalBudget: windowContext.traversalBudget,
+            requiresFreshAccessibilityTree: true,
+            accessibilityTimeoutSeconds: seconds,
+            allowApplicationScopedAccessibilityFallback: false)
+        let actionResult: UIAutomationActionResult<ElementDetectionResult>
+        do {
+            actionResult = try await self.inspectActionResult(
+                windowContext: requestContext,
+                requiresOutcome: false,
+                requiresTarget: false,
+                timeoutSeconds: seconds)
+        } catch VerifyStateDeadlineError.timedOut {
+            throw PeekabooError.timeout("The query wait expired before its Accessibility observation completed.")
+        }
+        try Self.validatePinnedObservation(actionResult.payload, context: windowContext, deadline: deadline)
+        try Self.requireUsableAXOnlyEvidence(actionResult.payload, requestedWindowID: windowContext.windowID)
+        return actionResult.payload
+    }
+
+    // MARK: - Private Helpers
+
+    @MainActor
+    private func inspectActionResult(
+        windowContext: WindowContext,
+        requiresOutcome: Bool,
+        requiresTarget: Bool,
+        timeoutSeconds: TimeInterval? = nil) async throws -> UIAutomationActionResult<ElementDetectionResult>
+    {
+        let automation = self.context.automation
+        let actionResult: UIAutomationActionResult<ElementDetectionResult> = if let timeoutSeconds {
+            try await VerifyStateDeadlineRunner.run(seconds: timeoutSeconds) {
+                try await automation.inspectAccessibilityTreeResult(windowContext: windowContext)
+            }
+        } else {
+            try await automation.inspectAccessibilityTreeResult(windowContext: windowContext)
+        }
+        try ObservationActionResultSemantics.requirePublishableOutcome(
+            actionResult.outcome,
+            targetIdentity: actionResult.targetIdentity,
+            operation: "Inspect UI",
+            requiresOutcome: requiresOutcome)
+        let resolvedTarget = try ObservationActionResultSemantics.coalescedTarget(
+            actionTarget: actionResult.targetIdentity,
+            payload: actionResult.payload,
+            outcome: actionResult.outcome,
+            operation: "Inspect UI",
+            requiresTarget: requiresTarget)
+        return UIAutomationActionResult(
+            payload: actionResult.payload,
+            outcome: actionResult.outcome,
+            targetIdentity: resolvedTarget)
+    }
+
+    private static func validatePinnedObservation(
+        _ result: ElementDetectionResult,
+        context: WindowContext,
+        deadline: ContinuousClock.Instant) throws
+    {
+        try Task.checkCancellation()
+        if ContinuousClock.now >= deadline {
+            throw PeekabooError.timeout("The query wait expired before its Accessibility observation completed.")
+        }
+        guard let expected = context.windowMutationIdentity,
+              let observed = result.metadata.windowContext,
+              observed.windowMutationIdentity?.hasSameStableReceipt(as: expected) == true,
+              observed.applicationProcessId == expected.ownerProcessIdentifier,
+              observed.applicationProcessStartIdentity == expected.ownerProcessStartIdentity,
+              observed.windowID == expected.windowID,
+              observed.windowBounds == expected.capturedBounds,
+              !result.metadata.isApplicationScopedAccessibilityFallback
+        else {
+            throw PeekabooError.snapshotStale("The selected click target changed while waiting. Run see again.")
+        }
+    }
+
+    private static func requireUsableAXOnlyEvidence(
+        _ result: ElementDetectionResult,
+        requestedWindowID: Int?) throws
+    {
+        guard result.elements.all.isEmpty else { return }
+
+        if let truncationInfo = result.metadata.truncationInfo, truncationInfo.isTruncated {
+            let message = truncationInfo.automationToolRemediationMessage(
+                budget: result.metadata.windowContext?.traversalBudget,
+                applicationScopedFallback: result.metadata.isApplicationScopedAccessibilityFallback)
+            if truncationInfo.deadlineReached {
+                throw PeekabooError.timeout(message)
+            }
+            if truncationInfo.incompleteAccessibilityRead,
+               result.metadata.windowContext?.windowID != nil
+            {
+                throw PeekabooError.accessibilityIncomplete(message)
+            }
+            throw PeekabooError.operationError(message: message)
+        }
+
+        guard let windowID = requestedWindowID else { return }
+
+        // Older Bridge hosts could omit truncationInfo while still returning an empty exact-window map.
+        throw PeekabooError.accessibilityIncomplete(
+            Self.emptyExactWindowMessage(
+                windowID: windowID,
+                budget: result.metadata.windowContext?.traversalBudget,
+                applicationScopedFallback: result.metadata.isApplicationScopedAccessibilityFallback))
+    }
+
+    private static func emptyExactWindowMessage(
+        windowID: Int,
+        budget: AXTraversalBudget?,
+        applicationScopedFallback: Bool) -> String
+    {
+        let guidance = DetectionTruncationInfo(incompleteAccessibilityRead: true)
+            .automationToolRemediationMessage(
+                budget: budget,
+                applicationScopedFallback: applicationScopedFallback)
+        return "Exact window \(windowID) returned no usable Accessibility elements. \(guidance)"
+    }
+
+    private static func failureResponse(_ error: any Error) -> ToolResponse {
+        let code: StandardErrorCode? = if let error = error as? PeekabooError {
+            switch error {
+            case .accessibilityIncomplete:
+                .accessibilityIncomplete
+            case .timeout:
+                .timeout
+            default:
+                nil
+            }
+        } else {
+            nil
+        }
+        let metadata: Value? = code.map { code in
+            .object([
+                "error_code": .string(code.rawValue),
+                "retry_safe": .bool(true),
+                "mutation_dispatched": .bool(false),
+            ])
+        }
+        return ToolResponse.error(
+            "Failed to inspect UI: \(error.localizedDescription)",
+            meta: metadata)
+    }
+
+    private func getOrCreateSnapshot(snapshotId: String?) async throws -> (snapshot: UISnapshot, isNew: Bool) {
+        if let snapshotId {
+            let hostHasSnapshot = try await self.context.snapshots.listSnapshots().contains { $0.id == snapshotId }
+            guard hostHasSnapshot else {
+                throw PeekabooError.snapshotNotFound(
+                    "Snapshot '\(snapshotId)' was not found. Omit the `snapshot` argument and run `inspect_ui` again.")
+            }
+            guard let existingSnapshot = await self.context.uiSnapshots.getSnapshot(id: snapshotId) else {
+                throw PeekabooError.snapshotNotFound(
+                    "Snapshot '\(snapshotId)' is not available in this process. " +
+                        "Omit the `snapshot` argument and run `inspect_ui` again.")
+            }
+            return (existingSnapshot, false)
+        }
+        let observationStartedAt = MCPToolContext.snapshotObservationStartedAt
+        let snapshotId = if let observationStartedAt {
+            try await self.context.snapshots.createSnapshot(pendingAt: observationStartedAt)
+        } else {
+            try await self.context.snapshots.createSnapshot()
+        }
+        let snapshot = await self.context.uiSnapshots.createSnapshot(
+            id: snapshotId,
+            at: observationStartedAt ?? Date(),
+            pending: observationStartedAt != nil)
+        return (snapshot, true)
+    }
+
+    private func parseTarget(_ rawTarget: String?, windowIDValue: Value?) throws -> ObservationTargetArgument {
+        guard let rawTarget,
+              !rawTarget.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            if windowIDValue != nil {
+                return try ObservationTargetArgument.parse(nil, windowIDValue: windowIDValue)
+            }
+            return .frontmost
+        }
+
+        let target = try ObservationTargetArgument.parse(rawTarget, windowIDValue: windowIDValue)
+        switch target {
+        case .screen, .menubar:
+            throw PeekabooError.invalidInput(
+                "inspect_ui supports frontmost, AppName, AppName:WindowTitle, PID:PROCESS_ID, and " +
+                    "PID:PROCESS_ID:WindowTitle targets. Use `see` for screen or menu bar targets.")
+        case .frontmost, .application, .pid:
+            return target
+        case .windowID:
+            throw PeekabooError.invalidInput(
+                "inspect_ui window_id requires app_target to identify an application or PID")
+        }
+    }
+
+    private func makeWindowContext(
+        for target: ObservationTargetArgument,
+        webFocus: Bool,
+        fresh: Bool,
+        traversalBudget: AXTraversalBudget) throws -> WindowContext
+    {
+        switch target {
+        case .frontmost:
+            return WindowContext(
+                shouldFocusWebContent: webFocus,
+                traversalBudget: traversalBudget,
+                requiresFreshAccessibilityTree: fresh)
+        case let .application(identifier, window):
+            let selection = try self.windowSelectionFields(window)
+            return WindowContext(
+                applicationName: identifier,
+                windowTitle: selection.title,
+                windowID: selection.id,
+                shouldFocusWebContent: webFocus,
+                traversalBudget: traversalBudget,
+                requiresFreshAccessibilityTree: fresh)
+        case let .pid(pid, window):
+            let selection = try self.windowSelectionFields(window)
+            return WindowContext(
+                applicationProcessId: pid,
+                windowTitle: selection.title,
+                windowID: selection.id,
+                shouldFocusWebContent: webFocus,
+                traversalBudget: traversalBudget,
+                requiresFreshAccessibilityTree: fresh)
+        case .windowID:
+            throw PeekabooError.invalidInput(
+                "inspect_ui window_id requires app_target to identify an application or PID")
+        case .screen, .menubar:
+            throw PeekabooError.invalidInput("inspect_ui cannot inspect screen or menu bar targets. Use `see` instead.")
+        }
+    }
+
+    private func windowSelectionFields(_ selection: WindowSelection) throws -> (title: String?, id: Int?) {
+        switch selection {
+        case .automatic:
+            return (nil, nil)
+        case let .title(title):
+            return (title, nil)
+        case let .id(windowID):
+            return (nil, Int(windowID))
+        case .index:
+            throw PeekabooError.invalidInput(
+                "inspect_ui does not support window index targets. Use a window title or `see` instead.")
+        }
+    }
+
+    private func convertElements(_ detected: [DetectedElement]) -> [UIElement] {
+        DetectedElementSnapshotConverter.convert(detected)
+    }
+
+    private func bindResult(_ result: ElementDetectionResult, to snapshotId: String) -> ElementDetectionResult {
+        guard result.snapshotId != snapshotId else {
+            return result
+        }
+
+        return ElementDetectionResult(
+            snapshotId: snapshotId,
+            screenshotPath: result.screenshotPath,
+            elements: result.elements,
+            metadata: result.metadata)
+    }
+
+    @MainActor
+    private func buildSummary(
+        snapshot: UISnapshot,
+        result: ElementDetectionResult,
+        target: ObservationTargetArgument) async -> String
+    {
+        await InspectUISummaryBuilder(
+            snapshot: snapshot,
+            result: result,
+            target: target)
+            .build()
+    }
+}

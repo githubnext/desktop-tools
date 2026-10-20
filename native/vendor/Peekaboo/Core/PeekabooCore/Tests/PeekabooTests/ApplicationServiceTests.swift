@@ -1,0 +1,145 @@
+import AppKit
+import Foundation
+import PeekabooFoundation
+import Testing
+@testable import PeekabooAgentRuntime
+@testable import PeekabooAutomation
+@testable import PeekabooCore
+@testable import PeekabooVisualizer
+
+@Suite(.enabled(if: TestEnvironment.runAutomationScenarios))
+struct ApplicationServiceTests {
+    @Test
+    @MainActor
+    func `List windows with timeout`() async throws {
+        // Given
+        let service = ApplicationService()
+
+        // When listing windows for Finder with a short timeout
+        let result = try await service.listWindows(for: "Finder", timeout: 0.5)
+
+        // Then
+        #expect(result.data.targetApplication?.name == "Finder")
+        #expect(result.metadata.duration < 2.0) // Allow headroom on slower hosts
+    }
+
+    @Test
+    @MainActor
+    func `List windows respects custom timeout`() async throws {
+        // Given
+        let service = ApplicationService()
+        let startTime = Date()
+
+        // When listing windows with very short timeout
+        let result = try await service.listWindows(for: "Safari", timeout: 0.1)
+        let elapsed = Date().timeIntervalSince(startTime)
+
+        // Then - should complete quickly even if Safari has many windows
+        #expect(elapsed < 2.0)
+        #expect(
+            result.metadata.warnings.contains {
+                $0.localizedCaseInsensitiveContains("timeout") ||
+                    $0.localizedCaseInsensitiveContains("incomplete")
+            } || !result.data.windows.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `List windows with nil timeout uses default`() async throws {
+        // Given
+        let service = ApplicationService()
+
+        // When listing windows without specifying timeout
+        let result = try await service.listWindows(for: "Terminal", timeout: nil)
+
+        // Then
+        #expect(result.data.targetApplication?.name == "Terminal")
+        // Default timeout is 2 seconds as defined in ApplicationService
+    }
+
+    @Test
+    @MainActor
+    func `Hybrid window enumeration with screen recording`() async throws {
+        // Given
+        let service = ApplicationService()
+        let hasScreenRecording = PermissionsService().checkScreenRecordingPermission()
+
+        // Skip test if no screen recording permission
+        try #require(hasScreenRecording, "Screen recording permission required for this test")
+
+        // When listing windows
+        let result = try await service.listWindows(for: "Finder", timeout: nil)
+
+        // Then - should use fast path with CGWindowList
+        #expect(result.metadata.duration < 1.25) // CGWindowList should be faster but allow slack
+        let nonEmptyTitleCount = result.data.windows.count(where: { !$0.title.isEmpty })
+        if nonEmptyTitleCount > 0 {
+            #expect(nonEmptyTitleCount == result.data.windows.count, "Expected all Finder windows to expose titles")
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Window enumeration handles terminated apps gracefully`() async throws {
+        // Given
+        let service = ApplicationService()
+
+        // When trying to list windows for non-existent app
+        do {
+            _ = try await service.listWindows(for: "NonExistentApp12345", timeout: nil)
+            Issue.record("Expected error for non-existent app")
+        } catch {
+            // Then - should throw appropriate error
+            #expect(error is NotFoundError || error is PeekabooError)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `List windows returns proper output structure`() async throws {
+        // Given
+        let service = ApplicationService()
+
+        // When listing windows for Finder
+        let output = try await service.listWindows(for: "Finder", timeout: nil)
+
+        // Then - verify output structure
+        #expect(output.data.targetApplication?.name == "Finder")
+        #expect(output.summary.counts["windows"] != nil)
+        #expect(output.summary.status == .success)
+        #expect(!output.metadata.hints.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Timeout configuration is applied`() {
+        // Given
+        let service: ApplicationService? = ApplicationService()
+
+        // ApplicationService sets global timeout in init
+        // Default timeout should be 2 seconds as defined in the service
+
+        // When/Then - service is initialized with timeout configuration
+        // This test verifies the service initializes properly
+        #expect(service != nil)
+    }
+
+    @Test
+    @MainActor
+    func `List windows handles partial results on timeout`() async throws {
+        // Given
+        let service = ApplicationService()
+
+        // When listing windows with very short timeout for app with many windows
+        let result = try await service.listWindows(for: "Safari", timeout: 0.05)
+
+        // Then - should return partial results or empty with appropriate warnings
+        if result.data.windows.isEmpty {
+            #expect(result.metadata.warnings.contains {
+                $0.contains("timeout") ||
+                    $0.contains("incomplete") ||
+                    $0.contains("Screen recording permission not granted")
+            })
+        }
+    }
+}

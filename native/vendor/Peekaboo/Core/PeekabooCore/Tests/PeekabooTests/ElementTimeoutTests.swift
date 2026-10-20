@@ -1,0 +1,217 @@
+import AppKit
+import AXorcist
+import Foundation
+import Testing
+@testable import PeekabooAgentRuntime
+@testable import PeekabooAutomation
+@testable import PeekabooCore
+@testable import PeekabooVisualizer
+
+struct ElementTimeoutTests {
+    @Test
+    @MainActor
+    func `Set messaging timeout on element`() {
+        // Given - Get an element for a running app
+        guard let finderApp = self.finderApplication() else {
+            return
+        }
+
+        let element = finderApp.element
+
+        // When setting timeout
+        element.setMessagingTimeout(1.0)
+
+        // Then - no crash and method completes
+        #expect(element.role() == AXRoleNames.kAXApplicationRole)
+    }
+
+    @Test
+    @MainActor
+    func `Windows with timeout returns windows`() {
+        // Given - Get Finder element
+        guard let finderApp = self.finderApplication() else {
+            return
+        }
+
+        let element = finderApp.element
+
+        // When getting windows with timeout
+        let windows = element.windowsWithTimeout(timeout: 2.0)
+
+        // Then
+        #expect(windows != nil)
+        // Note: Finder windows may vary, so we just check that the method works
+        if let windowArray = windows {
+            if windowArray.isEmpty {
+                Issue.record("Finder windows call succeeded but returned 0 entries")
+            } else {
+                #expect(true) // Non-empty result proves timeout path worked
+            }
+        } else {
+            Issue.record("Finder windows not accessible")
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Element children basic access`() {
+        // Given - Get Finder element
+        guard let finderApp = self.finderApplication() else {
+            return
+        }
+
+        let element = finderApp.element
+
+        // When getting children (using basic API)
+        let children = element.children()
+
+        // Then - should get some children (menu bar, windows, etc.)
+        #expect(children != nil)
+        if let childArray = children {
+            if childArray.isEmpty {
+                Issue.record("Finder reported zero AX children")
+            } else {
+                #expect(true)
+            }
+        } else {
+            Issue.record("Finder children not accessible")
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Element menu bar with timeout`() {
+        // Given - Get Finder element
+        guard let finderApp = self.finderApplication() else {
+            return
+        }
+
+        let element = finderApp.element
+
+        // When getting menu bar with timeout
+        let menuBar = element.menuBarWithTimeout(timeout: 2.0)
+
+        // Then - Finder should have a menu bar when it's frontmost
+        // Note: This might be nil if Finder is not active, which is okay
+        if let menuBarElement = menuBar {
+            #expect(menuBarElement.role() == AXRoleNames.kAXMenuBarRole)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Element focus basic access`() {
+        // Given - Get Finder element
+        guard let finderApp = self.finderApplication() else {
+            return
+        }
+
+        let element = finderApp.element
+
+        // When getting focused element (using basic API)
+        let focusedElement = element.focusedUIElement()
+
+        // Then - might have a focused element or might be nil
+        // This is environment-dependent, so we just verify no crash
+        if let focused = focusedElement {
+            #expect(focused.role() != nil)
+        }
+
+        // Test passes if we get here without crashing
+        #expect(Bool(true))
+    }
+
+    @Test
+    @MainActor
+    func `Element attribute basic access`() {
+        // Given - Get Finder element
+        guard let finderApp = self.finderApplication() else {
+            return
+        }
+
+        let element = finderApp.element
+
+        // When getting title attribute (using basic API)
+        let title = element.title()
+
+        // Then - Finder should have a title
+        if let titleString = title {
+            #expect(!titleString.isEmpty)
+        }
+
+        // Test that the method completes without error
+        #expect(Bool(true))
+    }
+
+    @Test
+    @MainActor
+    func `Multiple menu items with timeout`() {
+        // Given
+        guard let finderApp = self.finderApplication() else {
+            return
+        }
+
+        let element = finderApp.element
+
+        // When getting menu bar
+        guard let menuBar = element.menuBarWithTimeout(timeout: 2.0) else {
+            Issue.record("No menu bar found - skipping test")
+            return
+        }
+
+        // And getting menu items (using children instead)
+        let menuItems = menuBar.children() ?? []
+
+        // Then - menu enumeration should succeed even if Finder is not focused
+        if menuItems.isEmpty {
+            Issue.record("Menu bar children enumeration returned no items")
+        } else {
+            #expect(true)
+        }
+
+        // Test that menu items are valid Elements
+        for menuItem in menuItems {
+            #expect(menuItem.role() != nil)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Timeout configuration affects behavior`() {
+        // Given - Get Finder element
+        guard let finderApp = self.finderApplication() else {
+            return
+        }
+
+        let element = finderApp.element
+
+        // Test different timeout values
+        let shortTimeout: Float = 0.1
+        let longTimeout: Float = 3.0
+
+        // When using short timeout
+        let startTime = Date()
+        _ = element.windowsWithTimeout(timeout: shortTimeout)
+        let shortDuration = Date().timeIntervalSince(startTime)
+
+        // Then short timeout should complete relatively quickly
+        #expect(shortDuration < 2.0) // Should not take more than 2 seconds
+
+        // Test that longer timeout doesn't crash
+        _ = element.windowsWithTimeout(timeout: longTimeout)
+
+        // Test passes if we complete without crashing
+        #expect(Bool(true))
+    }
+
+    @MainActor
+    private func finderApplication() -> AXApp? {
+        guard let finder = NSWorkspace.shared.runningApplications
+            .first(where: { $0.bundleIdentifier == "com.apple.finder" })
+        else {
+            Issue.record("Finder not running - skipping test")
+            return nil
+        }
+        return AXApp(finder)
+    }
+}
