@@ -24,6 +24,7 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 ### Changed
 
 - An agent run as a background job, with no terminal or app above it, is asked about as the nearest program signed by a developer team that runs it, such as Claude Code, and the prompt says it's a program, not an app. When there is no such program, the refusal says so and why, instead of only that the caller couldn't be identified. A caller's team counts only when Apple issued its certificate. Setup docs note that background jobs don't load nvm. ([#194](https://github.com/githubnext/desktop-tools/issues/194))
+- A background click on a web menu row, button or tab in a WebKit app, such as a WKWebView or Electrobun app or Safari, no longer presses a control nested inside it. WebKit's Accessibility press goes to the first native button inside the element, so a click on a project row in Ace pressed its hover-only remove button. Such an element now gets a pointer click at the point when its window is frontmost and is refused otherwise, and every press result names what was pressed in `pressed`. ([#195](https://github.com/githubnext/desktop-tools/issues/195))
 
 ## [0.17.1] - 2026-10-20
 
