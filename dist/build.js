@@ -68,12 +68,16 @@ if (values.native2) {
     for (const name of ["libDesktopTools.dylib", "desktop-tools-client", "desktop-tools-mcp", "desktop-tools-app"]) {
         copyFileSync(join(located.stdout.trim(), name), join(out, name));
     }
-    // Notices left by a native/ build name code this build doesn't ship.
+    // Notices left by a native/ build name code this build doesn't link.
     const resolved = JSON.parse(readFileSync(join(native, "Package.resolved"), "utf8"));
     for (const identity of ["peekaboo", ...resolved.pins.map((pin) => pin.identity)]) {
         rmSync(join(licenses, identity), { recursive: true, force: true });
     }
     notices(root, "desktop-tools");
+    // native2 links neither, but contains code ported from Peekaboo and a little from AXorcist, so MIT requires
+    // their notices to go with it.
+    notices(peekaboo, "peekaboo");
+    notices(join(peekaboo, "AXorcist"), "axorcist");
     process.exit(0);
 }
 const package_ = ["--package-path", native, "--scratch-path", scratch];

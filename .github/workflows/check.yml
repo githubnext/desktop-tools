@@ -43,6 +43,12 @@ jobs:
           mkdir -p build/Licenses/embedder && echo kept > build/Licenses/embedder/NOTICE
           node dist/build.js --out build --scratch .build/native
           test "$(cat build/Licenses/embedder/NOTICE)" = kept
+      # native2 contains code ported from Peekaboo and AXorcist, so its build ships their MIT notices (#192).
+      - run: |
+          node dist/build.js --native2 --out build2 --scratch .build
+          test -f build2/Licenses/desktop-tools/LICENSE
+          test -f build2/Licenses/peekaboo/LICENSE
+          test -f build2/Licenses/axorcist/LICENSE
       # native2 (#143) runs beside the shipped stack until the cutover; keep it building and its tests passing.
       - run: swift build -c release --package-path native2 --scratch-path .build/native2
       - run: swift test --package-path native2 --scratch-path .build/native2
