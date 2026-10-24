@@ -307,8 +307,8 @@ extension Mac {
 	/// Moves the real pointer to a point the target window shows on top, in 15 steps over 250 ms.
 	public static func hover(at point: CGPoint, window: ClickWindow) throws -> Delivery {
 		try window.check()
-		guard exposes(point, window: window) else {
-			throw Refusal("TARGET_OCCLUDED", "Another window covers that point, so hovering there would reach it instead. Bring the target window forward with desktop_focus, then inspect again.")
+		if let cover = cover(point, window: window) {
+			throw Refusal("TARGET_OCCLUDED", "Another window covers that point, so hovering there would reach it instead. \(cover) Bring the target window forward with desktop_focus, then inspect again.")
 		}
 		let start = CGEvent(source: nil)?.location ?? point
 		for step in 1...15 {
@@ -319,35 +319,33 @@ extension Mac {
 		}
 		var delivery = Delivery(state: .dispatchedUnverified, mechanism: "global_events", evidence: "delivery_accepted", units: 1)
 		delivery.mode = "foreground"
-		if let now = CGEvent(source: nil)?.location, hypot(now.x - point.x, now.y - point.y) <= 1, exposes(point, window: window) {
+		let moved = (CGEvent(source: nil)?.location).map { hypot($0.x - point.x, $0.y - point.y) <= 1 } ?? false
+		let cover = moved ? cover(point, window: window) : nil
+		if moved, cover == nil {
 			delivery.fields = [("pointer_moved", true)]
 			return delivery
 		}
 		delivery.unverified = true
-		let moved = (CGEvent(source: nil)?.location).map { hypot($0.x - point.x, $0.y - point.y) <= 1 } ?? false
 		delivery.fields = [("pointer_moved", JSON(moved)), ("error", .object([
 			("code", "DESKTOP_ACTION_UNVERIFIED"),
-			("message", JSON(moved ? "The pointer arrived, but the exact window was no longer frontmost there." : "The pointer could not be confirmed at the requested point.")),
+			("message", JSON(moved ? "The pointer arrived, but the exact window was no longer on top there. \(cover!)" : "The pointer could not be confirmed at the requested point.")),
 			("hint", "Inspect the target before retrying; the action may already have happened."),
 		]))]
 		return delivery
 	}
 
-	/// Whether the topmost on-screen window at the point is the target, at its observed bounds.
+	/// Whether the window pointer events at the point reach is the target, at its observed bounds.
 	public static func exposes(_ point: CGPoint, window: ClickWindow) -> Bool {
-		// The host's own windows, such as Desktop Tools' highlight around the target, never count as cover.
-		let hosts = Set([getpid()] + NSRunningApplication.runningApplications(withBundleIdentifier: "dev.githubnext.desktop-tools").map(\.processIdentifier))
-		let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
-		for row in rows {
-			guard !hosts.contains(row[kCGWindowOwnerPID as String] as? pid_t ?? 0), (row[kCGWindowAlpha as String] as? Double ?? 1) > 0,
-			      let raw = row[kCGWindowBounds as String] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw),
-			      bounds.contains(point)
-			else { continue }
-			return row[kCGWindowNumber as String] as? Int == window.windowID
-				&& abs(bounds.minX - window.bounds.minX) < 1 && abs(bounds.minY - window.bounds.minY) < 1
-				&& abs(bounds.width - window.bounds.width) < 1 && abs(bounds.height - window.bounds.height) < 1
-		}
-		return false
+		cover(point, window: window) == nil
+	}
+
+	/// Why the point isn't the target window's, naming the window found there, or nil when it is.
+	public static func cover(_ point: CGPoint, window: ClickWindow) -> String? {
+		guard let top = Mac.window(at: point) else { return "No window takes the pointer there." }
+		guard top.id == window.windowID else { return "The pointer there reaches \(top.description), not window \(window.windowID)." }
+		let same = abs(top.bounds.minX - window.bounds.minX) < 1 && abs(top.bounds.minY - window.bounds.minY) < 1
+			&& abs(top.bounds.width - window.bounds.width) < 1 && abs(top.bounds.height - window.bounds.height) < 1
+		return same ? nil : "Window \(window.windowID) moved or resized since the snapshot."
 	}
 }
 

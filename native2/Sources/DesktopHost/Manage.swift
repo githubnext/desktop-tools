@@ -35,32 +35,63 @@ extension Tools {
 	// MARK: Node's checks
 
 	/// validateAppTarget: a pid and a decimal process generation that fits 64 bits.
-	private static func appTarget(_ target: JSON?) throws -> (pid: pid_t, generation: UInt64) {
+	private static func appTarget(_ target: JSON?, _ arguments: JSON? = nil) throws -> (pid: pid_t, generation: UInt64) {
 		guard let target, target.pairs != nil, isInteger(target["pid"], in: 1...2_147_483_647),
 		      let identity = target["process_start_identity_decimal"]?.string,
 		      identity.range(of: "^[1-9][0-9]{0,19}$", options: .regularExpression) != nil,
 		      let generation = UInt64(identity)
-		else { throw invalid("Pass the application's target object from fresh desktop inventory unchanged.") }
+		else { throw invalid("Pass the application's target object from fresh desktop inventory unchanged: \(targetFault(target, arguments, window: false))") }
 		return (pid_t(target["pid"]!.number!), generation)
 	}
 
-	private static func appOnly(_ target: JSON?) throws -> (pid: pid_t, generation: UInt64) {
-		let app = try appTarget(target)
+	private static func appOnly(_ target: JSON?, _ arguments: JSON? = nil) throws -> (pid: pid_t, generation: UInt64) {
+		let app = try appTarget(target, arguments)
 		guard target?.keys?.allSatisfy({ ["pid", "process_start_identity_decimal"].contains($0) }) == true else {
 			throw invalid("Pass only the application's target object from desktop_apps.")
 		}
 		return app
 	}
 
-	private static func windowTarget(_ target: JSON?) throws -> ExactWindow {
-		let app = try appTarget(target)
+	private static func windowTarget(_ target: JSON?, _ arguments: JSON? = nil) throws -> ExactWindow {
 		let bounds = target?["bounds"]
-		guard isInteger(target?["window_id"], in: 1...4_294_967_295), let minimized = target?["is_minimized"]?.bool,
+		guard let target, target.pairs != nil, isInteger(target["pid"], in: 1...2_147_483_647),
+		      let identity = target["process_start_identity_decimal"]?.string,
+		      identity.range(of: "^[1-9][0-9]{0,19}$", options: .regularExpression) != nil,
+		      let generation = UInt64(identity),
+		      isInteger(target["window_id"], in: 1...4_294_967_295), let minimized = target["is_minimized"]?.bool,
 		      let x = finite(bounds?["x"]), let y = finite(bounds?["y"]),
 		      let width = finite(bounds?["width"]), let height = finite(bounds?["height"]), width > 0, height > 0
-		else { throw invalid("Pass the window's target object, including its original bounds, from desktop_windows unchanged.") }
-		return ExactWindow(pid: app.pid, generation: app.generation, id: target!["window_id"]!.int!,
+		else { throw invalid("Pass the window's target object, including its original bounds, from desktop_windows unchanged: \(targetFault(target, arguments, window: true))") }
+		return ExactWindow(pid: pid_t(target["pid"]!.number!), generation: generation, id: target["window_id"]!.int!,
 		                   bounds: CGRect(x: x, y: y, width: width, height: height), isMinimized: minimized)
+	}
+
+	/// The first field of a target object that is missing or malformed, so the refusal says what to fix (#196).
+	static func targetFault(_ target: JSON?, _ arguments: JSON?, window: Bool) -> String {
+		let source = window ? "a window's target from desktop_windows" : "an app's target from desktop_apps"
+		guard let target else {
+			let loose = (arguments?.keys ?? []).filter { ["pid", "window", "window_id", "app", "process_start_identity_decimal"].contains($0) }
+			return loose.isEmpty
+				? "target is missing. Pass \(source) as target."
+				: "target is missing; \(loose.joined(separator: " and ")) at the top level \(loose.count == 1 ? "isn't" : "aren't") read. Pass \(source) as target."
+		}
+		guard target.pairs != nil else { return "target must be the object itself, not \(target.string != nil ? "a string" : "a \(target.number != nil ? "number" : "list or value")"). Pass \(source) as target." }
+		guard isInteger(target["pid"], in: 1...2_147_483_647) else { return "target.pid is missing or not a positive whole number." }
+		guard let identity = target["process_start_identity_decimal"] else { return "target.process_start_identity_decimal is missing; copy it from \(source)." }
+		guard let text = identity.string else { return "target.process_start_identity_decimal must be the decimal string from inventory, in quotes, not a number." }
+		guard text.range(of: "^[1-9][0-9]{0,19}$", options: .regularExpression) != nil, UInt64(text) != nil else {
+			return "target.process_start_identity_decimal must be the decimal string from inventory, unchanged."
+		}
+		guard window else { return "target is malformed." }
+		guard isInteger(target["window_id"], in: 1...4_294_967_295) else {
+			return target["window_id"] == nil ? "target.window_id is missing; this is an app's target, and a window's comes from desktop_windows." : "target.window_id is not a window ID."
+		}
+		guard target["is_minimized"]?.bool != nil else { return "target.is_minimized is missing or not true or false." }
+		guard let bounds = target["bounds"], bounds.pairs != nil else { return "target.bounds is missing." }
+		for key in ["x", "y", "width", "height"] where finite(bounds[key]) == nil {
+			return "target.bounds.\(key) is missing or not a number."
+		}
+		return "target.bounds must have a positive width and height."
 	}
 
 	/// validateApplication, which the Node server applies to launch and to open's optional application.
@@ -89,13 +120,13 @@ extension Tools {
 		var window: ExactWindow?
 		var force = false
 		if appLevel {
-			app = try appOnly(arguments["target"])
+			app = try appOnly(arguments["target"], arguments)
 			if op == "quit", let value = arguments["force"] {
 				guard let flag = value.bool else { throw invalid("Quit force must be true or false.") }
 				force = flag
 			}
 		} else {
-			let target = try windowTarget(arguments["target"])
+			let target = try windowTarget(arguments["target"], arguments)
 			window = target
 			app = (target.pid, target.generation)
 		}

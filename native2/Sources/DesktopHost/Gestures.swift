@@ -93,8 +93,8 @@ extension Tools {
 			fraction.map { globalPoint($0, in: snapshot.windowBounds) } ?? CGPoint(x: target!.frame.midX, y: target!.frame.midY)
 		}
 		return await act("hover", snapshotID: snapshotID, element: element, allowsDisabled: true, precheck: { snapshot, target in
-			guard Mac.exposes(point(snapshot, target), window: window(snapshot)) else {
-				throw Refusal("DESKTOP_ACTION_FAILED", "Another window covers this point, or the window moved since the snapshot. Inspect the window again; bring it forward with desktop_focus if it is covered.")
+			if let cover = Mac.cover(point(snapshot, target), window: window(snapshot)) {
+				throw Refusal("DESKTOP_ACTION_FAILED", "Another window covers this point, or the window moved since the snapshot. \(cover) Inspect the window again; bring it forward with desktop_focus if it is covered.")
 			}
 		}) { snapshot, target in
 			Hooks.showPointer(.move(to: point(snapshot, target), window: snapshot.windowID))

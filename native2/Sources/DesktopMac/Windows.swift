@@ -194,3 +194,58 @@ extension Mac {
 		])
 	}
 }
+
+/// The window that pointer events at a point would reach, as a refusal or an unverified hover names it.
+public struct WindowAtPoint: Sendable, Equatable {
+	public let id: Int
+	public let pid: pid_t
+	public let owner: String
+	public let title: String
+	public let layer: Int
+	public let bounds: CGRect
+
+	/// "window 123 of Ace ("Projects"), at layer 3".
+	public var description: String {
+		let name = title.isEmpty ? "" : " (\"\(title)\")"
+		return "window \(id) of \(owner.isEmpty ? "PID \(pid)" : owner)\(name)\(layer == 0 ? "" : ", at layer \(layer)")"
+	}
+}
+
+extension Mac {
+	/// The topmost window at a global point that takes pointer events there. The window server's own hit test
+	/// skips windows that let the pointer through, such as a screen recorder's frame or a web view's overlay,
+	/// which the window list can't tell from cover (#196); the window list's topmost row is the fallback when no
+	/// hit test is available. The host's own windows, such as Desktop Tools' highlight around the target, never count.
+	public static func window(at point: CGPoint) -> WindowAtPoint? {
+		let hosts = Set([getpid()] + NSRunningApplication.runningApplications(withBundleIdentifier: "dev.githubnext.desktop-tools").map(\.processIdentifier))
+		let all = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+		let hostWindows = Set(all.filter { hosts.contains($0[kCGWindowOwnerPID as String] as? pid_t ?? 0) }.compactMap { $0[kCGWindowNumber as String] as? Int })
+		let rows = all.filter { row in
+			!hosts.contains(row[kCGWindowOwnerPID as String] as? pid_t ?? 0) && (row[kCGWindowAlpha as String] as? Double ?? 1) > 0
+				&& (row[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }?.contains(point) == true
+		}
+		func found(_ row: [String: Any]) -> WindowAtPoint? {
+			guard let id = row[kCGWindowNumber as String] as? Int, let pid = row[kCGWindowOwnerPID as String] as? pid_t,
+			      let raw = row[kCGWindowBounds as String] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw)
+			else { return nil }
+			return WindowAtPoint(
+				id: id, pid: pid, owner: row[kCGWindowOwnerName as String] as? String ?? "", title: row[kCGWindowName as String] as? String ?? "",
+				layer: row[kCGWindowLayer as String] as? Int ?? 0, bounds: bounds
+			)
+		}
+		// NSWindow's coordinates start at the bottom of the main display.
+		let flipped = NSPoint(x: point.x, y: CGDisplayBounds(CGMainDisplayID()).height - point.y)
+		let hitTest = { () -> Int in
+			var below = 0
+			for _ in 0..<8 {
+				let number = NSWindow.windowNumber(at: flipped, belowWindowWithWindowNumber: below)
+				guard number > 0, hostWindows.contains(number) else { return number }
+				below = number
+			}
+			return 0
+		}
+		let hit = Thread.isMainThread ? hitTest() : DispatchQueue.main.sync(execute: hitTest)
+		if hit > 0, let row = all.first(where: { $0[kCGWindowNumber as String] as? Int == hit }) { return found(row) }
+		return rows.first.flatMap(found)
+	}
+}
