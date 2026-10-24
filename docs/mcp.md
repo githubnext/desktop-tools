@@ -9,7 +9,7 @@ claude mcp add desktop -- node <path>/dist/mcp.js
 
 The [README](https://github.com/githubnext/desktop-tools#set-up-for-an-agent) has the setup for Codex and for clients configured with JSON.
 
-An app that runs the pure Swift host (#143) bundles its own MCP server, `Desktop Tools.app/Contents/MacOS/desktop-tools-mcp`. Run with no options, `dist/mcp.js` finds it beside the client the app links and hands stdio over to it, so an `npx` setup needs no change. Any option, such as `--wire 1`, keeps the Node server.
+An app that runs the pure Swift host (#143) bundles its own MCP server, `Desktop Tools.app/Contents/MacOS/desktop-tools-mcp`. Run with no options, `dist/mcp.js` finds it beside the client the app links and hands stdio over to it, so an `npx` setup needs no change. Any option, such as `--wire 1`, keeps the Node server. An app from before 0.17.0 has no server of its own, so the Node server stays, and when the app's version differs from the package's, every failed call ends with both versions: updating the `npx` tag doesn't update the app.
 
 To use another signed host's grants instead, pass its client, socket, and name. For Ace Canary:
 
