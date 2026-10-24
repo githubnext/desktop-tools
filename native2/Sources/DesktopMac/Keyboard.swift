@@ -10,7 +10,7 @@ import Foundation
 // window and element must already be in the exact window, which is checked before every event.
 
 /// Virtual key codes by this contract's key names (ANSI).
-private let namedKeys: [String: CGKeyCode] = [
+let namedKeys: [String: CGKeyCode] = [
 	"enter": 0x24, "return": 0x24, "tab": 0x30, "space": 0x31, "backspace": 0x33, "escape": 0x35, "delete": 0x75,
 	"help": 0x72, "home": 0x73, "pageup": 0x74, "end": 0x77, "pagedown": 0x79,
 	"left": 0x7B, "right": 0x7C, "down": 0x7D, "up": 0x7E,
