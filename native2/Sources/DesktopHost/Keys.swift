@@ -146,10 +146,24 @@ extension Tools {
 				)
 			}
 			var delivery = try Mac.typeKeys(text, target: KeyboardTarget(window: window, focusedRole: role, focusedFrame: focused.frame))
+			let readBack = delivery.fields.first { $0.0 == "read_back" }?.1.string
+			let notCleared = delivery.fields.contains { $0.0 == "not_cleared" }
 			delivery.fields = [("receiver", "observed_control")]
 			if delivery.state != .confirmedChange, delivery.state != .confirmedNoChange {
 				delivery.unverified = true
-				delivery.fields.append(("error", .object([("code", "TYPING_UNVERIFIED"), ("message", "The web field's text was typed with key events, but the host could not read back the result."), ("hint", "Inspect the window to check the field before acting again; do not repeat the typing blindly.")])))
+				var error: [(String, JSON)] = [("code", "TYPING_UNVERIFIED")]
+				let shown = readBack.map { $0.count > 200 ? String($0.prefix(200)) + "…" : $0 } ?? ""
+				if notCleared {
+					error.append(("message", JSON("Command-A and Delete were sent to clear the web field before typing, but it still read back \"\(shown)\", so the text wasn't typed.")))
+					error.append(("read_back", JSON(readBack ?? "")))
+				} else if let readBack {
+					error.append(("message", JSON("The web field's text was typed with key events, but the field read back \"\(shown)\" rather than the typed text after it settled. The page may filter, format or still be handling it.")))
+					error.append(("read_back", JSON(readBack)))
+				} else {
+					error.append(("message", "The web field's text was typed with key events, but the host could not read back the result."))
+				}
+				error.append(("hint", "Inspect the window to check the field before acting again; do not repeat the typing blindly."))
+				delivery.fields.append(("error", .object(error)))
 			}
 			return delivery
 		}
