@@ -71,6 +71,8 @@ func connect() throws -> (Connection?, Int32) {
 	do { connection = try Connection.connect(to: socketPath) } catch let WireError.system("connect", code) {
 		return (nil, code)
 	}
+	// Nothing is sent to a host this signed client doesn't trust, not even the hello.
+	if let refusal = HostTrust.refusal(connection.fd, socket: socketPath) { refuse(HostTrust.code, refusal) }
 	// No call is sent before the hellos, so a host that drops the connection here ran nothing. A signed host drops a
 	// client that isn't signed as its own app's.
 	let hello: JSON

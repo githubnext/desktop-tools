@@ -72,6 +72,10 @@ actor Host {
 			}
 		}
 		let connection = reached!
+		// Nothing is sent to a host this signed server doesn't trust, not even the hello.
+		if let refusal = HostTrust.refusal(connection.fd, socket: socketPath) {
+			throw HostFailure(message: "\(HostTrust.code): \(refusal)")
+		}
 		// No call is sent before the hellos, so a host that drops the connection here ran nothing. A signed host
 		// drops a process that isn't signed as its own app's client.
 		do {

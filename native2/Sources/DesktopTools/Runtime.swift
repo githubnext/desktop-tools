@@ -5,6 +5,7 @@ import Darwin
 import DesktopCore
 import DesktopHost
 import DesktopMac
+import DesktopPeer
 import Foundation
 import OSLog
 

@@ -42,11 +42,20 @@ public struct Peer: Sendable {
 	/// Whether the peer's running code satisfies `requirement`. The on-disk signature counts only when its code
 	/// directory hash is the kernel's for the live process, before and after it is read.
 	public func satisfies(_ requirement: ClientRequirement) -> Bool {
-		guard Self.safe(requirement.identifier, extra: ".-_"), Self.safe(requirement.team, extra: ""),
-		      let before = liveHash()
-		else { return false }
-		let text = "identifier \"\(requirement.identifier)\" and anchor apple generic and "
-			+ "certificate leaf[subject.OU] = \"\(requirement.team)\""
+		guard Self.safe(requirement.identifier, extra: ".-_"), Self.safe(requirement.team, extra: "") else { return false }
+		return meets("identifier \"\(requirement.identifier)\" and anchor apple generic and "
+			+ "certificate leaf[subject.OU] = \"\(requirement.team)\"")
+	}
+
+	/// Whether the peer's running code is Apple-anchored signed by `team`, with any identifier: how a client checks
+	/// its host, since an embedding app hosts under its own identifier.
+	public func signed(byTeam team: String) -> Bool {
+		guard Self.safe(team, extra: "") else { return false }
+		return meets("anchor apple generic and certificate leaf[subject.OU] = \"\(team)\"")
+	}
+
+	private func meets(_ text: String) -> Bool {
+		guard let before = liveHash() else { return false }
 		var tokenData = token
 		let data = withUnsafeBytes(of: &tokenData) { Data($0) }
 		var code: SecCode?

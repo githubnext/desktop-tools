@@ -9,13 +9,14 @@ A Swift MCP server and host with no Peekaboo and no Node. It runs beside the shi
 | `DesktopProtocol` | JSON, wire framing, `ToolError`, and the contract (`ContractText.swift`), which `node scripts/contract.mjs` compiles from the Node server's instructions and tools/list; `--check` fails when they differ. It is compiled in because `Bundle.module` crashes in an embedded dylib |
 | `DesktopCore` | Result bounding, window availability and the approved-callers store, with no macOS calls |
 | `DesktopMac` | Everything that touches macOS: Accessibility reads (`Elements`, `AX`), capture, apps, windows, and input (`Pointer`, `Keyboard`, `Gestures`) |
+| `DesktopPeer` | Who is at the other end of the socket, by the signature of its audit token's process (`Peer.swift`), and this process's own signing |
 | `DesktopHost` | The tools, the snapshot store, the socket server, admission (`Admission.swift`: approved callers, pause, own-UI guard) and the runtime hooks |
 | `desktop-tools-host` | The host, run from a terminal for now; it holds the macOS grants |
 | `desktop-tools-mcp` | The stdio MCP server, which forwards each call to the host |
 | `desktop-tools-client` | One tool call per run, for `createDesktop({ wire: 2 })` and `dist/mcp.js --wire 2` (docs/node.md) |
 | `DesktopTools` | `libDesktopTools.dylib`, the menu bar app's embedding runtime with native/'s C ABI (docs/embed.md): it serves the host's `Server` and draws the agent cursor, window outline and activity list through `DesktopHost/Hooks.swift` |
 
-The host serves `~/.local/state/desktop-tools2/desktop.sock`, or `$DESKTOP_TOOLS2_STATE/desktop.sock`, so it runs beside the installed Desktop Tools. It accepts a connection only from the same user, and, when the host is signed, only from an MCP binary signed by the same team with the expected identifier (`DesktopMac/Peer.swift`: the socket's audit token, checked with Security and a CDHash read before and after).
+The host serves `~/.local/state/desktop-tools2/desktop.sock`, or `$DESKTOP_TOOLS2_STATE/desktop.sock`, so it runs beside the installed Desktop Tools. It accepts a connection only from the same user, and, when the host is signed, only from an MCP binary signed by the same team with the expected identifier (`DesktopPeer/Peer.swift`: the socket's audit token, checked with Security and a CDHash read before and after). In turn, a signed client or MCP server sends nothing to a host that isn't the same user's and signed by its team (`DesktopAppLink/Trust.swift`).
 
 ## How an action runs
 
