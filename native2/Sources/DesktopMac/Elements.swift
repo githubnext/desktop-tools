@@ -441,6 +441,14 @@ extension Mac {
 		AXUIElementSetMessagingTimeout(app, 0.2)
 		let windows = AX.value(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
 		return windows.contains { AX.windowID($0) == windowID } || openMenu(app, windowID: windowID) != nil
+
+	/// Walks the subtree under one element an earlier walk emitted, so the whole budget goes to that subtree.
+	/// Depths start at 0 at `root`. An empty tree means the element is gone or no longer readable.
+	public static func elements(root: AXUIElement, budget: ElementBudget) -> ElementTree {
+		let deadline = ContinuousClock.now + .seconds(budget.seconds - min(0.25, max(0.01, budget.seconds * 0.1)))
+		var walk = Walk(deadline: deadline, budget: budget)
+		walk.process(root, depth: 0)
+		return walk.tree
 	}
 
 	/// Peekaboo's focus receipt: the one element that says it has focus. Several can, as a focused table's cells
