@@ -431,6 +431,27 @@ extension Mac {
 			throw refusal("Menu bar item [\(index)] no longer resolves to exactly one Accessibility element of its owner.",
 			              hint: "Refresh menu bar items before retrying.")
 		}
+		// The item's menu is already open: close it without choosing an item, as a second click on a status item
+		// does for a person. Pressing it again would reopen it (#193).
+		let open = (AX.value(matches[0].element, kAXChildrenAttribute) as? [AXUIElement] ?? []).filter { child in
+			AX.string(child, kAXRoleAttribute) == "AXMenu" && AX.frame(child).map { $0.width > 0 && $0.height > 0 } == true
+		}
+		if let menu = open.first {
+			AXUIElementSetMessagingTimeout(menu, 0.5)
+			if await perform(menu, "AXCancel") == .success {
+				for _ in 0 ..< 10 {
+					let still = (AX.value(matches[0].element, kAXChildrenAttribute) as? [AXUIElement] ?? []).contains { child in
+						AX.string(child, kAXRoleAttribute) == "AXMenu" && AX.frame(child).map { $0.width > 0 && $0.height > 0 } == true
+					}
+					if !still {
+						var closed = Delivery(state: .confirmedChange, mechanism: "accessibility_action", evidence: "menu_closed", units: 1)
+						closed.mode = "background"
+						return closed
+					}
+					try? await Task.sleep(for: .milliseconds(50))
+				}
+			}
+		}
 		let action: String
 		if matches[0].actions.contains(kAXPressAction) {
 			action = kAXPressAction

@@ -6,6 +6,10 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ### Fixed
 
+- An open menu's window, such as a SwiftUI `MenuBarExtra` status item's NSMenu or one of its submenus, can be inspected: `desktop_inspect` reads the open `AXMenu` and lists its items with `checked` for a checkmark, so they can be clicked by element. `desktop_menubar_click` on an item whose menu is open closes the menu without choosing an item (`closed_menu`), and `desktop_element_action` `AXCancel` on the menu closes it too. A window opened by a status item is `inspectable` only when it has Accessibility elements to read. ([#193](https://github.com/githubnext/desktop-tools/issues/193))
+
+### Fixed
+
 - `desktop_scroll` scrolls web content it used to refuse with "no supported route". A Chrome or other Chromium page gets arrow keys, one per unit, at the window's keyboard focus when that focus is on the page and not in a field, and the result reads back that the page moved; with focus in a field it is refused with a hint to click the page or send `desktop_key` `pagedown`. A WKWebView app that loads WebKit from a library beside its executable, such as an Electrobun app, gets the background wheel Safari gets. ([#197](https://github.com/githubnext/desktop-tools/issues/197), [#201](https://github.com/githubnext/desktop-tools/issues/201))
 
 ## [0.17.1] - 2026-10-20

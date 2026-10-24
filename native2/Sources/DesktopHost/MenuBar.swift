@@ -125,6 +125,10 @@ extension Tools {
 			return result("unknown")
 		}
 		action += [("native_outcome", delivery.json), ("item", item), ("requires_fresh_observation", true)]
+		if delivery.evidence == "menu_closed" {
+			action.append(("closed_menu", .object([("note", "The item's menu was open, so this click closed it without choosing an item.")])))
+			return result(delivery.outcome, receipt: true)
+		}
 		let (opened, capture) = await observeOpened(before: before)
 		action.append(("opened", opened))
 		guard let capture, let jpeg = try? Mac.jpeg(capture) else { return result(delivery.outcome, receipt: true) }
@@ -157,14 +161,15 @@ extension Tools {
 				"pid": JSON(window.pid), "window_id": JSON(window.id), "app_name": window.appName.map(JSON.string), "layer": JSON(window.layer),
 				"bounds": Mac.boundsJSON(window.bounds),
 				"process_start_identity_decimal": row?["process_start_identity_decimal"] ?? window.generation.map { JSON(String($0)) },
-				"inspectable": JSON(row != nil), "target": row?["target"],
+				// Listed isn't enough: a window needs an Accessibility root, such as an open menu's AXMenu (#193).
+				"inspectable": JSON(row != nil && Mac.hasAccessibilityRoot(pid: window.pid, windowID: window.id)), "target": row?["target"],
 			]))
 		}
 		let note = windows.isEmpty
 			? "No new window appeared within about a second. The item may show its menu in a window that already existed, open nothing, or toggle something directly. Observe with desktop_screen before acting; a second click usually closes an open menu."
 			: windows.contains(where: { $0["inspectable"]?.bool == true })
-			? "Windows that appeared after the click, front to back. An inspectable window is in desktop_windows for its pid: pass its pid and window_id to desktop_inspect, then use the snapshot to click or press keys in it. The capture shows the opened region; it has no snapshot_id. Close the menu with Escape through desktop_key, or click the same status item again."
-			: "Windows that appeared after the click, front to back. None is in desktop_windows, so desktop_inspect cannot target them; the capture shows the opened region and has no snapshot_id. Close the menu by clicking the same status item again."
+			? "Windows that appeared after the click, front to back. An inspectable window is in desktop_windows for its pid: pass its pid and window_id to desktop_inspect, then use the snapshot to click or press keys in it. The capture shows the opened region; it has no snapshot_id. An open menu lists its items as menu items; close it without choosing one by clicking the same status item again, or with desktop_element_action AXCancel on the menu."
+			: "Windows that appeared after the click, front to back. None has Accessibility elements desktop_inspect can read; the capture shows the opened region and has no snapshot_id. Close the menu by clicking the same status item again."
 		guard !windows.isEmpty else { return (.object([("windows", []), ("note", JSON(note))]), nil) }
 		let area = found.map(\.bounds).reduce(CGRect.null) { $0.union($1) }
 		do {
