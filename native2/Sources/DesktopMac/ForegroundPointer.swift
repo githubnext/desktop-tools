@@ -484,7 +484,7 @@ extension Mac {
 	}
 
 	/// Gives focus back to the window that had it, unless something newer than this click took focus since.
-	private static func restoreFocus(prior: (pid: pid_t, generation: UInt64), priorWindow: WindowKey, target: WindowKey, activity: InputActivity, steps: inout Steps) throws -> Restoration {
+	static func restoreFocus(prior: (pid: pid_t, generation: UInt64), priorWindow: WindowKey, target: WindowKey, activity: InputActivity, steps: inout Steps) throws -> Restoration {
 		if focusedWindow() == priorWindow { return .notNeeded }
 		guard priorWindow != target else { return .preservedNewerState }
 		guard let now = focusState() else {

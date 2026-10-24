@@ -11,10 +11,25 @@ extension Tools {
 		guard let direction = arguments["direction"]?.string.flatMap(ScrollDirection.init(rawValue:)),
 		      let amount = arguments["amount"]?.int, (1...20).contains(amount)
 		else { throw ToolError("Choose up, down, left, or right and 1 to 20 native scroll units.") }
+		let foreground = try foregroundFlag(arguments)
 		return await act("scroll", snapshotID: snapshotID, element: element) { snapshot, target in
 			let window = window(snapshot)
 			try window.check()
-			Hooks.showPointer(.scroll(at: target.map { CGPoint(x: $0.frame.midX, y: $0.frame.midY) } ?? globalPoint(fraction!, in: window.bounds), direction: direction, amount: amount, window: window.windowID))
+			let point = target.map { CGPoint(x: $0.frame.midX, y: $0.frame.midY) } ?? globalPoint(fraction!, in: window.bounds)
+			Hooks.showPointer(.scroll(at: point, direction: direction, amount: amount, window: window.windowID))
+			if foreground {
+				var delivery = try Mac.foregroundScroll(at: point, direction: direction, amount: amount, window: window)
+				if !delivery.fields.contains(where: { $0.0 == "error" }) {
+					let moved = delivery.fields.first { $0.0 == "content_moved" }?.1
+					let seen = moved == .bool(true) ? "Content under the point moved." : moved == .bool(false) ? "Content under the point didn't move within half a second, so it may be at its end." : "Whether content moved couldn't be read."
+					delivery.fields.append(("error", .object([
+						("code", "DESKTOP_ACTION_UNVERIFIED"),
+						("message", JSON("The scroll was sent as real scroll-wheel input with the app brought forward and the pointer over the point, then the pointer and focus were given back. \(seen)")),
+						("hint", "Inspect the window to see where it scrolled. Never repeat the scroll blindly."),
+					])))
+				}
+				return delivery
+			}
 			if let target { return try Mac.scroll(target.reference, direction: direction, amount: amount, window: window) }
 			return try Mac.scroll(at: globalPoint(fraction!, in: window.bounds), direction: direction, amount: amount, window: window)
 		}
@@ -85,6 +100,13 @@ extension Tools {
 			Hooks.showPointer(.move(to: point(snapshot, target), window: snapshot.windowID))
 			return try Mac.hover(at: point(snapshot, target), window: window(snapshot))
 		}
+	}
+
+	/// The optional foreground switch of desktop_insert and desktop_scroll.
+	static func foregroundFlag(_ arguments: JSON) throws -> Bool {
+		guard let value = arguments["foreground"] else { return false }
+		guard case let .bool(flag) = value else { throw ToolError("Set foreground to true or false.") }
+		return flag
 	}
 
 	/// Exactly one of an element ID and a point, as click, scroll and hover take them.

@@ -4,6 +4,10 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Added
+
+- `desktop_insert` and `desktop_scroll` take `foreground: true` for windows background input can't reach, such as a web page in a window that doesn't keep keyboard focus while the agent's terminal is in front. The app is brought forward, the text is typed with real keys or the scroll is sent as real wheel ticks with the pointer over the target, and the pointer and the previously focused window are given back. Results are unknown, with `read_back` (the control's value) or `content_moved`. The default stays background, and the refusals that pointed typing at `desktop_set_value` now name this option. ([#177](https://github.com/githubnext/desktop-tools/issues/177), [#197](https://github.com/githubnext/desktop-tools/issues/197))
+
 ### Fixed
 
 - An open menu's window, such as a SwiftUI `MenuBarExtra` status item's NSMenu or one of its submenus, can be inspected: `desktop_inspect` reads the open `AXMenu` and lists its items with `checked` for a checkmark, so they can be clicked by element. `desktop_menubar_click` on an item whose menu is open closes the menu without choosing an item (`closed_menu`), and `desktop_element_action` `AXCancel` on the menu closes it too. A window opened by a status item is `inspectable` only when it has Accessibility elements to read. ([#193](https://github.com/githubnext/desktop-tools/issues/193))
