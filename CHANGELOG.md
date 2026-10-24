@@ -4,6 +4,10 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Fixed
+
+- `desktop_scroll` scrolls web content it used to refuse with "no supported route". A Chrome or other Chromium page gets arrow keys, one per unit, at the window's keyboard focus when that focus is on the page and not in a field, and the result reads back that the page moved; with focus in a field it is refused with a hint to click the page or send `desktop_key` `pagedown`. A WKWebView app that loads WebKit from a library beside its executable, such as an Electrobun app, gets the background wheel Safari gets. ([#197](https://github.com/githubnext/desktop-tools/issues/197), [#201](https://github.com/githubnext/desktop-tools/issues/201))
+
 ## [0.17.1] - 2026-10-20
 
 ### Fixed

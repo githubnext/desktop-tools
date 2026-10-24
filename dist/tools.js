@@ -630,7 +630,7 @@ export function desktopTools({ place, app, wire = 1 }) {
         {
             name: "desktop_scroll",
             op: "scroll",
-            description: `Scroll an element or point from a fresh desktop_inspect snapshot up, down, left or right by amount (1–20 native units, not pixels). Background, without moving the pointer; completed means delivered. Unsupported targets are refused. Inspect the new position before scrolling again.`,
+            description: `Scroll an element or point from a fresh desktop_inspect snapshot up, down, left or right by amount (1–20 native units, not pixels). Background, without moving the pointer; completed means delivered. A web page with no other background route scrolls with arrow keys while its window's keyboard focus is on the page, not in a field. Unsupported targets are refused. Inspect the new position before scrolling again.`,
             parameters: {
                 type: "object",
                 required: ["snapshot", "direction", "amount"],

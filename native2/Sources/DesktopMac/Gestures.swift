@@ -74,13 +74,19 @@ extension Mac {
 	/// WebKit views. Anything else is refused rather than guessed at.
 	public static func scroll(_ element: AXUIElement, direction: ScrollDirection, amount: Int, window: ClickWindow) throws -> Delivery {
 		AXUIElementSetMessagingTimeout(element, 1)
-		if let delivery = try scrollThroughAccessibility(element, direction: direction, amount: amount, ownBarsOnly: false, window: window) {
-			return delivery
-		}
+		let web = webArea(of: element)
+		do {
+			if let delivery = try scrollThroughAccessibility(element, direction: direction, amount: amount, ownBarsOnly: false, window: window) {
+				return delivery
+			}
+		} catch let refusal as Refusal where web != nil && refusal.message == noScrollRoute.message {}
 		let role = AX.string(element, kAXRoleAttribute) ?? ""
 		if ["AXGroup", "AXWebArea", "AXScrollArea"].contains(role), let frame = AX.frame(element), wheelReaches(window.pid) {
-			return try wheel(at: CGPoint(x: frame.midX, y: frame.midY), direction: direction, amount: amount, window: window)
+			return try readingBack(web, direction: direction) {
+				try wheel(at: CGPoint(x: frame.midX, y: frame.midY), direction: direction, amount: amount, window: window)
+			}
 		}
+		if let web { return try keyScroll(web, direction: direction, amount: amount, window: window) }
 		throw noScrollRoute
 	}
 
@@ -98,26 +104,34 @@ extension Mac {
 				}
 				let names = actions(current)
 				if ["AXScrollArea", "AXScrollBar", "AXWebArea"].contains(role) || names.contains(where: { $0.hasPrefix("AXScroll") && $0.hasSuffix("ByPage") }) {
-					if let delivery = try scrollThroughAccessibility(current, direction: direction, amount: amount, ownBarsOnly: true, window: window) {
-						return delivery
-					}
+					let web = webArea(of: current)
+					do {
+						if let delivery = try scrollThroughAccessibility(current, direction: direction, amount: amount, ownBarsOnly: true, window: window) {
+							return delivery
+						}
+					} catch let refusal as Refusal where web != nil && refusal.message == noScrollRoute.message {}
 					if ["AXGroup", "AXWebArea", "AXScrollArea"].contains(role), wheelReaches(window.pid) {
-						return try wheel(at: point, direction: direction, amount: amount, window: window)
+						return try readingBack(web, direction: direction) { try wheel(at: point, direction: direction, amount: amount, window: window) }
 					}
+					if let web { return try keyScroll(web, direction: direction, amount: amount, window: window) }
 					throw noScrollRoute
 				}
 				guard let parent = AX.element(AX.value(current, kAXParentAttribute)) else { break }
 				current = parent
 			}
 		}
-		guard wheelReaches(window.pid) else { throw noScrollRoute }
-		return try wheel(at: point, direction: direction, amount: amount, window: window)
+		let web = hit.flatMap(webArea(of:))
+		guard wheelReaches(window.pid) else {
+			if let web { return try keyScroll(web, direction: direction, amount: amount, window: window) }
+			throw noScrollRoute
+		}
+		return try readingBack(web, direction: direction) { try wheel(at: point, direction: direction, amount: amount, window: window) }
 	}
 
 	private static let noScrollRoute = {
 		var refusal = Refusal(
 			"DESKTOP_ACTION_FAILED", "Background scroll has no supported route for the observed target.",
-			hint: "Observe again and select a scrollable control or eligible WebKit content element.",
+			hint: "Observe again and select a scrollable control or eligible WebKit content element. For a web page, click a spot on it that isn't a field, then send desktop_key pagedown or pageup.",
 			cause: "Accessibility action is not supported"
 		)
 		refusal.reason = "operation_unsupported"
@@ -224,8 +238,7 @@ extension Mac {
 	private static func wheelReaches(_ pid: pid_t) -> Bool {
 		guard let app = NSRunningApplication(processIdentifier: pid), !app.isHidden, !routesThroughSkyLight(pid) else { return false }
 		if app.bundleIdentifier == "com.apple.Safari" { return true }
-		guard let executable = app.executableURL else { return false }
-		return linkedLibraries(executable).contains { $0.contains("/WebKit.framework/") }
+		return hostsWebKit(app)
 	}
 
 	// MARK: Drag
