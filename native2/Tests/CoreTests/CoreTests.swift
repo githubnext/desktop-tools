@@ -40,6 +40,18 @@ import Testing
 		#expect(try JSON(parsing: text)["items"] == ["keep", "keep"])
 	}
 
+	@Test func dropsFirstValuesBeforeOthers() throws {
+		let filler = { (name: String) in JSON(name + String(repeating: "x", count: 20)) }
+		let data: JSON = .object([("items", [filler("a"), filler("off1"), "keep", filler("b"), filler("off2")])])
+		let text = try bounded(data, field: "items", limit: 110, dropFirst: ({ $0.string?.hasPrefix("off") == true }, "offscreen")) {
+			$0 == "keep"
+		}
+		let result = try JSON(parsing: text)
+		#expect(result["items"] == [filler("a"), "keep", filler("b")])
+		#expect(result["omitted"]?.int == 2)
+		#expect(result["offscreen"]?.int == 2)
+	}
+
 	@Test func leavesSmallResultsAlone() throws {
 		let data: JSON = .object([("items", [1, 2])])
 		#expect(try bounded(data, field: "items") == #"{"items":[1,2]}"#)
