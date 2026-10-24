@@ -98,4 +98,13 @@ struct CallersTests {
 		#expect(!OwnUIGuard.isPromptOrMenu(layer: 1000, sharingState: 0, onScreen: true)) // agent cursor
 		#expect(!OwnUIGuard.isPromptOrMenu(layer: 8, sharingState: 1, onScreen: false))
 	}
+
+	@Test
+	func `a caller with no app or signed program above it is told why it can't be approved`() {
+		let message = CallerRefusal.detached(["node", "agent"])
+		#expect(message.hasPrefix("CALLER_NOT_APPROVED: "))
+		#expect(message.contains("(node > agent) reach launchd with no app and no program signed by a developer team"))
+		#expect(message.contains("there is no prompt for the user to answer"))
+		#expect(CallerRefusal.detached([]).contains("its client's parent is launchd, with no app or program signed by a developer team above it, as when"))
+	}
 }

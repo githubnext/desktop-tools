@@ -303,13 +303,17 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		else { return }
 		waiting.removeAll { $0.key == caller.key }
 		waiting.append(caller)
+		// A command-line program, such as Claude Code, says so, so the user knows what they allow.
+		let isApp = CallerChain.appBundle(of: caller.path) != nil
 		Task {
 			let answer = await Confirmations.shared.ask(.init(
 				key: "caller \(caller.key)",
-				title: "Allow \(caller.name) to control this Mac?",
+				title: isApp
+					? "Allow \(caller.name) to control this Mac?"
+					: "Allow the program \(caller.name) to control this Mac?",
 				message: """
 					\(caller.origin)
-
+					\(isApp ? "" : "\nThis is a command-line program, not an app. Every agent it runs, in a terminal or in the background, could use Desktop Tools.\n")
 					It could see the screen, read the clipboard, and click, type and change apps and windows, with \
 					the permissions you gave Desktop Tools. You can change this under Approved Agents in the \
 					Desktop Tools menu.

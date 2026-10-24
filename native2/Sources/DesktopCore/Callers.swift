@@ -121,6 +121,19 @@ public enum CallerRefusal {
 	public static let unidentified =
 		"\(notApproved): Desktop Tools couldn't identify the program that ran its client, so nothing ran. Run the agent from a terminal or app the user can approve."
 
+	/// No app runs the agent and no program above it is signed with a team, as when a background job runs it from
+	/// an unsigned program: `ancestors` are the client's parents by executable name, up to launchd.
+	public static func detached(_ ancestors: [String]) -> String {
+		let chain = ancestors.isEmpty
+			? "its client's parent is launchd, with no app or program signed by a developer team above it"
+			: "its client's parent processes (\(ancestors.joined(separator: " > "))) reach launchd with no app and no "
+				+ "program signed by a developer team among them"
+		return "\(notApproved): Desktop Tools couldn't identify the program that ran its client, so nothing ran and "
+			+ "there is no prompt for the user to answer: \(chain), as when an agent runs as a background job from an unsigned program. Run the agent from "
+			+ "a terminal app such as Terminal or Ghostty, or from a signed program such as Claude Code, which Desktop "
+			+ "Tools can ask the user to approve."
+	}
+
 	public static let ownWindow =
 		"\(selfTarget): Desktop Tools' own menus, prompts and windows answer only to the user, so nothing was sent. Ask the user to act on them."
 
