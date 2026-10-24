@@ -3,6 +3,10 @@ id: 01M5R4TGZ74Z2041XMVG0X39TG
 anchor: '@file'
 created: 2026-10-24T23:44:34Z
 norm: '1'
+sig: 9cb6c3e49e9e89a4
+body_hash: 746fb88a0eadce35
+raw_hash: cce651be3a11598d
+lines: 1-325
 supersedes: 01M5BKJWVVGTA2MXXFH8WD7ADT
 ---
 
