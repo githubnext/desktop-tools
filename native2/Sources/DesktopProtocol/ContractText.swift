@@ -1576,7 +1576,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 	},
 	{
 		"name": "desktop_scroll",
-		"description": "Scroll an element or point from a fresh desktop_inspect snapshot up, down, left or right by amount (1–20 native units, not pixels). Background, without moving the pointer; completed means delivered. Unsupported targets are refused. Inspect the new position before scrolling again.",
+		"description": "Scroll an element or point from a fresh desktop_inspect snapshot up, down, left or right by amount (1–20 native units, not pixels). Background, without moving the pointer; completed means delivered. A web page with no other background route scrolls with arrow keys while its window's keyboard focus is on the page, not in a field. Unsupported targets are refused. Inspect the new position before scrolling again.",
 		"inputSchema": {
 			"type": "object",
 			"required": [
