@@ -88,12 +88,7 @@ extension Tools {
 	}
 
 	/// Typing is refused while any app holds secure keyboard entry.
-	static func secureEntryRefusal() -> Refusal {
-		clientRefusal(
-			"Secure keyboard entry is on, as for a password field or a terminal's Secure Keyboard Entry, so typed text can't be delivered. Nothing was typed.",
-			hint: "Use a field that isn't secure, or turn off Secure Keyboard Entry in the app."
-		)
-	}
+	static func secureEntryRefusal() -> Refusal { Mac.secureInputRefusal() }
 
 	// MARK: desktop_set_value
 
