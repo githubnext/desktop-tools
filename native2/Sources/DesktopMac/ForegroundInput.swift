@@ -137,7 +137,7 @@ extension Mac {
 			}
 			if secureFocus(focused) { throw secureFocusRefusal }
 			if IsSecureEventInputEnabled() {
-				throw Refusal("DESKTOP_ACTION_FAILED", "Secure keyboard entry is on, so typed text can't be delivered. Nothing was typed.", fromHost: false)
+				throw secureInputRefusal()
 			}
 			readFrom = focused
 			guard let source = CGEventSource(stateID: .privateState) else { throw Refusal("DESKTOP_ACTION_FAILED", "Foreground typing could not create its event source. Nothing was typed.") }

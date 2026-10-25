@@ -199,14 +199,7 @@ extension Mac {
 		if secureFocus(focused) {
 			throw secureFocusRefusal
 		}
-		if IsSecureEventInputEnabled() {
-			throw Refusal(
-				"DESKTOP_ACTION_FAILED",
-				"Secure keyboard entry is on, as for a password field or a terminal's Secure Keyboard Entry, so typed text can't be delivered. Nothing was typed.",
-				hint: "Use a field that isn't secure, or turn off Secure Keyboard Entry in the app.",
-				fromHost: false
-			)
-		}
+		if IsSecureEventInputEnabled() { throw secureInputRefusal() }
 		var plan: [(CGKeyCode, Bool, CGEventFlags)] = [(0x37, true, .maskCommand), (0x00, true, .maskCommand), (0x00, false, .maskCommand), (0x37, false, [])]
 		var delivery = try postKeys(plan, target: target, check: { try requireKeyboardFocus(target) })
 		guard delivery.outcome == "completed" else { return delivery }
