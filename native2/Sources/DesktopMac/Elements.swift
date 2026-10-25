@@ -322,6 +322,10 @@ private struct Walk {
 		} else if role == "axcell", columnHeaders.contains(where: { CFEqual($0, element) }) {
 			attributes["columnHeader"] = "true"
 		}
+		if role == "axmenuitem", let mark = AX.string(element, "AXMenuItemMarkChar"), !mark.isEmpty {
+			// A checked menu item, such as a Toggle in a status item's menu, draws its mark here.
+			attributes["checked"] = "true"
+		}
 		if role == "axrow" {
 			// Outline rows are flat siblings; only their disclosure level shows the hierarchy.
 			if let level = AX.value(element, "AXDisclosureLevel") as? NSNumber, CFGetTypeID(level) != CFBooleanGetTypeID(),
@@ -360,7 +364,9 @@ extension Mac {
 		AXUIElementSetMessagingTimeout(app, 0.2)
 		var raw: CFTypeRef?
 		let error = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &raw)
-		let windows = (raw as? [AXUIElement] ?? []).filter { AX.windowID($0) == windowID }
+		var windows = (raw as? [AXUIElement] ?? []).filter { AX.windowID($0) == windowID }
+		// An open menu, such as a status item's, has a window but isn't among the app's AXWindows (#193).
+		if windows.isEmpty, let menu = openMenu(app, windowID: windowID) { windows = [menu] }
 		guard windows.count == 1, let window = windows.first else {
 			if error == .apiDisabled || !AXIsProcessTrusted() {
 				throw ToolError("permissionDenied: Accessibility access is off for the Desktop Tools host.")
@@ -383,6 +389,58 @@ extension Mac {
 		walk.tree.focusedID = focusedID(walk.tree, app: app, before: focusBefore)
 		if !walk.tree.truncated { attachSelection(&walk.tree) }
 		return walk.tree
+	}
+
+	/// The open AXMenu drawn in `windowID`: a status item's or a menu bar title's menu, or a submenu of either,
+	/// found through the items that hold them, or else the menu the app reports focus in.
+	static func openMenu(_ app: AXUIElement, windowID: Int) -> AXUIElement? {
+		guard let bounds = window(windowID)?.bounds else { return nil }
+		var candidates: [AXUIElement] = []
+		var seen = 0
+		func menus(under element: AXUIElement, depth: Int) {
+			guard depth < 6, seen < 400 else { return }
+			AXUIElementSetMessagingTimeout(element, 0.2)
+			for child in AX.value(element, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
+				seen += 1
+				switch AX.string(child, kAXRoleAttribute) {
+				case "AXMenu":
+					candidates.append(child)
+					// Only an open menu's items are worth reading for submenus.
+					if AX.frame(child).map({ $0.width > 0 && $0.height > 0 }) == true { menus(under: child, depth: depth + 1) }
+				case "AXMenuBarItem", "AXMenuItem", "AXGroup": menus(under: child, depth: depth + 1)
+				default: continue
+				}
+			}
+		}
+		AXUIElementSetMessagingTimeout(app, 0.2)
+		for bar in ["AXExtrasMenuBar", kAXMenuBarAttribute] {
+			if let bar = AX.element(AX.value(app, bar)) { menus(under: bar, depth: 0) }
+		}
+		if let focused = AX.element(AX.value(app, kAXFocusedUIElementAttribute)) {
+			var element: AXUIElement? = focused
+			for _ in 0 ..< 8 {
+				guard let current = element else { break }
+				if AX.string(current, kAXRoleAttribute) == "AXMenu" { candidates.append(current); break }
+				element = AX.element(AX.value(current, kAXParentAttribute))
+			}
+		}
+		// The menu's window number when Accessibility reports one, otherwise its frame.
+		let byID = candidates.filter { AX.windowID($0) == windowID }
+		if let menu = byID.first { return menu }
+		let byFrame = candidates.filter { candidate in
+			guard let frame = AX.frame(candidate) else { return false }
+			return abs(frame.minX - bounds.minX) <= 2 && abs(frame.minY - bounds.minY) <= 8
+				&& abs(frame.width - bounds.width) <= 2 && abs(frame.height - bounds.height) <= 16
+		}
+		return byFrame.count == 1 ? byFrame[0] : nil
+	}
+
+	/// Whether `windowID` has an Accessibility element to walk: one of the app's AXWindows, or an open menu.
+	public static func hasAccessibilityRoot(pid: pid_t, windowID: Int) -> Bool {
+		let app = AXUIElementCreateApplication(pid)
+		AXUIElementSetMessagingTimeout(app, 0.2)
+		let windows = AX.value(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
+		return windows.contains { AX.windowID($0) == windowID } || openMenu(app, windowID: windowID) != nil
 	}
 
 	/// Peekaboo's focus receipt: the one element that says it has focus. Several can, as a focused table's cells
