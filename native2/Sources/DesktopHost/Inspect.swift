@@ -212,11 +212,12 @@ extension Tools {
 		guard let window = Mac.window(windowID), window.pid == pid else {
 			throw ToolError("DESKTOP_ERROR: Desktop observation target was not found: window id \(windowID) owned by PID \(pid).")
 		}
-		async let tree = run { try budget.map { try Mac.elements(pid: pid, windowID: windowID, budget: $0) } ?? ElementTree() }
-		async let captured = Mac.captureWindow(windowID, bounds: window.bounds)
-		let image = try await captured
+		// The walk comes first: reading an element's children can make an app lay out more, as a SwiftUI list that
+		// loads rows as they're read grows and moves what's below, so a screenshot taken during the walk can show
+		// content where it no longer is, and a point read off it misses (#159).
+		let elements = try await run { try budget.map { try Mac.elements(pid: pid, windowID: windowID, budget: $0) } ?? ElementTree() }
+		let image = try await Mac.captureWindow(windowID, bounds: window.bounds)
 		let captureDone = ContinuousClock.now
-		let elements = try await tree
 		guard Mac.generation(pid) == generation, let after = Mac.window(windowID), after.pid == pid, after.bounds == window.bounds else {
 			throw ToolError("invalidRequest: Snapshot is stale: Exact observation window changed during the observation. Inspect it again.")
 		}
