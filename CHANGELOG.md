@@ -4,6 +4,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-24
+
 ### Added
 
 - `desktop_insert` and `desktop_scroll` take `foreground: true` for windows background input can't reach, such as a web page in a window that doesn't keep keyboard focus while the agent's terminal is in front. The app is brought forward, the text is typed with real keys or the scroll is sent as real wheel ticks with the pointer over the target, and the pointer and the previously focused window are given back. Results are unknown, with `read_back` (the control's value) or `content_moved`. The default stays background, and the refusals that pointed typing at `desktop_set_value` now name this option. ([#177](https://github.com/githubnext/desktop-tools/issues/177), [#197](https://github.com/githubnext/desktop-tools/issues/197))
@@ -13,7 +15,6 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 - `desktop_inspect` takes its screenshot after reading the window's Accessibility tree, not during it. Reading some SwiftUI lists makes them load rows and grow, which moved content after the screenshot was taken, so a point read off it could click whatever moved under it. An inspection takes about as long as its tree read longer. ([#159](https://github.com/githubnext/desktop-tools/issues/159))
 - `return` is accepted as a key name wherever keys are named (`desktop_key`, `desktop_system_key`), as an alias of `enter`. `desktop_system_key` results name the app that was frontmost when the keys were sent (`frontmost`), and `desktop_wait`'s description states its argument rules: `element_appears` and `element_gone` need an element with a role plus a title, value or identifier, and `timeout_ms` is an integer from 100 to 45000. ([#199](https://github.com/githubnext/desktop-tools/issues/199))
 - A background point click on a tab in Chrome's vertical tab strip switches to that tab. Chrome lays empty groups over its vertical tabs, and the Accessibility hit test returns one of those, so the click was refused with "No pressable accessibility element". When the element at the point is such an empty group, the click now presses the smallest pressable element beneath it, such as the tab or its close button. ([#202](https://github.com/githubnext/desktop-tools/issues/202))
-
 - An open menu's window, such as a SwiftUI `MenuBarExtra` status item's NSMenu or one of its submenus, can be inspected: `desktop_inspect` reads the open `AXMenu` and lists its items with `checked` for a checkmark, so they can be clicked by element. `desktop_menubar_click` on an item whose menu is open closes the menu without choosing an item (`closed_menu`), and `desktop_element_action` `AXCancel` on the menu closes it too. A window opened by a status item is `inspectable` only when it has Accessibility elements to read. ([#193](https://github.com/githubnext/desktop-tools/issues/193))
 - Typing refused because secure keyboard entry is on now names the app and window holding it (`secure_input_holder`: pid, name, bundle ID, window title), read from the window server's session, such as a system password dialog behind the target, and asks to have the user dismiss it. ([#176](https://github.com/githubnext/desktop-tools/issues/176))
 - `desktop_hover` and foreground `desktop_drag` no longer count a window that lets the pointer through, such as a screen recorder's frame, as covering the target: the cover check asks the window server which window takes pointer events at the point. An unverified hover or a cover refusal now names the window found there. `desktop_focus` and the other window and app tools say which `target` field is missing or wrong, such as a pid and window passed at the top level, and a window tool no longer asks for an application's target. ([#196](https://github.com/githubnext/desktop-tools/issues/196))
@@ -300,7 +301,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The first release: a signed, notarized Desktop Tools menu bar app, and the desktop tools served over MCP. ([#28](https://github.com/githubnext/desktop-tools/pull/28), [#29](https://github.com/githubnext/desktop-tools/pull/29), [#12](https://github.com/githubnext/desktop-tools/pull/12))
 
-[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.17.1...HEAD
+[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/githubnext/desktop-tools/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/githubnext/desktop-tools/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/githubnext/desktop-tools/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/githubnext/desktop-tools/compare/v0.16.0...v0.16.1
