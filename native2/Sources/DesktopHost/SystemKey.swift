@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import DesktopCore
 import DesktopMac
@@ -57,6 +58,8 @@ extension Tools {
 			if Mac.sessionLocked {
 				return refused("The macOS GUI session is locked. No key was sent.", hint: "Unlock the active user session, then observe the screen before retrying.")
 			}
+			// Name the app the keys went to, as it was just before they were sent.
+			let front = await MainActor.run { NSWorkspace.shared.frontmostApplication.map { ($0.localizedName, $0.bundleIdentifier, Int($0.processIdentifier)) } }
 			let delivery: Delivery
 			do {
 				if let media {
@@ -73,12 +76,16 @@ extension Tools {
 			}
 			// Delivery to the frontmost receiver is all the host can attest; the key's effect is never read back.
 			action[0] = ("outcome", "unknown")
-			action += [
-				("native_outcome", delivery.json), ("requires_fresh_observation", true),
-				("message", JSON(media != nil
-					? "The key went to the system as if pressed on the keyboard; what it changed was not read back. Do not blindly repeat it, since play_pause and mute toggle."
-					: "The keys went to whatever was frontmost; their effect was not read back. Observe with desktop_screen, desktop_apps or desktop_windows before acting again, and do not blindly repeat the shortcut.")),
-			]
+			let receiver = front.map { name, bundle, pid in
+				"\(name ?? bundle ?? "pid \(pid)") (\([bundle, "pid \(pid)"].compactMap(\.self).joined(separator: ", ")))"
+			}
+			action += [("native_outcome", delivery.json), ("requires_fresh_observation", true)]
+			if let front {
+				action.append(("frontmost", .object([("name", front.0.map(JSON.string) ?? .null), ("bundle_id", front.1.map(JSON.string) ?? .null), ("pid", JSON(front.2))])))
+			}
+			action.append(("message", JSON(media != nil
+				? "The key went to the system as if pressed on the keyboard; what it changed was not read back. Do not blindly repeat it, since play_pause and mute toggle."
+				: "The keys went to \(receiver.map { "\($0), the frontmost app when they were sent" } ?? "whatever was frontmost"); their effect was not read back. Observe with desktop_screen, desktop_apps or desktop_windows before acting again, and do not blindly repeat the shortcut.")))
 			return actionReply(action)
 		}
 		if let expect = try expectation(arguments) { return try await expectAfter(expect) { await send() } }
