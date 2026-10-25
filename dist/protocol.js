@@ -35,6 +35,7 @@ export const DESKTOP_SYSTEM_KEYS = [
 ];
 export const DESKTOP_KEYS = [
     "enter",
+    "return",
     "tab",
     "escape",
     "backspace",

@@ -1375,7 +1375,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 	},
 	{
 		"name": "desktop_wait",
-		"description": "Wait until one condition holds and return what matched, or timed_out with the last observation; use it instead of polling after a launch, page load, export or dialog. Read-only; it polls every 200 ms to 2 s for timeout_ms (default 10000, at most 45000). until is window_appears (bundle_id or pid, optional title or title_contains) or window_gone (pid, window); dialog_appears or dialog_gone (pid, optional window); element_appears or element_gone (pid, window, element: a role and a title, value or identifier); text_changes, text_equals or text_contains (pid, window, optional scope or element, text); app_running, app_frontmost or app_quit (bundle_id or pid). A matched element comes with inspection.snapshot_id and its IDs for action tools; if that is null, inspect first. Element and text polls read as desktop_inspect does: in a Chromium or Electron app, or a window whose web area is nearly empty, it first turns on the app's web accessibility so web content appears, once per app launch, and reports web_accessibility; it stays on until the app quits. Pass web_accessibility false to leave the app as it is. Uncertain absence never counts as gone.",
+		"description": "Wait until one condition holds and return what matched, or timed_out with the last observation; use it instead of polling after a launch, page load, export or dialog. Read-only; it polls every 200 ms to 2 s for timeout_ms, an integer from 100 to 45000 (default 10000). until is window_appears (exactly one of bundle_id or pid, optional title or title_contains) or window_gone (pid, window); dialog_appears or dialog_gone (pid, optional window); element_appears or element_gone (pid, window and a required element object: role plus at least one of title, value or identifier, e.g. {role: \"AXButton\", title: \"Save\"}); text_changes, text_equals or text_contains (pid, window, optional scope or element, whose role plus title or identifier picks the element whose value is read; text_equals and text_contains need text); app_running, app_frontmost or app_quit (bundle_id or pid). A matched element comes with inspection.snapshot_id and its IDs for action tools; if that is null, inspect first. Element and text polls read as desktop_inspect does: in a Chromium or Electron app, or a window whose web area is nearly empty, it first turns on the app's web accessibility so web content appears, once per app launch, and reports web_accessibility; it stays on until the app quits. Pass web_accessibility false to leave the app as it is. Uncertain absence never counts as gone.",
 		"inputSchema": {
 			"type": "object",
 			"required": [
@@ -2284,6 +2284,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 							"type": "string",
 							"enum": [
 								"enter",
+								"return",
 								"tab",
 								"escape",
 								"backspace",
@@ -2376,6 +2377,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 										"type": "string",
 										"enum": [
 											"enter",
+											"return",
 											"tab",
 											"escape",
 											"backspace",
@@ -2513,6 +2515,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 							"type": "string",
 							"enum": [
 								"enter",
+								"return",
 								"tab",
 								"escape",
 								"backspace",
