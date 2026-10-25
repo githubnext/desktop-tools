@@ -1,5 +1,6 @@
 import DesktopCore
 import DesktopMac
+import DesktopPeer
 import DesktopProtocol
 import Foundation
 
