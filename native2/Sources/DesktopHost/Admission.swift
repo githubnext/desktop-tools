@@ -41,7 +41,12 @@ public final class Callers: @unchecked Sendable {
 	/// at once and the app is asked about it once; the client never waits for the user.
 	func refusal(client: pid_t?) -> String? {
 		guard enforcing else { return nil }
-		guard let client, let caller = resolve(client: client)?.caller else { return CallerRefusal.unidentified }
+		let caller: Caller
+		switch client.map(resolution) ?? .unknown {
+		case let .caller(found, _): caller = found
+		case let .unsigned(names): return CallerRefusal.detached(names)
+		case .unknown: return CallerRefusal.unidentified
+		}
 		let (decision, ask): (Bool?, (@Sendable (Caller) -> Void)?) = lock.withLock {
 			let decision = decisions[caller.key]
 			return (decision, decision == nil && asked.insert(caller.key).inserted ? handler : nil)
@@ -57,25 +62,60 @@ public final class Callers: @unchecked Sendable {
 
 	/// The verified caller of the client `client` and its pid: the nearest ancestor that isn't a launcher or shell.
 	public func resolve(client: pid_t) -> (caller: Caller, pid: pid_t)? {
+		guard case let .caller(caller, pid) = resolution(client) else { return nil }
+		return (caller, pid)
+	}
+
+	enum Resolution {
+		case caller(Caller, pid_t)
+		/// The client's ancestors, by executable name from its parent up, reach launchd with no app and no
+		/// team-signed program among them, so there is nothing the user could approve.
+		case unsigned([String])
+		/// The ancestors couldn't be read, or changed while they were.
+		case unknown
+	}
+
+	/// The caller is the nearest ancestor that isn't a launcher or shell. When no app runs the agent, as when it runs
+	/// as a background job whose processes launchd adopted, it is the nearest such program signed with a team instead,
+	/// such as Claude Code, so the user can approve that program by its signature (#194).
+	func resolution(_ client: pid_t) -> Resolution {
 		var chain: [(pid: pid_t, path: String)] = []
-		var next = parentProcess(of: client)
-		while let process = next, chain.count < 32, let path = executablePath(process) {
+		var next = parentID(of: client)
+		var reachedLaunchd = false
+		while let process = next, chain.count < 32 {
+			if process <= 1 {
+				reachedLaunchd = process == 1
+				break
+			}
+			guard let path = executablePath(process) else { break }
 			chain.append((process, path))
-			next = parentProcess(of: process)
+			next = parentID(of: process)
 		}
-		guard let index = CallerChain.callerIndex(chain.map(\.path)) else { return nil }
-		let (process, path) = chain[index]
+		let paths = chain.map(\.path)
+		if paths.contains(where: { CallerChain.appBundle(of: $0) != nil }) || !reachedLaunchd {
+			guard let index = CallerChain.callerIndex(paths), let caller = identified(chain[index].pid, path: chain[index].path)
+			else { return .unknown }
+			return .caller(caller, chain[index].pid)
+		}
+		for (process, path) in chain where !CallerChain.launchers.contains(CallerChain.executableName(path)) {
+			guard let caller = identified(process, path: path) else { return .unknown }
+			if caller.team != nil { return .caller(caller, process) }
+		}
+		return .unsigned(paths.map(CallerChain.executableName))
+	}
+
+	/// `process`'s caller identity, read once per launch; nil when the pid was reused while its signature was read.
+	private func identified(_ process: pid_t, path: String) -> Caller? {
 		guard let start = Mac.generation(process) else { return nil }
 		let launch = "\(process) \(start)"
-		if let cached = lock.withLock({ resolved[launch] }) { return (cached, process) }
+		if let cached = lock.withLock({ resolved[launch] }) { return cached }
 		let caller = identify(process, path: path)
-		// The pid could have been reused while its signature was read.
 		guard Mac.generation(process) == start else { return nil }
 		lock.withLock {
 			if resolved.count >= 64 { resolved.removeAll() }
 			resolved[launch] = caller
 		}
-		return (caller, process)
+		return caller
 	}
 }
 
@@ -167,7 +207,12 @@ private func identify(_ process: pid_t, path: String) -> Caller {
 		   let values = information as? [String: Any]
 		{
 			identifier = values[kSecCodeInfoIdentifier as String] as? String
-			team = (values[kSecCodeInfoTeamIdentifier as String] as? String).flatMap { $0.isEmpty ? nil : $0 }
+			// A team counts only from a certificate Apple issued to it: any signer can write a team ID into a
+			// self-signed certificate, and approvals are keyed on it.
+			team = (values[kSecCodeInfoTeamIdentifier as String] as? String).flatMap {
+				!$0.isEmpty && $0.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) })
+					&& satisfies(code, "anchor apple generic and certificate leaf[subject.OU] = \"\($0)\"") ? $0 : nil
+			}
 			if team != nil, let leaf = (values[kSecCodeInfoCertificates as String] as? [SecCertificate])?.first {
 				signer = organization(leaf)
 			} else if satisfies(code, "anchor apple") {
@@ -212,11 +257,11 @@ private func executablePath(_ process: pid_t) -> String? {
 	return path.isEmpty ? nil : path
 }
 
-func parentProcess(of process: pid_t) -> pid_t? {
+/// The parent's pid as the kernel reports it, launchd's 1 included.
+private func parentID(of process: pid_t) -> pid_t? {
 	var info = kinfo_proc()
 	var size = MemoryLayout<kinfo_proc>.stride
 	var mib = [CTL_KERN, KERN_PROC, KERN_PROC_PID, process]
 	guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
-	let parent = info.kp_eproc.e_ppid
-	return parent > 1 ? parent : nil
+	return info.kp_eproc.e_ppid
 }

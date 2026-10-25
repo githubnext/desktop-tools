@@ -23,6 +23,9 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 - The signed `desktop-tools-client` and `desktop-tools-mcp` check the host again before sending anything: a process at the socket path that isn't the same user's and signed by the same team gets no requests, and the call fails with `HOST_UNTRUSTED`. The Peekaboo-based client did this, and docs/embed.md still said so. ([#191](https://github.com/githubnext/desktop-tools/issues/191))
 - The app and `desktop-tools-build --native2` ship Peekaboo's and AXorcist's MIT notices again, in `Licenses/`, since the Swift host contains code ported from them. docs/licenses.md describes native2. ([#192](https://github.com/githubnext/desktop-tools/issues/192))
 - When `npx` runs `desktop-tools-mcp` against a Desktop Tools app of another version that has no MCP server of its own (before 0.17.0), every failed call names both versions and says to install the matching app, since updating the `npx` tag doesn't update the app. ([#179](https://github.com/githubnext/desktop-tools/issues/179))
+### Changed
+
+- An agent run as a background job, with no terminal or app above it, is asked about as the nearest program signed by a developer team that runs it, such as Claude Code, and the prompt says it's a program, not an app. When there is no such program, the refusal says so and why, instead of only that the caller couldn't be identified. A caller's team counts only when Apple issued its certificate. Setup docs note that background jobs don't load nvm. ([#194](https://github.com/githubnext/desktop-tools/issues/194))
 
 ## [0.17.1] - 2026-10-20
 
