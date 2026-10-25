@@ -32,6 +32,24 @@ If the app has **File > Export as PDF…**, as Preview, Pages, Safari and Notes 
 - More than one dialog open in the app makes `desktop_dialog` refuse; pass the window target.
 - An existing file at the path makes the panel ask to replace it. Read it with `desktop_dialog` and answer deliberately.
 
+## Choose a file or folder in an Open panel
+
+An app's **File > Open…** (⌘O), or its "add a project" or "choose folder" button, shows an Open panel. In a sandboxed app the panel's content is drawn by the open and save panel service, a separate process, while the app lists the panel as its own window.
+
+1. Open the panel: `desktop_menu` with the app target and `path: ["File", "Open…"]`, or click the app's own button. Expect `completed`.
+2. `desktop_wait` with `until: "dialog_appears"` and `pid`. Expect `matched`.
+3. `desktop_dialog` with the app target. Expect `is_file_dialog` true, the panel's buttons such as **Open** and **Cancel**, and its window target. Use that window target for the next calls.
+4. `desktop_dialog_answer` with `path: "/Users/me/code/project"`. This is foreground: it activates the app and types the path into Go to Folder. Expect `completed` once the panel reads back the folder; an Open panel's file choice is `unknown`, so read the panel again with `desktop_dialog`.
+5. `desktop_dialog_answer` with `button: "Open"`, or the panel's default button's title (some apps name it Choose or Add).
+
+**Verify:** `desktop_wait` with `until: "dialog_gone"`, then check the app shows the file or folder.
+
+**Goes wrong:**
+
+- The panel service's own window is listed under its process, not the app's, with availability `open_save_panel_service`. Act on the app's window with the same title and bounds instead.
+- Background keys don't reach the panel's content, so `desktop_key` (such as ⇧⌘G for Go to Folder) and typing are refused. Clicks do work in the background: inspect the app's panel window and `desktop_click` a sidebar location or a row, then press **Open** with `desktop_dialog_answer`.
+- The panel's sidebar can fill much of an inspection; `desktop_dialog` lists the buttons and text fields directly.
+
 ## Pick a color in the Colors panel
 
 1. Select what the color applies to: for text in TextEdit, `desktop_select` the text.

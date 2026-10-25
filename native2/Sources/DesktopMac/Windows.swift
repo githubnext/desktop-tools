@@ -57,14 +57,16 @@ private struct Row {
 
 private func plural(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
 
+let openSavePanelService = "com.apple.appkit.xpc.openAndSavePanelService"
+
 extension Mac {
 	/// One app's windows, as desktop_windows lists them: CoreGraphics' rows enriched by Accessibility, then
 	/// windows only Accessibility knows. Each carries the evidence a later action checks before it acts.
 	public static func windows(pid: pid_t) async throws -> JSON {
-		let app = await MainActor.run { () -> (name: String, hidden: Bool)? in
+		let app = await MainActor.run { () -> (name: String, hidden: Bool, bundle: String?)? in
 			guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.processIdentifier == pid && !$0.isTerminated })
 			else { return nil }
-			return (app.localizedName ?? app.bundleIdentifier ?? "Unknown", app.isHidden)
+			return (app.localizedName ?? app.bundleIdentifier ?? "Unknown", app.isHidden, app.bundleIdentifier)
 		}
 		guard let app else { throw ToolError("notFound: Application 'PID:\(pid)' not found.") }
 		guard let generation = startIdentity(pid).value else {
@@ -94,7 +96,11 @@ extension Mac {
 			var omittedCG = 0
 			var seen = Set<Int>()
 			if merged {
-				let unmatched = axIncomplete
+				// The open and save panel service draws a sandboxed app's Open or Save panel and its sheets, such as Go to
+				// Folder, for that app, which lists the panel as its own window; Accessibility reaches it only there (#200).
+				let unmatched = app.bundle == openSavePanelService
+					? ("pixels_only", "open_save_panel_service")
+					: axIncomplete
 					? ("unknown", "accessibility_enumeration_incomplete")
 					: ("pixels_only", "no_matching_accessibility_window")
 				for cg in owned where seen.insert(cg.id).inserted {
