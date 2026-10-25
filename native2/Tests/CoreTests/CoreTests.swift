@@ -54,6 +54,13 @@ import Testing
 		#expect(result["space_id"] == 7)
 	}
 
+	@Test func panelServiceWindowPointsToTheApp() {
+		let row: JSON = .object([("is_on_screen", false), ("observation_capability", "pixels_only"), ("observation_reason", "open_save_panel_service")])
+		let result = windowAvailability(row, sessionLocked: false, appHidden: false)
+		#expect(result["reason"] == "open_save_panel_service")
+		#expect(result["state"] == "unavailable")
+	}
+
 	@Test func lockedComesFirst() {
 		let row: JSON = .object([("is_minimized", true)])
 		#expect(windowAvailability(row, sessionLocked: true, appHidden: true)["reason"] == "session_locked")

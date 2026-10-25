@@ -8,6 +8,10 @@ public func windowAvailability(_ window: JSON, sessionLocked: Bool, appHidden: B
 		return .object([("state", "unavailable"), ("reason", "session_locked"),
 		                ("hint", "The macOS GUI session is locked. Unlock the active user session, then observe the screen before retrying.")])
 	}
+	if window["observation_reason"]?.string == "open_save_panel_service" {
+		return .object([("state", "unavailable"), ("reason", "open_save_panel_service"),
+		                ("hint", "This window belongs to the service that draws another app's Open or Save panel, and to its sheets such as Go to Folder. Use the app that opened the panel: its desktop_windows lists the panel with the same title and bounds, which desktop_inspect and desktop_click reach in the background. To go to a folder or file, pass the app's target to desktop_dialog, then desktop_dialog_answer with path.")])
+	}
 	if window["is_minimized"]?.bool == true {
 		return .object([("state", "unavailable"), ("reason", "minimized"),
 		                ("hint", JSON("The window is minimized. Restore it with desktop_restore, using its target from desktop_windows, \(reinspect)"))])

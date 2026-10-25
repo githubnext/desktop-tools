@@ -138,9 +138,22 @@ extension Mac {
 			"Invalid target: Exact-window keyboard focus is not on the target window at dispatch. " + backgroundFocusRemediation,
 			hint: "Observe the intended target before retrying this operation."
 		)
-		guard let focusedWindow = AX.element(AX.value(app, kAXFocusedWindowAttribute)), AX.windowID(focusedWindow) == window.windowID,
-		      let focused = AX.element(AX.value(app, kAXFocusedUIElementAttribute))
+		guard let focusedWindow = AX.element(AX.value(app, kAXFocusedWindowAttribute)), AX.windowID(focusedWindow) == window.windowID
 		else { throw refusal }
+		guard let focused = AX.element(AX.value(app, kAXFocusedUIElementAttribute)) else {
+			// A sandboxed app's Open or Save panel is drawn by another process, which holds its focus and doesn't
+			// take background keys (#200).
+			if hostsRemoteContent(focusedWindow, pid: window.pid) {
+				var remote = Refusal(
+					"DESKTOP_ACTION_FAILED",
+					"The window's keyboard focus is in content another process draws, such as a sandboxed app's Open or Save panel, which background keys don't reach. Nothing was sent.",
+					hint: "Click the panel's elements with desktop_click, which works in the background. To go to a folder or file, use desktop_dialog with the app's target, then desktop_dialog_answer with path, which types it in the foreground."
+				)
+				remote.reason = "operation_unsupported"
+				throw remote
+			}
+			throw refusal
+		}
 		if let sheets = AX.value(focusedWindow, "AXSheets") as? [AXUIElement], !sheets.isEmpty { throw refusal }
 		AXUIElementSetMessagingTimeout(focused, 0.2)
 		if let owner = AX.element(AX.value(focused, kAXWindowAttribute)), AX.windowID(owner) != window.windowID { throw refusal }
@@ -152,6 +165,22 @@ extension Mac {
 			else { throw refusal }
 		}
 		return focused
+	}
+
+	/// Whether some element under `window` belongs to another process, as a remote view's content does.
+	static func hostsRemoteContent(_ window: AXUIElement, pid: pid_t) -> Bool {
+		var queue = [window]
+		var read = 0
+		while !queue.isEmpty, read < 200 {
+			let element = queue.removeFirst()
+			read += 1
+			AXUIElementSetMessagingTimeout(element, 0.2)
+			for child in AX.value(element, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
+				if let owner = AX.pid(child), owner > 0, owner != pid { return true }
+				queue.append(child)
+			}
+		}
+		return false
 	}
 
 	/// Whether the focused element is a password field, which only a password fill may type into.
