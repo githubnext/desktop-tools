@@ -98,7 +98,23 @@ extension Tools {
 
 	/// An observation bounded to the result limit, keeping the containers an agent can scope into.
 	static func boundedObservation(_ data: JSON, limit: Int = maxText) throws -> String {
-		try bounded(data, field: "ui_elements", limit: limit) { element in
+		// Elements entirely outside the window go first, since acting on them needs a scroll anyway (#178).
+		let bounds = data["coordinate_context"]?["logical_bounds"]?.array
+		let window = bounds.flatMap { pair -> CGRect? in
+			guard pair.count == 2, let origin = pair[0].array, let size = pair[1].array, origin.count == 2, size.count == 2,
+			      let x = origin[0].number, let y = origin[1].number, let width = size[0].number, let height = size[1].number
+			else { return nil }
+			return CGRect(x: x, y: y, width: width, height: height)
+		}
+		let offscreen: ((JSON) -> Bool)? = window.map { window in
+			{ element in
+				guard let frame = element["bounds"], let x = frame["x"]?.number, let y = frame["y"]?.number,
+				      let width = frame["width"]?.number, let height = frame["height"]?.number
+				else { return false }
+				return !CGRect(x: x, y: y, width: width, height: height).intersects(window)
+			}
+		}
+		return try bounded(data, field: "ui_elements", limit: limit, dropFirst: offscreen.map { ($0, "offscreen_omitted") }) { element in
 			element["attributes"]?["role"]?.string.map(scopeRoles.contains) ?? false
 		}
 	}
@@ -127,6 +143,7 @@ extension Tools {
 		if let scope = request.scope { source = try await scopeSource(scope, pid: pid, windowID: windowID) }
 		var budget = ElementBudget()
 		if source != nil { (budget.maxDepth, budget.maxElements, budget.maxChildren, budget.seconds) = (64, 4000, 1000, 18) }
+		budget.visibleFirst = true
 		let accessibility = !request.pixels
 		let ((window, image, elements, captureDone), web) = try await webRead(pid: pid, allowed: accessibility && request.web, tree: \.2) {
 			try await read(pid: pid, windowID: windowID, generation: generation, budget: accessibility ? budget : nil, started: started)
@@ -176,6 +193,7 @@ extension Tools {
 			"element_count": JSON(source == nil ? elements.elements.count : listed.count),
 			"scope": scope,
 			"traversed_element_count": source.map { _ in JSON(elements.elements.count) },
+			"offscreen_omitted": elements.offscreenSkipped > 0 ? JSON(elements.offscreenSkipped) : nil,
 			"ui_elements": .array(listed.map(json)),
 			"coordinate_context": .object([
 				("version", 1),

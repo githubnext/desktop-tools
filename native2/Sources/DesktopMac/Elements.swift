@@ -12,6 +12,10 @@ public struct ElementBudget: Sendable {
 	public var maxElements = 200
 	public var maxChildren = 100
 	public var seconds: Double = 15
+	/// Walk what intersects the window first: an element entirely outside the window's frame, with its subtree,
+	/// is read only after everything inside it, so a long page's offscreen content can't spend the budget (#178).
+	/// Element IDs still number the result in tree pre-order.
+	public var visibleFirst = false
 	public init() {}
 }
 
@@ -38,6 +42,8 @@ public struct ElementTree: @unchecked Sendable {
 	public var maxChildrenPerNodeReached = false
 	public var deadlineReached = false
 	public var incompleteAccessibilityRead = false
+	/// With `visibleFirst`, elements outside the window that the budget left unread; their descendants aren't counted.
+	public var offscreenSkipped = 0
 
 	public init() {}
 
@@ -210,6 +216,11 @@ private struct Walk {
 	var tree = ElementTree()
 	var visited: [AXUIElement] = []
 	var columnHeaders: [AXUIElement] = []
+	/// Each emitted element's position in the tree, as child indices from the root, which orders them in pre-order.
+	var paths: [[Int]] = []
+	/// The window's frame, once read, when offscreen subtrees wait for a second pass.
+	var visible: CGRect?
+	var deferred: [(element: AXUIElement, depth: Int, path: [Int])] = []
 	/// Only Notification Center's custom action names are listed; elsewhere they are arbitrary app text.
 	var listsCustomActions = false
 
@@ -268,18 +279,56 @@ private struct Walk {
 		return (result, false)
 	}
 
-	mutating func process(_ element: AXUIElement, depth: Int) {
-		guard ContinuousClock.now < deadline else { tree.deadlineReached = true; return }
-		guard depth < budget.maxDepth else { tree.maxDepthReached = true; return }
-		guard tree.elements.count < budget.maxElements else { tree.maxElementCountReached = true; return }
-		guard !visited.contains(where: { CFEqual($0, element) }) else { return }
-		visited.append(element)
+	/// Returns true when it set the element aside for the second pass.
+	@discardableResult
+	mutating func process(_ element: AXUIElement, depth: Int, path: [Int] = [], deferring: Bool = false) -> Bool {
+		guard ContinuousClock.now < deadline else { tree.deadlineReached = true; return false }
+		guard depth < budget.maxDepth else { tree.maxDepthReached = true; return false }
+		guard tree.elements.count < budget.maxElements else { tree.maxElementCountReached = true; return false }
+		guard !visited.contains(where: { CFEqual($0, element) }) else { return false }
 		AXUIElementSetMessagingTimeout(element, timeout() ?? 0.01)
 
 		let (read, incomplete) = descriptor(element)
+		if deferring, depth > 0, !incomplete, let read, let visible, !read.frame.intersects(visible) {
+			deferred.append((element, depth, path))
+			return true
+		}
+		visited.append(element)
 		if incomplete { tree.incompleteAccessibilityRead = true }
-		if let descriptor = read, !incomplete { emit(descriptor, element, depth: depth) }
-		processChildren(element, depth: depth)
+		if let descriptor = read, !incomplete {
+			if depth == 0, budget.visibleFirst { visible = descriptor.frame }
+			emit(descriptor, element, depth: depth)
+			paths.append(path)
+		}
+		processChildren(element, depth: depth, path: path, deferring: deferring)
+		return false
+	}
+
+	/// Walks from `root`, then, with `visibleFirst`, the offscreen subtrees it set aside, and numbers the elements
+	/// in tree pre-order.
+	mutating func walk(_ root: AXUIElement) {
+		process(root, depth: 0, deferring: budget.visibleFirst)
+		guard !deferred.isEmpty else { return }
+		let waiting = deferred
+		deferred = []
+		for (index, item) in waiting.enumerated() {
+			guard tree.elements.count < budget.maxElements, ContinuousClock.now < deadline else {
+				tree.offscreenSkipped = waiting.count - index
+				if tree.elements.count >= budget.maxElements { tree.maxElementCountReached = true } else { tree.deadlineReached = true }
+				break
+			}
+			process(item.element, depth: item.depth, path: item.path)
+		}
+		let order = paths.indices.sorted { paths[$0].lexicographicallyPrecedes(paths[$1]) }
+		var elements: [Element] = []
+		for (position, index) in order.enumerated() {
+			let old = tree.elements[index]
+			let id = "elem_\(position)"
+			elements.append(Element(id: id, type: old.type, label: old.label, value: old.value, frame: old.frame, isEnabled: old.isEnabled,
+			                        isSelected: old.isSelected, attributes: old.attributes, reference: old.reference))
+		}
+		tree.elements = elements
+		paths = order.map { paths[$0] }
 	}
 
 	mutating func emit(_ descriptor: Descriptor, _ element: AXUIElement, depth: Int) {
@@ -342,13 +391,18 @@ private struct Walk {
 		))
 	}
 
-	mutating func processChildren(_ element: AXUIElement, depth: Int) {
+	mutating func processChildren(_ element: AXUIElement, depth: Int, path: [Int], deferring: Bool) {
 		let read = children(element)
 		if read.incomplete { tree.incompleteAccessibilityRead = true }
-		if read.elements.count > budget.maxChildren { tree.maxChildrenPerNodeReached = true }
-		let limited = read.elements.prefix(budget.maxChildren)
+		// Set-aside children don't count toward the per-node limit, so a long list scrolled to its middle reaches
+		// the rows on screen; it scans at most ten times the limit.
+		let sorting = deferring && visible != nil
+		let limited = read.elements.prefix(sorting ? budget.maxChildren * 10 : budget.maxChildren)
+		if read.elements.count > limited.count { tree.maxChildrenPerNodeReached = true }
+		var taken = 0
 		for (index, child) in limited.enumerated() {
-			process(child, depth: depth + 1)
+			guard taken < budget.maxChildren else { tree.maxChildrenPerNodeReached = true; return }
+			if !process(child, depth: depth + 1, path: path + [index], deferring: deferring) { taken += 1 }
 			guard index < limited.count - 1 else { break }
 			if tree.elements.count >= budget.maxElements { tree.maxElementCountReached = true; return }
 			if ContinuousClock.now >= deadline { tree.deadlineReached = true; return }
@@ -382,7 +436,7 @@ extension Mac {
 		var walk = Walk(deadline: deadline, budget: budget)
 		walk.listsCustomActions = CustomActions.isNotificationCenter(pid)
 		walk.tree.windowTitle = AX.string(window, kAXTitleAttribute)
-		walk.process(window, depth: 0)
+		walk.walk(window)
 		if walk.tree.elements.isEmpty {
 			throw ToolError("internalError: Exact window \(windowID) returned no usable Accessibility elements. Warning: AX tree incomplete at incomplete accessibility read. Retry once after a short wait.")
 		}

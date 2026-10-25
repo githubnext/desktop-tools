@@ -26,38 +26,40 @@ public struct ToolResult: Sendable {
 	}
 }
 
-/// Fits `field` within `limit` bytes by dropping its last values, those `keep` accepts only after all others. The
-/// limit applies to the compact result a model reads; the text returned stays whole for internal reads.
-public func bounded(_ data: JSON, field: String, limit: Int = maxText, keep: ((JSON) -> Bool)? = nil) throws -> String {
+/// Fits `field` within `limit` bytes by dropping its last values, those `keep` accepts only after all others. With
+/// `dropFirst`, the values its predicate accepts go before any others, and how many went is added to its count
+/// field. The limit applies to the compact result a model reads; the text returned stays whole for internal reads.
+public func bounded(
+	_ data: JSON, field: String, limit: Int = maxText, dropFirst: (predicate: (JSON) -> Bool, count: String)? = nil,
+	keep: ((JSON) -> Bool)? = nil
+) throws -> String {
 	guard let source = data[field]?.array else { throw ToolError("Native inspection returned no \(field) array.") }
-	var values = source
-	var value = data
-	value.set(field, .array(values))
 	func size(_ value: JSON) -> Int { compact(value, allWindows: true).text.utf8.count }
-	func truncated(_ kept: [JSON]) -> JSON {
+	guard size(data) > limit else { return data.text }
+	// The order values are dropped in: by tier, and within a tier from the end.
+	let tier = { (value: JSON) -> Int in
+		(dropFirst?.predicate(value) == true ? 0 : 2) + (keep?(value) == true ? 1 : 0)
+	}
+	let tiers = source.map(tier)
+	let order = source.indices.sorted { tiers[$0] != tiers[$1] ? tiers[$0] < tiers[$1] : $0 > $1 }
+	func truncated(dropping count: Int) -> JSON {
+		let dropped = Set(order.prefix(count))
 		var shorter = data
-		shorter.set(field, .array(kept))
+		shorter.set(field, .array(source.indices.filter { !dropped.contains($0) }.map { source[$0] }))
 		shorter.set("truncated", true)
-		shorter.set("omitted", JSON(source.count - kept.count))
+		shorter.set("omitted", JSON(count))
+		if let dropFirst {
+			let first = order.prefix(count).filter { tiers[$0] < 2 }.count
+			if first > 0 { shorter.set(dropFirst.count, JSON((data[dropFirst.count]?.int ?? 0) + first)) }
+		}
 		return shorter
 	}
-	// Without `keep`, dropping from the end keeps the longest prefix that fits, so search for it
-	// rather than writing the whole result once per dropped value.
-	if keep == nil, size(value) > limit {
-		var fits = 0
-		var over = values.count
-		while over - fits > 1 {
-			let mid = (fits + over) / 2
-			if size(truncated(Array(values[..<mid]))) <= limit { fits = mid } else { over = mid }
-		}
-		values = Array(values[..<fits])
-		value = truncated(values)
+	// Dropping more never grows the result, so search for the fewest drops that fit.
+	guard size(truncated(dropping: source.count)) <= limit else { throw ToolError("Native inspection metadata exceeds the result limit.") }
+	var fits = source.count, over = 0
+	while fits - over > 1 {
+		let mid = (fits + over) / 2
+		if size(truncated(dropping: mid)) <= limit { fits = mid } else { over = mid }
 	}
-	while size(value) > limit, !values.isEmpty {
-		let index = keep.flatMap { keep in values.lastIndex { !keep($0) } } ?? values.count - 1
-		values.remove(at: index)
-		value = truncated(values)
-	}
-	guard size(value) <= limit else { throw ToolError("Native inspection metadata exceeds the result limit.") }
-	return value.text
+	return truncated(dropping: fits).text
 }
