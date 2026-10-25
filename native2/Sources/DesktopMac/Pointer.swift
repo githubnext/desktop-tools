@@ -164,12 +164,14 @@ extension Mac {
 			throw Refusal("ELEMENT_NOT_FOUND", "No Accessibility element is at that point in the window.")
 		}
 		var candidates = [hit] + descendants(of: hit, containing: point)
+		var ancestors: [AXUIElement] = []
 		var parent = hit
 		for _ in 0..<8 {
 			guard let next = AX.element(AX.value(parent, kAXParentAttribute)) else { break }
-			candidates.append(next)
+			ancestors.append(next)
 			parent = next
 		}
+		candidates += beneathOverlay(hit, ancestors: ancestors, containing: point) + ancestors
 		let roles = candidates.map { AX.string($0, kAXRoleAttribute) ?? "" }
 		let enabled = candidates.map { (AX.value($0, kAXEnabledAttribute) as? Bool) != false }
 		let pick: (AXUIElement, String)? = {
@@ -377,6 +379,31 @@ extension Mac {
 	static func actions(_ element: AXUIElement) -> [String] {
 		var names: CFArray?
 		return AXUIElementCopyActionNames(element, &names) == .success ? names as? [String] ?? [] : []
+	}
+
+	/// Elements under an empty overlay at the point, smallest first. Chrome's vertical tab strip lays childless,
+	/// actionless groups over its tabs, and the Accessibility hit test returns one of those, whose ancestors hold
+	/// nothing pressable (#202). When the hit is such a group, the tree of its parent, then grandparent, is searched
+	/// for elements at the point instead, so the tab or its close button is found.
+	private static func beneathOverlay(_ hit: AXUIElement, ancestors: [AXUIElement], containing point: CGPoint) -> [AXUIElement] {
+		beneath(
+			hit, ancestors: ancestors, role: { AX.string($0, kAXRoleAttribute) ?? "" },
+			isLeaf: { (AX.value($0, kAXChildrenAttribute) as? [AXUIElement] ?? []).isEmpty }, actions: actions,
+			atPoint: { descendants(of: $0, containing: point) }, area: { AX.frame($0).map { $0.width * $0.height } ?? .greatestFiniteMagnitude },
+			same: { CFEqual($0, $1) }
+		)
+	}
+
+	static func beneath<Node>(
+		_ hit: Node, ancestors: [Node], role: (Node) -> String, isLeaf: (Node) -> Bool, actions: (Node) -> [String],
+		atPoint: (Node) -> [Node], area: (Node) -> CGFloat, same: (Node, Node) -> Bool
+	) -> [Node] {
+		guard role(hit) == "AXGroup", isLeaf(hit), actions(hit).isEmpty else { return [] }
+		for root in ancestors.prefix(2) {
+			let found = atPoint(root).filter { !same($0, hit) && actions($0).contains(kAXPressAction) }
+			if !found.isEmpty { return found.sorted { area($0) < area($1) } }
+		}
+		return []
 	}
 
 	/// Up to 256 descendants, 8 levels deep, whose frames contain the point, breadth first.
