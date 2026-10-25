@@ -87,6 +87,14 @@ extension Tools {
 		return id
 	}
 
+	/// Typing is refused while any app holds secure keyboard entry.
+	static func secureEntryRefusal() -> Refusal {
+		clientRefusal(
+			"Secure keyboard entry is on, as for a password field or a terminal's Secure Keyboard Entry, so typed text can't be delivered. Nothing was typed.",
+			hint: "Use a field that isn't secure, or turn off Secure Keyboard Entry in the app."
+		)
+	}
+
 	// MARK: desktop_set_value
 
 	static func setValue(_ arguments: JSON) async throws -> ToolResult {
@@ -129,7 +137,7 @@ extension Tools {
 		if isSecure(observed) { throw secureFieldRefusal }
 		let role = observed.attributes["role"] ?? ""
 		let isString = if case .string = value { true } else { false }
-		if textValueRoles.contains(role) { throw clientRefusal("Use desktop_type to replace a text control's value.") }
+		if textValueRoles.contains(role) { throw clientRefusal("Use desktop_type to replace a text control's value; if its window doesn't hold keyboard focus, desktop_insert with foreground true brings the app forward and types with real keys.") }
 		if dateValueRoles.contains(role) {
 			guard isString else { throw clientRefusal("A \(role) takes an ISO 8601 date, such as 2026-10-17T15:30.") }
 			guard observed.attributes["isValueSettable"] != "false" else {
@@ -307,6 +315,34 @@ extension Tools {
 		} else {
 			nil
 		}
+		if try foregroundFlag(arguments) {
+			guard route != "paste" else { throw ToolError("Foreground insertion types with real keys; omit route, or use route type.") }
+			let send = {
+				await act("insert", snapshotID: snapshotID, element: nil, early: typedRefusal, precheck: { _, _ in
+					if let typedRefusal { throw typedRefusal }
+					if IsSecureEventInputEnabled() { throw secureEntryRefusal() }
+				}) { snapshot, _ in
+					let focused = snapshot.focused
+					var delivery = try Mac.foregroundType(text, target: KeyboardTarget(window: window(snapshot), focusedRole: focused?.attributes["role"], focusedFrame: focused?.frame), control: focused?.reference)
+					delivery.fields.insert(("receiver", JSON(focused == nil ? "window_focus" : "observed_control")), at: 0)
+					if !delivery.fields.contains(where: { $0.0 == "error" }) {
+						let readBack = delivery.fields.first { $0.0 == "read_back" }?.1.string
+						let seen = readBack.map { value in
+							let shown = value.count > 200 ? String(value.prefix(200)) + "…" : value
+							return value.contains(text) ? "The control now reads \"\(shown)\", which contains the text." : "The control now reads \"\(shown)\", which doesn't contain the text as typed."
+						} ?? "No control's value could be read back."
+						delivery.fields.append(("error", .object([
+							("code", "INSERTION_UNVERIFIED"),
+							("message", JSON("The text was typed with real keys after bringing the app forward, then focus was given back. \(seen)")),
+							("hint", "Inspect the window to check the text before acting again; do not repeat the insertion blindly."),
+						])))
+					}
+					return delivery
+				}
+			}
+			if let expect = try expectation(arguments) { return try await expectAfter(expect) { await send() } }
+			return await send()
+		}
 		let send = {
 			let observed = await Snapshots.shared.get(snapshotID)
 			// Without an observed focused control there's no text to read back, so insertion types into window focus.
@@ -314,12 +350,7 @@ extension Tools {
 			if types {
 				return await act("insert", snapshotID: snapshotID, element: nil, early: route == "type" ? typedRefusal : nil, precheck: { _, _ in
 					if let typedRefusal { throw typedRefusal }
-					if IsSecureEventInputEnabled() {
-						throw clientRefusal(
-							"Secure keyboard entry is on, as for a password field or a terminal's Secure Keyboard Entry, so typed text can't be delivered. Nothing was typed.",
-							hint: "Use a field that isn't secure, or turn off Secure Keyboard Entry in the app."
-						)
-					}
+					if IsSecureEventInputEnabled() { throw secureEntryRefusal() }
 				}) { snapshot, _ in
 					let focused = snapshot.focused
 					var delivery = try Mac.insertKeys(text, target: KeyboardTarget(window: window(snapshot), focusedRole: focused?.attributes["role"], focusedFrame: focused?.frame))

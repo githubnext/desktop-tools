@@ -1576,7 +1576,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 	},
 	{
 		"name": "desktop_scroll",
-		"description": "Scroll an element or point from a fresh desktop_inspect snapshot up, down, left or right by amount (1–20 native units, not pixels). Background, without moving the pointer; completed means delivered. A web page with no other background route scrolls with arrow keys while its window's keyboard focus is on the page, not in a field. Unsupported targets are refused. Inspect the new position before scrolling again.",
+		"description": "Scroll an element or point from a fresh desktop_inspect snapshot up, down, left or right by amount (1–20 native units, not pixels). Background, without moving the pointer; completed means delivered. A web page with no other background route scrolls with arrow keys while its window's keyboard focus is on the page, not in a field. Unsupported targets are refused. Inspect the new position before scrolling again. foreground true instead brings the app forward, sends real scroll-wheel ticks with the pointer over the target, then gives the pointer and focus back; it is unknown, with content_moved read back, and is refused while a key or button is held.",
 		"inputSchema": {
 			"type": "object",
 			"required": [
@@ -1628,6 +1628,9 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 					"type": "integer",
 					"minimum": 1,
 					"maximum": 20
+				},
+				"foreground": {
+					"type": "boolean"
 				}
 			}
 		},
@@ -2168,7 +2171,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 	},
 	{
 		"name": "desktop_insert",
-		"description": "Insert text at the caret, or over the selection, in the window of a fresh desktop_inspect snapshot, keeping the text around it. Background, without activating the app. When the snapshot shows a focused control, it pastes the whole string, newlines included, through a temporary clipboard and restores it once it reads the edit back (route paste; needs clipboard read access). Otherwise, as in terminals, canvases and web editors, it types into the window's keyboard focus (route type): up to 1000 UTF-16 units, no newlines or tabs (press those with desktop_key), refused under secure keyboard entry, and unknown unless the host reads an observed control back. route forces either one. Instead of text, format image with one absolute path (PNG, JPEG or TIFF up to 10 MiB) or format files with 1–32 absolute paths pastes attachments into a native text area such as TextEdit rich text, Mail or Notes: completed when one U+FFFC per item reads back in place of the selection, then the clipboard is restored. format files into a Finder window's file list copies them into its folder: completed with copy started once every name is in the folder, and refused with PASTE_NAME_EXISTS if one already is. Any other receiver, including web fields, is refused with PASTE_UNVERIFIABLE_RECEIVER before input; clipboard replace pastes there anyway, leaving the item on the clipboard (left_replaced), and is unknown unless the attachment is seen. Every route is refused with SECURE_FIELD_REQUIRES_FILL while a password field has keyboard focus: use desktop_fill_password. Optional expect is one desktop_wait condition this input should make true. It must not hold beforehand, or nothing is sent; if the outcome is unknown and it holds within timeout_ms (default 3000, at most 10000), the outcome becomes completed.",
+		"description": "Insert text at the caret, or over the selection, in the window of a fresh desktop_inspect snapshot, keeping the text around it. Background, without activating the app. When the snapshot shows a focused control, it pastes the whole string, newlines included, through a temporary clipboard and restores it once it reads the edit back (route paste; needs clipboard read access). Otherwise, as in terminals, canvases and web editors, it types into the window's keyboard focus (route type): up to 1000 UTF-16 units, no newlines or tabs (press those with desktop_key), refused under secure keyboard entry, and unknown unless the host reads an observed control back. route forces either one. Instead of text, format image with one absolute path (PNG, JPEG or TIFF up to 10 MiB) or format files with 1–32 absolute paths pastes attachments into a native text area such as TextEdit rich text, Mail or Notes: completed when one U+FFFC per item reads back in place of the selection, then the clipboard is restored. format files into a Finder window's file list copies them into its folder: completed with copy started once every name is in the folder, and refused with PASTE_NAME_EXISTS if one already is. Any other receiver, including web fields, is refused with PASTE_UNVERIFIABLE_RECEIVER before input; clipboard replace pastes there anyway, leaving the item on the clipboard (left_replaced), and is unknown unless the attachment is seen. Every route is refused with SECURE_FIELD_REQUIRES_FILL while a password field has keyboard focus: use desktop_fill_password. foreground true, for a window that doesn't keep keyboard focus, brings the app forward, types the text with real keys into the snapshot's focused control (or the window's focus), then gives focus back: same limits as route type, unknown, with the control's value as read_back. Optional expect is one desktop_wait condition this input should make true. It must not hold beforehand, or nothing is sent; if the outcome is unknown and it holds within timeout_ms (default 3000, at most 10000), the outcome becomes completed.",
 		"inputSchema": {
 			"type": "object",
 			"required": [
@@ -2220,6 +2223,9 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 						"restore",
 						"replace"
 					]
+				},
+				"foreground": {
+					"type": "boolean"
 				},
 				"expect": {
 					"type": "object",

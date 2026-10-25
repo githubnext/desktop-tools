@@ -54,7 +54,7 @@ public struct KeyboardTarget: Sendable {
 }
 
 /// Peekaboo's explanation of why background keys can't move focus to a window.
-let backgroundFocusRemediation = "Background keystrokes follow the application's own keyboard focus and cannot be aimed at a window that does not hold it; such a window also refuses accessibility focus requests, so no amount of retrying moves focus there in the background. To write into this window without focusing it, observe it and set its editable element's accessibility value (`set-value` command, `set_value` tool). Use foreground delivery only when the window may take focus."
+let backgroundFocusRemediation = "Background keystrokes follow the application's own keyboard focus and cannot be aimed at a window that does not hold it; such a window also refuses accessibility focus requests, so no amount of retrying moves focus there in the background. To type into this window anyway, pass foreground true to desktop_insert, which brings the app forward, types with real keys and gives focus back; desktop_set_value doesn't take text. Use foreground delivery only when the window may take focus."
 
 /// Keys, typing and pastes stop while a secure text field has keyboard focus.
 let secureFocusRefusal = {

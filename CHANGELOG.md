@@ -4,6 +4,10 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Added
+
+- `desktop_insert` and `desktop_scroll` take `foreground: true` for windows background input can't reach, such as a web page in a window that doesn't keep keyboard focus while the agent's terminal is in front. The app is brought forward, the text is typed with real keys or the scroll is sent as real wheel ticks with the pointer over the target, and the pointer and the previously focused window are given back. Results are unknown, with `read_back` (the control's value) or `content_moved`. The default stays background, and the refusals that pointed typing at `desktop_set_value` now name this option. ([#177](https://github.com/githubnext/desktop-tools/issues/177), [#197](https://github.com/githubnext/desktop-tools/issues/197))
+
 ### Fixed
 
 - `desktop_inspect` takes its screenshot after reading the window's Accessibility tree, not during it. Reading some SwiftUI lists makes them load rows and grow, which moved content after the screenshot was taken, so a point read off it could click whatever moved under it. An inspection takes about as long as its tree read longer. ([#159](https://github.com/githubnext/desktop-tools/issues/159))

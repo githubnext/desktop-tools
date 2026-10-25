@@ -100,7 +100,7 @@ extension Mac {
 	}
 
 	/// Up to 64 elements in the page with their frames, breadth first, to tell later whether the content moved.
-	private static func landmarks(_ web: AXUIElement) -> [(AXUIElement, CGRect)] {
+	static func landmarks(_ web: AXUIElement) -> [(AXUIElement, CGRect)] {
 		var found: [(AXUIElement, CGRect)] = []
 		var queue = AX.value(web, kAXChildrenAttribute) as? [AXUIElement] ?? []
 		var seen = 0
@@ -116,7 +116,7 @@ extension Mac {
 	}
 
 	/// Whether any landmark moved the way the content moves for this direction, within half a second.
-	private static func scrolled(_ before: [(AXUIElement, CGRect)], direction: ScrollDirection) -> Bool {
+	static func scrolled(_ before: [(AXUIElement, CGRect)], direction: ScrollDirection) -> Bool {
 		guard !before.isEmpty else { return false }
 		let deadline = ContinuousClock.now + .milliseconds(500)
 		repeat {
