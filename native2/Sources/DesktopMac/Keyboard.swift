@@ -211,10 +211,39 @@ extension Mac {
 		var delivery = try postKeys(plan, target: target, check: { try requireKeyboardFocus(target) })
 		guard delivery.outcome == "completed" else { return delivery }
 		Thread.sleep(forTimeInterval: 0.05)
+		// Chrome selects all through its Edit menu, which doesn't run for a background app's key event, so select
+		// the field's text through Accessibility as well.
+		if let value = AX.string(focused, kAXValueAttribute), !value.isEmpty, settable(focused, kAXSelectedTextRangeAttribute) {
+			var range = CFRange(location: 0, length: (value as NSString).length)
+			if let all = AXValueCreate(.cfRange, &range) {
+				_ = AXUIElementSetAttributeValue(focused, kAXSelectedTextRangeAttribute as CFString, all)
+				// A busy page applies the selection late, so wait (briefly) until it reads back before Delete.
+				let selecting = ContinuousClock.now
+				while ContinuousClock.now < selecting + .milliseconds(300) {
+					var selected = CFRange(location: 0, length: 0)
+					if let raw = AX.value(focused, kAXSelectedTextRangeAttribute), CFGetTypeID(raw) == AXValueGetTypeID(),
+					   AXValueGetValue(raw as! AXValue, .cfRange, &selected), selected.length == range.length { break }
+					Thread.sleep(forTimeInterval: 0.02)
+				}
+			}
+		}
 		plan = [(0x33, true, []), (0x33, false, [])]
 		delivery = try postKeys(plan, target: target, check: { try requireKeyboardFocus(target) }, alreadySent: 4)
 		guard delivery.outcome == "completed" else { return delivery }
 		Thread.sleep(forTimeInterval: 0.05)
+		// The field must read empty before typing, or the text would land beside what was there, and a read-back
+		// could match the old value.
+		let clearing = ContinuousClock.now
+		var remaining = AX.string(focused, kAXValueAttribute)
+		while remaining?.isEmpty == false, ContinuousClock.now < clearing + .milliseconds(500) {
+			Thread.sleep(forTimeInterval: 0.03)
+			remaining = AX.string(focused, kAXValueAttribute)
+		}
+		if let remaining, !remaining.isEmpty {
+			var stopped = Delivery(state: .indeterminate, mechanism: "window_targeted_events", evidence: "completion_unknown", units: 6)
+			stopped.fields = [("read_back", JSON(remaining)), ("not_cleared", true)]
+			return stopped
+		}
 		var sent = 6
 		let source = CGEventSource(stateID: .hidSystemState)
 		for character in text {
@@ -232,15 +261,24 @@ extension Mac {
 			}
 			usleep(2000)
 		}
-		// Read back what the page now holds; an exact match confirms the typing.
-		let deadline = ContinuousClock.now + .milliseconds(250)
-		while ContinuousClock.now < deadline {
-			if AX.string(focused, kAXValueAttribute) == text {
+		// Read back what the page now holds; an exact match confirms the typing. A page may still be handling the
+		// keys, or re-rendering the field (#203), so wait up to 2 s for the value to match, or to hold still for 400 ms
+		// once it shows any text. A busy page may show an empty field until it catches up.
+		let start = ContinuousClock.now
+		var last = AX.string(focused, kAXValueAttribute)
+		var changed = start
+		while ContinuousClock.now < start + .milliseconds(2000) {
+			if last == text {
 				return Delivery(state: .confirmedChange, mechanism: "window_targeted_events", evidence: "verified_change", units: sent)
 			}
-			Thread.sleep(forTimeInterval: 0.02)
+			if last?.isEmpty == false, ContinuousClock.now >= start + .milliseconds(250), ContinuousClock.now >= changed + .milliseconds(400) { break }
+			Thread.sleep(forTimeInterval: 0.03)
+			let value = AX.string(focused, kAXValueAttribute)
+			if value != last { last = value; changed = ContinuousClock.now }
 		}
-		return Delivery(state: .dispatchedUnverified, mechanism: "window_targeted_events", evidence: "delivery_accepted", units: sent)
+		delivery = Delivery(state: .dispatchedUnverified, mechanism: "window_targeted_events", evidence: "delivery_accepted", units: sent)
+		if let last { delivery.fields = [("read_back", JSON(last))] }
+		return delivery
 	}
 
 	private static func postKeys(_ plan: [(CGKeyCode, Bool, CGEventFlags)], target: KeyboardTarget, check: () throws -> AXUIElement, alreadySent: Int = 0) throws -> Delivery {
