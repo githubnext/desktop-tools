@@ -29,7 +29,7 @@ extension Tools {
 			Hooks.showPointer(.click(at: global, kind: kind, window: window.windowID))
 			switch (kind, target) {
 			case (.single, let element?):
-				do { return try Mac.clickElement(element.reference, window: window) } catch is Unsupported {
+				do { return try Mac.clickElement(element.reference, window: window, at: global) } catch is Unsupported {
 					return try Mac.clickPoint(global, window: window)
 				}
 			case (.single, nil):

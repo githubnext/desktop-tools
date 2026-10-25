@@ -136,13 +136,16 @@ extension Mac {
 
 	/// An element click as Peekaboo's action route performs it: focus a text input, else AXPress, else
 	/// focus whatever accepts it. Throws Unsupported when none applies.
-	public static func clickElement(_ element: AXUIElement, window: ClickWindow) throws -> Delivery {
+	/// `point` is where the element is aimed at, its observed center; with it, a web element WebKit would press
+	/// through a nested control is clicked at that point instead (pressNestedSafely).
+	public static func clickElement(_ element: AXUIElement, window: ClickWindow, at point: CGPoint? = nil) throws -> Delivery {
 		AXUIElementSetMessagingTimeout(element, 1)
 		let role = AX.string(element, kAXRoleAttribute) ?? ""
 		if textInputRoles.contains(role), settable(element, kAXFocusedAttribute) {
 			return try focus(element, window: window)
 		}
 		if actions(element).contains(kAXPressAction) {
+			if let point { return try pressNestedSafely(element, role: role, at: point, window: window) }
 			return try press(element, window: window)
 		}
 		if focusableRoles.contains(role) && settable(element, kAXFocusedAttribute) || settable(element, kAXValueAttribute) {
@@ -193,13 +196,125 @@ extension Mac {
 		}
 		switch how {
 		case "focus": return try focus(element, window: window)
-		case "press": return try press(element, window: window)
+		case "press":
+			// A point click can land on a parent or child of what the caller saw there, so the result names it.
+			return try pressNestedSafely(element, role: AX.string(element, kAXRoleAttribute) ?? "", at: point, window: window)
 		default:
 			try window.check()
 			let error = AXUIElementSetAttributeValue(element, kAXSelectedAttribute as CFString, kCFBooleanTrue)
 			guard error == .success else { return Delivery(state: .indeterminate, mechanism: "accessibility_value", evidence: "completion_unknown", units: 1) }
 			return .accepted("accessibility_value")
 		}
+	}
+
+	// MARK: Presses WebKit would redirect
+
+	/// AXPress, unless WebKit would press a different control. WebCore's AccessibilityObject::press presses an
+	/// ARIA menu item, button, tab, toggle or list item through the first native button, select or checkbox inside
+	/// it (nativeActionElement), so pressing a menu row that holds a hover-only remove button presses remove (#195).
+	/// Such an element gets a real click routed to its window at the point instead, where the page's own hit
+	/// testing decides, and only when Accessibility finds the element itself at that point. The result names what
+	/// got the input.
+	static func pressNestedSafely(_ element: AXUIElement, role: String, at point: CGPoint, window: ClickWindow) throws -> Delivery {
+		let pressed = pressedJSON(element, role: role)
+		guard webPressRedirects(role: role), !routesThroughSkyLight(window.pid), AXWebTextMarkers(element: element) != nil,
+		      let control = nativeControl(in: element, role: { AX.string($0, kAXRoleAttribute) ?? "" }, children: { AX.value($0, kAXChildrenAttribute) as? [AXUIElement] ?? [] })
+		else {
+			var delivery = try press(element, window: window)
+			delivery.fields.append(("pressed", pressed))
+			return delivery
+		}
+		let nested = pressedJSON(control, role: AX.string(control, kAXRoleAttribute) ?? "")
+		let what = describe(element, role: role), inner = describe(control, role: AX.string(control, kAXRoleAttribute) ?? "")
+		let application = AXUIElementCreateApplication(window.pid)
+		AXUIElementSetMessagingTimeout(application, 1)
+		var hit: AXUIElement?
+		guard AXUIElementCopyElementAtPosition(application, Float(point.x), Float(point.y), &hit) == .success, let hit,
+		      isPlainPart(hit, of: element)
+		else {
+			var refusal = Refusal(
+				"DESKTOP_ACTION_FAILED",
+				"An Accessibility press on \(what) would press \(inner) inside it, and the point (\(Int(point.x)), \(Int(point.y))) is not on \(what) itself, so nothing was clicked.",
+				hint: "Inspect again and click a point on the visible part of \(what), away from \(inner); click \(inner) only to use it.",
+				fromHost: true
+			)
+			refusal.reason = "operation_unsupported"
+			refusal.fields = [("nested_control", nested)]
+			throw refusal
+		}
+		// WebKit drops the first click into a window that isn't key in the active app (acceptsFirstMouse), so a
+		// routed click reaches the page only when the window is in front.
+		guard NSRunningApplication(processIdentifier: window.pid)?.isActive == true,
+		      AX.element(AX.value(application, kAXFocusedWindowAttribute)).flatMap(AX.windowID) == window.windowID
+		else {
+			var refusal = Refusal(
+				"DESKTOP_ACTION_FAILED",
+				"An Accessibility press on \(what) would press \(inner) inside it, and a background pointer click doesn't reach this page while its window isn't the frontmost window, so nothing was clicked.",
+				hint: "Bring the window forward with desktop_focus (foreground) and click again, or reach \(what) with the keyboard.",
+				fromHost: true
+			)
+			refusal.reason = "operation_unsupported"
+			refusal.fields = [("nested_control", nested)]
+			throw refusal
+		}
+		var delivery = try routedClick(at: point, kind: .single, window: window)
+		delivery.fields += [
+			("pressed", pressed), ("nested_control", nested),
+			("note", JSON("Sent as a pointer click at the point, since an Accessibility press on \(what) would press \(inner) inside it.")),
+		]
+		return delivery
+	}
+
+	/// The roles WebCore's actionElement checks for a native control inside, as macOS names them.
+	static func webPressRedirects(role: String) -> Bool {
+		["AXMenuItem", "AXButton", "AXPopUpButton", "AXRadioButton", "AXCheckBox", "AXMenuButton", "AXGroup"].contains(role)
+	}
+
+	/// The first native-looking control below a node, depth first as WebCore searches, within 6 levels and 128 nodes.
+	/// Accessibility doesn't say which buttons are native, so any button, pop-up, checkbox or radio button counts.
+	static func nativeControl<Node>(in root: Node, role: (Node) -> String, children: (Node) -> [Node]) -> Node? {
+		var visited = 0
+		func search(_ node: Node, depth: Int) -> Node? {
+			guard depth < 6 else { return nil }
+			for child in children(node) {
+				visited += 1
+				if visited > 128 { return nil }
+				if ["AXButton", "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXMenuButton"].contains(role(child)) { return child }
+				if let found = search(child, depth: depth + 1) { return found }
+			}
+			return nil
+		}
+		return search(root, depth: 0)
+	}
+
+	/// Whether the element at a point is the element, or a part of it that is no control of its own.
+	private static func isPlainPart(_ hit: AXUIElement, of element: AXUIElement) -> Bool {
+		var current = hit
+		for _ in 0..<8 {
+			if CFEqual(current, element) { return true }
+			if ["AXButton", "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXMenuButton", "AXLink", "AXTextField", "AXTextArea"].contains(AX.string(current, kAXRoleAttribute) ?? "") {
+				return false
+			}
+			guard let parent = AX.element(AX.value(current, kAXParentAttribute)) else { return false }
+			current = parent
+		}
+		return false
+	}
+
+	private static func label(_ element: AXUIElement) -> String {
+		for attribute in [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute] {
+			if let text = AX.string(element, attribute)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty { return text }
+		}
+		return ""
+	}
+
+	private static func pressedJSON(_ element: AXUIElement, role: String) -> JSON {
+		.object([("role", JSON(role)), ("label", JSON(label(element)))])
+	}
+
+	private static func describe(_ element: AXUIElement, role: String) -> String {
+		let text = label(element)
+		return text.isEmpty ? "the \(role)" : "the \(role) \"\(text)\""
 	}
 
 	/// AXShowMenu, which blocks while the menu is open; a menu still open after half a second is still running.
