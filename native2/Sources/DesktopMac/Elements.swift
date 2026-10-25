@@ -441,6 +441,7 @@ extension Mac {
 		AXUIElementSetMessagingTimeout(app, 0.2)
 		let windows = AX.value(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
 		return windows.contains { AX.windowID($0) == windowID } || openMenu(app, windowID: windowID) != nil
+	}
 
 	/// Walks the subtree under one element an earlier walk emitted, so the whole budget goes to that subtree.
 	/// Depths start at 0 at `root`. An empty tree means the element is gone or no longer readable.
