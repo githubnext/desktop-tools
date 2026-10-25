@@ -20,12 +20,22 @@ struct InputActivity: Equatable {
 
 	var hasHeldInput: Bool { heldKeys.contains(true) || heldButtons.contains(true) }
 
+	/// The keys and buttons held, named as a person would read them, such as "Shift (key 56)" or "mouse button 3".
+	var heldNames: [String] {
+		heldKeys.indices.filter { heldKeys[$0] }.map { keyName(CGKeyCode($0)) }
+			+ heldButtons.indices.filter { heldButtons[$0] }.map { ["left mouse button", "right mouse button", "middle mouse button"].indices.contains($0) ? ["left mouse button", "right mouse button", "middle mouse button"][$0] : "mouse button \($0)" }
+	}
+
 	static func current() -> InputActivity {
 		let state = CGEventSourceStateID.combinedSessionState
 		func count(_ type: CGEventType) -> UInt32 { CGEventSource.counterForEventType(state, eventType: type) }
-		// Caps Lock's key state is its latch, not a held key.
-		let keys = (CGKeyCode(0)..<128).map { $0 != 0x39 && CGEventSource.keyState(state, key: $0) }
-		let buttons = (UInt32(0)..<32).map { CGMouseButton(rawValue: $0).map { CGEventSource.buttonState(state, button: $0) } ?? false }
+		// Held means held at the hardware level. The combined session state also keeps keys and buttons that some
+		// process posted down to the session and never released, or whose release a secure field swallowed; those
+		// stay "down" until pressed again and refused every modifier click while nothing was held (#198). Caps Lock's
+		// key state is its latch, not a held key.
+		let held = CGEventSourceStateID.hidSystemState
+		let keys = (CGKeyCode(0)..<128).map { $0 != 0x39 && CGEventSource.keyState(held, key: $0) }
+		let buttons = (UInt32(0)..<32).map { CGMouseButton(rawValue: $0).map { CGEventSource.buttonState(held, button: $0) } ?? false }
 		return InputActivity(
 			moved: count(.mouseMoved), leftDragged: count(.leftMouseDragged), rightDragged: count(.rightMouseDragged),
 			otherDragged: count(.otherMouseDragged), leftDown: count(.leftMouseDown), leftUp: count(.leftMouseUp),
@@ -49,6 +59,21 @@ struct InputActivity: Equatable {
 		next.moved &+= 1
 		return next
 	}
+}
+
+/// A key's name for a refusal: its modifier or contract name, with its virtual key code.
+func keyName(_ code: CGKeyCode) -> String {
+	let modifiers: [CGKeyCode: String] = [
+		0x37: "Command", 0x36: "Right Command", 0x38: "Shift", 0x3C: "Right Shift", 0x3A: "Option", 0x3D: "Right Option",
+		0x3B: "Control", 0x3E: "Right Control", 0x3F: "Fn",
+	]
+	let name = modifiers[code] ?? namedKeys.filter { $0.value == code }.keys.min().map { $0.prefix(1).uppercased() + $0.dropFirst() }
+	return name.map { "\($0) (key \(code))" } ?? "key \(code)"
+}
+
+/// "A", "A and B", "A, B and C".
+func spokenList(_ items: [String]) -> String {
+	items.count < 2 ? items.joined() : items.dropLast().joined(separator: ", ") + " and " + items.last!
 }
 
 /// The frontmost app and its focused window, which a foreground action takes and then gives back.
@@ -267,9 +292,11 @@ extension Mac {
 		}
 		let initial = InputActivity.current()
 		guard !initial.hasHeldInput else {
+			let held = initial.heldNames
 			throw Refusal(
-				"DESKTOP_ACTION_FAILED", "Modifier-click requires every autorepeating key or held mouse button to be released before focus.",
-				hint: "Release held input and retry from a fresh observation."
+				"DESKTOP_ACTION_FAILED",
+				"Modifier-click requires every key and mouse button to be released before focus, but the keyboard and mouse report \(spokenList(held)) held.",
+				hint: "Release \(held.count == 1 ? "it" : "them") and retry from a fresh observation. If nothing is held, ask the user to press and release \(held.count == 1 ? "it" : "each") once, which clears a stuck state."
 			)
 		}
 		let targetState = FocusState(pid: target.pid, generation: target.generation, window: target)
