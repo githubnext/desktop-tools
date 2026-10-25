@@ -49,6 +49,27 @@ const { version } = JSON.parse(
 	readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 ) as { version: string };
 
+// An app from before 0.17.0 bundles no MCP server, so this one stays, and an npx tag updated without the app runs
+// against an older client and host (#179). Every failed call names both versions, since nothing else shows the skew.
+const app = (() => {
+	try {
+		// <App>.app/Contents/MacOS/desktop-tools-client
+		const contents = dirname(dirname(realpathSync(client)));
+		if (!contents.endsWith(".app/Contents")) return undefined;
+		const plist = readFileSync(join(contents, "Info.plist"), "utf8");
+		const found = /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/.exec(plist);
+		return found ? { path: dirname(contents), version: found[1]! } : undefined;
+	} catch {
+		return undefined;
+	}
+})();
+const skew = app && app.version !== version
+	? `${app.path} is version ${app.version}, but this MCP server is ${version}. Updating the npx tag doesn't update the app, `
+		+ `which holds the macOS permissions: ask the user to install Desktop Tools ${version} from its GitHub release, or to pin `
+		+ `the MCP server to v${app.version}.`
+	: undefined;
+if (skew) process.stderr.write(`desktop-tools-mcp: ${skew}\n`);
+
 // Newest first; an unsupported client version gets the newest, as the MCP lifecycle requires.
 const VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -112,10 +133,11 @@ async function call(tool: DesktopTool, args: Record<string, unknown>, signal: Ab
 		const content: Content[] = [{ type: "text", text: result.text }];
 		if (result.outcome) content.unshift({ type: "text", text: `Outcome: ${result.outcome}.` });
 		if (result.image) content.push({ type: "image", ...result.image });
+		if (result.isError && skew) content.push({ type: "text", text: skew });
 		return { content, isError: result.isError || false };
 	} catch (error) {
 		const text = error instanceof Error ? error.message : String(error);
-		return { content: [{ type: "text", text }], isError: true };
+		return { content: [{ type: "text", text }, ...(skew ? [{ type: "text", text: skew } as const] : [])], isError: true };
 	}
 }
 

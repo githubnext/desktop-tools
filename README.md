@@ -38,7 +38,7 @@ You need macOS 15 or later. The MCP server ships inside the app.
    }
    ```
 
-   An `npx` setup, `npx -y --package=github:githubnext/desktop-tools#v0.17.1 desktop-tools-mcp` (Node 22 or later), also works: it hands over to the app's server. One pinned before v0.17.0 is refused with `CLIENT_OUTDATED`, so update its tag.
+   An `npx` setup, `npx -y --package=github:githubnext/desktop-tools#v0.17.1 desktop-tools-mcp` (Node 22 or later), also works: it hands over to the app's server. One pinned before v0.17.0 is refused with `CLIENT_OUTDATED`, so update its tag. Updating the tag doesn't update the app, which holds the macOS permissions: install the app's release of the same version, since an app from before v0.17.0 has no server to hand over to, and a failed call then names both versions.
 
 4. **Verify.** Ask the agent to call `desktop_apps`. It should list the running apps with an `inventory_completeness` of `complete`. If it says the socket is missing, open the app.
 
