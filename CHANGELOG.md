@@ -4,13 +4,15 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-02
+
 ### Added
 
-- The app updates itself from GitHub Releases. **Update Automatically**, on by default, checks at launch and daily, downloads a newer release, and installs it once agents have been idle for 10 minutes, after the calls already running finish, then relaunches. **Check for Updates…** checks at once and asks before installing. Only a release notarized and signed with Developer ID by the Desktop Tools team, with the app's bundle ID, is installed, so permissions and approved agents are kept. The development app never updates itself. See [Updates](docs/app.md#updates).
+- The app updates itself from GitHub Releases. **Update Automatically**, on by default, checks at launch and daily, downloads a newer release, and installs it once agents have been idle for 10 minutes, after the calls already running finish, then relaunches. **Check for Updates…** checks at once and asks before installing. Only a release notarized and signed with Developer ID by the Desktop Tools team, with the app's bundle ID, is installed, so permissions and approved agents are kept. The development app never updates itself. See [Updates](docs/app.md#updates). ([#235](https://github.com/githubnext/desktop-tools/pull/235))
 
 ### Changed
 
-- The agent cursor and window outline are per agent and colored by tool: Claude is orange, Codex blue, and any other agent gets a color fixed by its name. Each agent's arrow carries a name tag, peels off the user's pointer on its first input, travels on a slight arc from where it last acted, and returns to merge with the pointer after a few seconds idle, using motion tuned in the cursor lab. The first move waits at most about half a second, later ones 0.2 to 0.4 seconds by distance. Agents working at once each get their own arrow; agents sharing a window get nested outlines with labels side by side.
+- The agent cursor and window outline are per agent and colored by tool: Claude is orange, Codex blue, and any other agent gets a color fixed by its name. Each agent's arrow carries a name tag, peels off the user's pointer on its first input, travels on a slight arc from where it last acted, and returns to merge with the pointer after a few seconds idle, using motion tuned in the cursor lab. The first move waits at most about half a second, later ones 0.2 to 0.4 seconds by distance. Agents working at once each get their own arrow; agents sharing a window get nested outlines with labels side by side. ([#228](https://github.com/githubnext/desktop-tools/pull/228), [#234](https://github.com/githubnext/desktop-tools/pull/234))
 
 ### Removed
 
@@ -313,7 +315,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The first release: a signed, notarized Desktop Tools menu bar app, and the desktop tools served over MCP. ([#28](https://github.com/githubnext/desktop-tools/pull/28), [#29](https://github.com/githubnext/desktop-tools/pull/29), [#12](https://github.com/githubnext/desktop-tools/pull/12))
 
-[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/githubnext/desktop-tools/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/githubnext/desktop-tools/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/githubnext/desktop-tools/compare/v0.17.0...v0.17.1
 [0.17.0]: https://github.com/githubnext/desktop-tools/compare/v0.16.1...v0.17.0
