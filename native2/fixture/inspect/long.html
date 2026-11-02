@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- #178 and #232: a form with links above it and a long list below, opened scrolled to the form. -->
+<html><head><meta charset="utf-8"><title>Long form fixture</title>
+<style>body{font:14px sans-serif;margin:0} #above a{display:block;height:24px} .row{height:40px;border-bottom:1px solid #ddd} form{padding:8px}</style></head>
+<body>
+<div id="above"></div>
+<form id="form" onsubmit="return false">
+  <h1>Create service account</h1>
+  <label>Service account name <input aria-label="Service account name"></label><br>
+  <label>Service account ID <input aria-label="Service account ID"></label><br>
+  <button type="button">Create and continue</button>
+  <div id="rows"></div>
+  <label>Footer note <input aria-label="Footer note"></label>
+</form>
+<script>
+const above = document.getElementById("above");
+for (let i = 0; i < 120; i++) { const a = document.createElement("a"); a.href = "#a" + i; a.textContent = "Download link " + i; above.append(a); }
+const rows = document.getElementById("rows");
+for (let i = 0; i < 400; i++) { const d = document.createElement("div"); d.className = "row"; const b = document.createElement("button"); b.type = "button"; b.textContent = "Country " + i; d.append(b); rows.append(d); }
+addEventListener("load", () => document.getElementById("form").scrollIntoView());
+</script>
+</body></html>

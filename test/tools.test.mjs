@@ -54,7 +54,7 @@ test("inspect, read and wait offer web_accessibility as a boolean opt-out", () =
 	for (const name of ["desktop_inspect", "desktop_read", "desktop_wait"]) {
 		const property = tools.get(name).parameters.properties.web_accessibility;
 		assert.equal(property.type, "boolean", name);
-		assert.match(property.description, /false leaves/);
+		assert.match(property.description, /turns it back off/);
 	}
 	assert.match(tools.get("desktop_inspect").description, /web_accessibility false/);
 });

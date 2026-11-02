@@ -8,6 +8,8 @@ import Foundation
 /// once an assistive client asks, so until then a web view lists few or no elements.
 public enum WebAccessibilityChange: String, Sendable {
 	case enabled, already_on, unsupported, unknown
+	/// This read turned it back off, which this host had turned on (#231).
+	case restored
 }
 
 /// The attribute a read turned it on with: Chrome 155 rejects AXManualAccessibility, so apps that ship Chromium
@@ -16,13 +18,52 @@ public enum WebAccessibilityVia: String, Sendable {
 	case manual, enhanced_ui
 }
 
-private struct Generation: Hashable {
+struct Generation: Hashable {
 	let pid: pid_t
 	let start: UInt64
 }
 
-/// App generations this host already turned it on for, or found it on; it is set at most once per launch.
-nonisolated(unsafe) private var enabledGenerations: Set<Generation> = []
+/// Which app launches have web accessibility on as far as this host knows, and which of them it turned on itself
+/// and so may turn back off (#231). One found on belongs to whoever turned it on, such as VoiceOver, and is never
+/// turned off.
+struct WebAccessibilityLedger {
+	/// Launches this host turned it on for, or found it on; it is set at most once per launch.
+	private(set) var on: Set<Generation> = []
+	/// The attribute this host set, and when a read last relied on it.
+	private(set) var owned: [Generation: (via: WebAccessibilityVia, used: ContinuousClock.Instant)] = [:]
+
+	/// Whether it is known on, noting that a read relies on it now.
+	mutating func use(_ key: Generation, at now: ContinuousClock.Instant) -> Bool {
+		guard on.contains(key) else { return false }
+		owned[key]?.used = now
+		return true
+	}
+
+	mutating func foundOn(_ key: Generation) { on.insert(key) }
+
+	mutating func turnedOn(_ key: Generation, via: WebAccessibilityVia, at now: ContinuousClock.Instant) {
+		on.insert(key)
+		owned[key] = (via, now)
+	}
+
+	/// Forgets a launch this host turned it on for, returning the attribute to set back; nil for any other.
+	mutating func release(_ key: Generation) -> WebAccessibilityVia? {
+		guard let entry = owned.removeValue(forKey: key) else { return nil }
+		on.remove(key)
+		return entry.via
+	}
+
+	/// Forgets launches that ended, and returns those this host turned it on for that no read used for `idle`.
+	mutating func idle(_ idle: Duration, at now: ContinuousClock.Instant, running: (Generation) -> Bool) -> [Generation] {
+		for key in on where !running(key) {
+			on.remove(key)
+			owned.removeValue(forKey: key)
+		}
+		return owned.filter { now - $0.value.used >= idle }.map(\.key).sorted { $0.pid < $1.pid }
+	}
+}
+
+nonisolated(unsafe) private var ledger = WebAccessibilityLedger()
 private let enabledLock = NSLock()
 
 extension Mac {
@@ -33,29 +74,65 @@ extension Mac {
 		let key = Generation(pid: pid, start: start)
 		enabledLock.lock()
 		defer { enabledLock.unlock() }
-		if enabledGenerations.contains(key) { return (.already_on, nil) }
+		if ledger.use(key, at: .now) { return (.already_on, nil) }
 		let application = AXUIElementCreateApplication(pid)
 		// A busy renderer must not hold the read for the default six seconds.
 		AXUIElementSetMessagingTimeout(application, 1)
 		func isOn(_ attribute: String) -> Bool { (AX.value(application, attribute) as? Bool) == true }
 		if isOn("AXManualAccessibility") || isOn("AXEnhancedUserInterface") {
-			enabledGenerations.insert(key)
+			ledger.foundOn(key)
 			return (.already_on, nil)
 		}
 		switch AXUIElementSetAttributeValue(application, "AXManualAccessibility" as CFString, kCFBooleanTrue) {
 		case .success:
-			enabledGenerations.insert(key)
+			ledger.turnedOn(key, via: .manual, at: .now)
 			return (.enabled, .manual)
 		case .attributeUnsupported, .notImplemented, .illegalArgument, .actionUnsupported:
 			guard chromium else { return (.unsupported, nil) }
 			// Chrome reports an error for this set even when it applies it, so only the readback counts.
 			_ = AXUIElementSetAttributeValue(application, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
 			guard isOn("AXEnhancedUserInterface") else { return (.unsupported, nil) }
-			enabledGenerations.insert(key)
+			ledger.turnedOn(key, via: .enhanced_ui, at: .now)
 			return (.enabled, .enhanced_ui)
 		default:
 			return (.unknown, nil)
 		}
+	}
+
+	/// Turns it back off for the app's current generation when this host turned it on, setting back the attribute
+	/// it set, so the app stops maintaining a tree for every page (#231). Returns the attribute, or nil when this
+	/// host didn't turn it on for this launch, which leaves the app as it is.
+	public static func restoreWebAccessibility(pid: pid_t) -> WebAccessibilityVia? {
+		guard let start = generation(pid) else { return nil }
+		enabledLock.lock()
+		defer { enabledLock.unlock() }
+		return restoreOwned(Generation(pid: pid, start: start))
+	}
+
+	/// Turns it back off for each app this host turned it on for that no read has relied on for `idle`, and
+	/// forgets apps that quit. Returns the apps it turned off.
+	public static func restoreIdleWebAccessibility(_ idle: Duration) -> [pid_t] {
+		enabledLock.lock()
+		defer { enabledLock.unlock() }
+		return ledger.idle(idle, at: .now) { generation($0.pid) == $0.start }.compactMap { restoreOwned($0) != nil ? $0.pid : nil }
+	}
+
+	/// Whether this host turned it on for some running app, so an idle check has something to do.
+	public static var ownsWebAccessibility: Bool {
+		enabledLock.lock()
+		defer { enabledLock.unlock() }
+		return !ledger.owned.isEmpty
+	}
+
+	/// Call with `enabledLock` held.
+	private static func restoreOwned(_ key: Generation) -> WebAccessibilityVia? {
+		guard let via = ledger.release(key) else { return nil }
+		let application = AXUIElementCreateApplication(key.pid)
+		AXUIElementSetMessagingTimeout(application, 1)
+		let attribute = via == .manual ? "AXManualAccessibility" : "AXEnhancedUserInterface"
+		// Chrome reports an error for this set even when it applies it, as for turning it on.
+		_ = AXUIElementSetAttributeValue(application, attribute as CFString, kCFBooleanFalse)
+		return via
 	}
 
 	/// Whether the app's bundle ships Chromium: an Electron or Chromium Embedded framework, or a framework with
