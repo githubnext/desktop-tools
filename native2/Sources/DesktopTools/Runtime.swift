@@ -92,15 +92,18 @@ private final class Desktop {
 	private init() {
 		Hooks.targetWindow = { target in
 			// The requesting client is still waiting for its reply, so its environment is readable now.
-			let agent = agentName(of: target.client)
+			let agent = AgentIdentity.of(client: target.client)
 			DispatchQueue.main.async {
-				AgentCursor.shared.window = target.window
+				AgentCursor.shared.target(agent, window: target.window)
 				AgentWindow.shared.target(window: target.window, process: target.process, agent: agent)
 			}
 		}
 		Hooks.operation = recordActivity
 		Hooks.secureTextFill = { await PasswordFill.shared.authorize($0) }
-		Hooks.pointer = { feedback in await AgentCursor.shared.show(feedback) }
+		Hooks.pointer = { feedback, client in
+			let agent = AgentIdentity.of(client: client)
+			await AgentCursor.shared.show(feedback, agent: agent)
+		}
 	}
 
 	func start(socket: String, client: String, after pause: UInt64 = 0) {
