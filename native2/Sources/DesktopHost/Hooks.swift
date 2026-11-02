@@ -18,7 +18,8 @@ public enum Hooks {
 	/// Shows pointer input before it is posted; the input waits until it returns or `pointerLimit` passes. Delivery
 	/// calls `showPointer` once per input, after its window check and before its first event: desktop_press shows
 	/// `.hold` before pressing, and its release, however the hold ends, a single `.click` at the same point.
-	nonisolated(unsafe) public static var pointer: (@Sendable (PointerFeedback) async -> Void)?
+	/// The second argument is the requesting client, which tells agents' cursors apart; it is nil outside a call.
+	nonisolated(unsafe) public static var pointer: (@Sendable (PointerFeedback, pid_t?) async -> Void)?
 
 	/// Decides each secure text field fill, as Peekaboo's handleSecureTextFill (MIT) asked its embedder.
 	/// desktop_fill_password calls it from its delivery, after the snapshot and window checks, refusing first:
@@ -145,9 +146,10 @@ public enum Hooks {
 	/// Shows `feedback` from a delivery thread, which waits for it at most `pointerLimit`; a late one plays on alone.
 	public static func showPointer(_ feedback: PointerFeedback) {
 		guard let pointer else { return }
+		let client = call?.client
 		let done = DispatchSemaphore(value: 0)
 		Task {
-			await pointer(feedback)
+			await pointer(feedback, client)
 			done.signal()
 		}
 		_ = done.wait(timeout: .now() + pointerLimit)

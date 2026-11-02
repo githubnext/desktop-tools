@@ -300,9 +300,13 @@ extension Tools {
 	}
 }
 
-/// Runs blocking Accessibility work on its own thread so it never holds a cooperative pool thread.
+/// Runs blocking Accessibility work on its own thread so it never holds a cooperative pool thread. The running call
+/// goes along, so delivery's pointer feedback knows its client.
 func run<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
-	try await withCheckedThrowingContinuation { continuation in
-		Thread.detachNewThread { continuation.resume(with: Result { try work() }) }
+	let call = Hooks.call
+	return try await withCheckedThrowingContinuation { continuation in
+		Thread.detachNewThread {
+			Hooks.$call.withValue(call) { continuation.resume(with: Result { try work() }) }
+		}
 	}
 }

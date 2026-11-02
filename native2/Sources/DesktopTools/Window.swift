@@ -4,66 +4,89 @@ import CoreGraphics
 import Darwin
 import QuartzCore
 
-/// Outlines the window the agent is observing or acting on, with a label naming the agent and the app.
+/// Outlines each window an agent is observing or acting on, in that agent's color, with a label naming the agent and
+/// the app.
 ///
-/// Hooks.targetWindow reports each call's exact window before dispatch. The outline follows that window's frame,
-/// sits directly above it in the window order so anything covering the window covers the outline too, hides
-/// while the window is minimized, off screen, or on another Space, and fades out once requests stop.
+/// Hooks.targetWindow reports each call's exact window before dispatch. Each agent has one outline, which follows its
+/// window's frame, sits directly above it in the window order so anything covering the window covers the outline too,
+/// hides while the window is minimized, off screen, or on another Space, and fades out once that agent's requests stop.
+/// Agents on the same window nest their outlines and set their labels side by side.
 @MainActor
 final class AgentWindow {
 	static let shared = AgentWindow()
 
-	private static let tint = NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1).cgColor
-	/// The tint darkened, to edge the label.
-	private static let rim = NSColor(srgbRed: 0.55, green: 0.27, blue: 0.18, alpha: 1).cgColor
-	private static let labelFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+	fileprivate static let labelFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
 	private static let idle: Duration = .seconds(4)
-	/// Room around the window for the outline and the label that straddles its bottom edge.
-	private static let margin: CGFloat = 16
+	/// Room around the window for the outlines and the labels that straddle its bottom edge.
+	fileprivate static let margin: CGFloat = 16
 
 	/// Off until an embedding app turns it on with `desktop_tools_set_highlight`.
 	var enabled = false {
 		didSet { if !enabled { reset() } }
 	}
 
-	private var target: CGWindowID?
-	private var overlay: Overlay?
-	private var tracking: Timer?
-	private var fade: Task<Void, Never>?
+	private final class Outline {
+		let overlay: Overlay
+		var target: CGWindowID
+		/// When it was first shown on `target`, which orders agents sharing a window.
+		var since = Date()
+		var fade: Task<Void, Never>?
 
-	/// Shows the outline on `window` and restarts the idle fade.
-	func target(window: CGWindowID, process: pid_t, agent: String?) {
+		init(overlay: Overlay, target: CGWindowID) {
+			self.overlay = overlay
+			self.target = target
+		}
+	}
+
+	private var outlines: [String: Outline] = [:]
+	private var tracking: Timer?
+
+	/// Shows `agent`'s outline on `window` and restarts its idle fade.
+	func target(window: CGWindowID, process: pid_t, agent: AgentIdentity) {
 		guard enabled else { return }
 		let app = NSRunningApplication(processIdentifier: process)?.localizedName ?? "an app"
-		let label = "\(agent ?? "Agent") is using \(app)"
-		if target != window || overlay == nil {
-			overlay?.close()
-			overlay = Overlay(label: label)
-			target = window
+		let label = "\(agent.name) is using \(app)"
+		let outline: Outline
+		if let existing = outlines[agent.key], existing.target == window {
+			outline = existing
+			outline.overlay.label = label
 		} else {
-			overlay?.label = label
+			outlines[agent.key]?.fade?.cancel()
+			outlines[agent.key]?.overlay.close()
+			outline = Outline(overlay: Overlay(label: label, tint: agent.tint), target: window)
+			outlines[agent.key] = outline
 		}
-		overlay?.present()
+		outline.overlay.present()
 		track()
-		fade?.cancel()
-		fade = Task { [weak self] in
+		outline.fade?.cancel()
+		outline.fade = Task { [weak self, weak outline] in
 			try? await Task.sleep(for: Self.idle)
-			guard !Task.isCancelled, let self else { return }
-			self.overlay?.fadeOut { [weak self] in self?.reset() }
+			guard !Task.isCancelled, let outline else { return }
+			outline.overlay.fadeOut { [weak self] in self?.remove(agent.key, outline) }
+		}
+	}
+
+	private func remove(_ key: String, _ outline: Outline) {
+		guard outlines[key] === outline else { return }
+		outline.overlay.close()
+		outlines[key] = nil
+		if outlines.isEmpty {
+			tracking?.invalidate()
+			tracking = nil
 		}
 	}
 
 	private func reset() {
-		fade?.cancel()
-		fade = nil
 		tracking?.invalidate()
 		tracking = nil
-		overlay?.close()
-		overlay = nil
-		target = nil
+		for outline in outlines.values {
+			outline.fade?.cancel()
+			outline.overlay.close()
+		}
+		outlines = [:]
 	}
 
-	/// Polls the window's frame and order at display rate while the outline is up.
+	/// Polls the windows' frames and order at display rate while an outline is up.
 	private func track() {
 		update()
 		guard tracking == nil else { return }
@@ -75,16 +98,32 @@ final class AgentWindow {
 	}
 
 	private func update() {
-		guard let target, let overlay else { return }
+		var shared: [CGWindowID: [(key: String, outline: Outline)]] = [:]
+		for (key, outline) in outlines { shared[outline.target, default: []].append((key, outline)) }
+		for (_, group) in shared {
+			let ordered = group.sorted { ($0.outline.since, $0.key) < ($1.outline.since, $1.key) }
+			for (slot, entry) in ordered.enumerated() {
+				entry.outline.overlay.slot = (slot, ordered.count)
+				if !update(entry.outline) { remove(entry.key, entry.outline) }
+			}
+		}
+	}
+
+	/// False once the window is gone.
+	private func update(_ outline: Outline) -> Bool {
+		let target = outline.target, overlay = outline.overlay
 		guard let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], target) as? [[String: Any]])?.first
-		else { return reset() }
+		else { return false }
 		var bounds = CGRect.null
 		if let frame = info[kCGWindowBounds as String] as? NSDictionary {
 			bounds = CGRect(dictionaryRepresentation: frame) ?? .null
 		}
 		let onScreen = info[kCGWindowIsOnscreen as String] as? Bool ?? false
 		let visible = NSScreen.screens.contains { Self.flipped($0.frame).intersects(bounds) }
-		guard onScreen, visible, !bounds.isEmpty else { return overlay.conceal() }
+		guard onScreen, visible, !bounds.isEmpty else {
+			overlay.conceal()
+			return true
+		}
 		// The display showing most of the window keeps the outline and label on it when the window fills it.
 		let screen = NSScreen.screens.max { area(of: $0) < area(of: $1) }?.frame ?? .null
 		func area(of screen: NSScreen) -> CGFloat {
@@ -96,6 +135,7 @@ final class AgentWindow {
 			.map { $0.offsetBy(dx: -frame.minX, dy: -frame.minY) }
 		overlay.follow(target, frame: Self.flipped(frame), screen: screen,
 			level: info[kCGWindowLayer as String] as? Int ?? 0, covers: covers)
+		return true
 	}
 
 	/// The bounds of the window's own sheets and panels stacked directly above it, such as an Open panel on a
@@ -144,12 +184,17 @@ final class AgentWindow {
 		/// The window's own sheets and panels above it, in the panel's flipped coordinates.
 		private var covers: [CGRect] = []
 
+		/// This agent's place among the agents on the same window.
+		var slot = (index: 0, count: 1) {
+			didSet { if slot != oldValue { layout() } }
+		}
+
 		var label: String {
 			get { text.string as? String ?? "" }
 			set { text.string = newValue; layout() }
 		}
 
-		init(label: String) {
+		init(label: String, tint: AgentIdentity.Tint) {
 			panel = Panel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
 				backing: .buffered, defer: false)
 			panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .transient]
@@ -172,17 +217,17 @@ final class AgentWindow {
 			panel.contentView = view
 
 			outline.fillColor = nil
-			outline.strokeColor = AgentWindow.tint
+			outline.strokeColor = tint.color
 			outline.lineWidth = 3
-			outline.shadowColor = AgentWindow.tint
+			outline.shadowColor = tint.color
 			outline.shadowOpacity = 0.7
 			outline.shadowRadius = 6
 			outline.shadowOffset = .zero
 			root.addSublayer(outline)
 
-			pill.backgroundColor = AgentWindow.tint
+			pill.backgroundColor = tint.color
 			pill.cornerRadius = 9
-			pill.borderColor = AgentWindow.rim
+			pill.borderColor = tint.rim
 			pill.borderWidth = 1
 			pill.shadowColor = .black
 			pill.shadowOpacity = 0.25
@@ -202,6 +247,15 @@ final class AgentWindow {
 		func present() {
 			root.removeAnimation(forKey: "fade")
 			guard root.opacity < 1 else { return }
+			if root.presentation()?.opacity ?? 0 == 0 {
+				// A new outline draws itself around the window as the cursor arrives.
+				let draw = CABasicAnimation(keyPath: "strokeEnd")
+				draw.fromValue = 0
+				draw.toValue = 1
+				draw.duration = 0.16
+				draw.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+				outline.add(draw, forKey: "draw")
+			}
 			let fade = CABasicAnimation(keyPath: "opacity")
 			fade.fromValue = root.presentation()?.opacity ?? 0
 			fade.toValue = 1
@@ -263,7 +317,8 @@ final class AgentWindow {
 			let display = screen.isNull ? root.bounds
 				: CGRect(x: screen.minX - frame.minX, y: frame.maxY - screen.maxY, width: screen.width, height: screen.height)
 					.insetBy(dx: 2, dy: 2)
-			let outside = window.insetBy(dx: -2, dy: -2)
+			// Each further agent on the window nests its outline 5 points out.
+			let outside = window.insetBy(dx: -2 - CGFloat(slot.index) * 5, dy: -2 - CGFloat(slot.index) * 5)
 			let clamped = outside.intersection(display)
 			let edge = clamped.isNull || clamped.isEmpty ? outside : clamped
 			outline.path = CGPath(roundedRect: edge, cornerWidth: 14, cornerHeight: 14, transform: nil)
@@ -271,7 +326,8 @@ final class AgentWindow {
 			let width = min(ceil(measured.width) + 16, max(window.width - 32, 60))
 			// The label straddles the bottom edge, or sits just inside it when the window reaches the display's bottom.
 			let top = clamped.isNull || clamped.isEmpty ? edge.maxY - 9 : min(edge.maxY - 9, display.maxY - 20)
-			pill.frame = CGRect(x: window.midX - width / 2, y: top, width: width, height: 18)
+			let spread = (CGFloat(slot.index) - CGFloat(slot.count - 1) / 2) * (width + 8)
+			pill.frame = CGRect(x: window.midX - width / 2 + spread, y: top, width: width, height: 18)
 			text.frame = pill.bounds.insetBy(dx: 8, dy: 2)
 			text.contentsScale = panel.backingScaleFactor
 			if covers.isEmpty {
