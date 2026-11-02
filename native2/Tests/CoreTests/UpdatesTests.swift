@@ -105,10 +105,10 @@ struct UpdatesTests {
 		#expect(throws: UpdateError.self) { try Updates.verify(folder, requirements: [requirement]) }
 	}
 
-	@Test
+	/// Runs where a release is installed, which CI's runners don't have.
+	@Test(.enabled(if: FileManager.default.fileExists(atPath: "/Applications/Desktop Tools.app")))
 	func `an installed release satisfies the requirement`() throws {
 		let installed = URL(fileURLWithPath: "/Applications/Desktop Tools.app")
-		try #require(FileManager.default.fileExists(atPath: installed.path), "Install Desktop Tools to run this")
 		try Updates.verify(installed, requirements: [Updates.requirement(team: Updates.team, identifier: Updates.identifier)])
 		// The same release fails for another bundle ID or team.
 		#expect(throws: UpdateError.self) {
