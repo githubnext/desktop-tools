@@ -19,7 +19,7 @@ enum Defaults {
 	static let knobs: [Knob] = [
 		Knob(key: "windup", label: "Wind-up", section: "Timing", range: 0...200, value: 60, unit: "ms"),
 		Knob(key: "breakout", label: "Breakout", section: "Timing", range: 0...500, value: 180, unit: "ms"),
-		Knob(key: "travelMin", label: "Travel, short", section: "Timing", range: 80...600, value: 250, unit: "ms"),
+		Knob(key: "travelMin", label: "Travel, short", section: "Timing", range: 80...600, value: 205, unit: "ms"),
 		Knob(key: "travelMax", label: "Travel, 1600 pt", section: "Timing", range: 80...800, value: 400, unit: "ms"),
 		Knob(key: "stagger", label: "Stagger", section: "Timing", range: 0...400, value: 120, unit: "ms"),
 		Knob(key: "outlineDelay", label: "Outline delay", section: "Timing", range: 0...600, value: 0, unit: "ms"),
@@ -75,7 +75,7 @@ enum Defaults {
 final class Tuning {
 	var values = Dictionary(uniqueKeysWithValues: Defaults.knobs.map { ($0.key, $0.value) })
 	var flags = Dictionary(uniqueKeysWithValues: Defaults.flags.map { ($0.key, $0.value) })
-	var breakout = 0
+	var breakout = 1
 	var ending = 0
 	var agents = 2
 	var speed = 0
