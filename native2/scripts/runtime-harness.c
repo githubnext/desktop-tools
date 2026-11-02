@@ -1,6 +1,5 @@
 // Loads a libDesktopTools.dylib the way the menu bar app does and drives start, status and stop, printing each
-// status. Unsigned, it should report the signing error and serve nothing; run it against native/'s and native2's
-// dylibs and compare.
+// status. Unsigned, it should report the signing error and serve nothing; run it against two builds and compare.
 //
 //   clang -framework CoreFoundation native2/scripts/runtime-harness.c -o /tmp/runtime-harness
 //   /tmp/runtime-harness native2/.build/release/libDesktopTools.dylib /tmp/harness.sock

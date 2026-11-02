@@ -1,6 +1,13 @@
 import { DESKTOP_KEYS, DESKTOP_SYSTEM_KEYS, DESKTOP_WAIT_CONDITIONS, type DesktopRequest } from "./protocol.js";
-import { TABLE_ROWS_DEFAULT, TABLE_ROWS_MAX } from "./table.js";
-import { EXPECT_DEFAULT_MS, EXPECT_MAX_MS, WAIT_DEFAULT_MS, WAIT_MAX_MS } from "./wait.js";
+
+/** desktop_read's table paging: rows per page by default, and at most. */
+export const TABLE_ROWS_DEFAULT = 100;
+export const TABLE_ROWS_MAX = 500;
+/** desktop_wait's timeout_ms, and an action's expect.timeout_ms: default and maximum. */
+export const WAIT_DEFAULT_MS = 10_000;
+export const WAIT_MAX_MS = 45_000;
+export const EXPECT_DEFAULT_MS = 3_000;
+export const EXPECT_MAX_MS = 10_000;
 
 export type JsonSchema = { [key: string]: unknown };
 
@@ -14,7 +21,7 @@ export type DesktopTool = {
 
 // Shared argument shapes; native checks bind each target to the process or window observed.
 const id: JsonSchema = { type: "string", minLength: 1, maxLength: 256 };
-// Targets are passed back unchanged, and client.ts validates every field, so the schemas only name them.
+// Targets are passed back unchanged, and the host validates every field, so the schemas only name them.
 const windowTarget: JsonSchema = {
 	type: "object",
 	description: "A target from desktop_windows, unchanged.",
@@ -141,17 +148,15 @@ const modifiers: JsonSchema = {
 
 /**
  * Rules every desktop tool shares, which the tool descriptions don't repeat; a host's agent guidance should include them.
- * `app` names the signed app that holds the macOS permissions, whose menu pauses input. `wire` 2 gives native2's rules (#143),
- * where launching and opening stay in the background unless asked to activate (#162).
+ * `app` names the signed app that holds the macOS permissions, whose menu pauses input. Launching and opening stay in the
+ * background unless asked to activate (#162). The second argument is ignored; it once chose the Peekaboo stack's rules.
  */
-export function desktopToolRules(app: string, wire: 1 | 2 = 1): string[] {
+export function desktopToolRules(app: string, _wire?: 2): string[] {
 	return [
 		"Find targets with desktop_apps and desktop_windows, and pass them back unchanged; a stale target is refused, never redirected. Check a window's availability before acting: its hint names the tool that recovers it.",
 		"Input acts on a desktop_inspect snapshot: pass its snapshot_id, with element IDs from it or points as fractions of its screenshot from the top-left. Each snapshot is single-use; inspect again after every action.",
 		"Input is background unless its tool says foreground: background input reaches the exact window without moving the pointer or changing the frontmost app, while foreground input uses the real pointer or keys, or brings an app forward.",
-		...(wire === 2
-			? ["Work in the background so the user's typing isn't taken: launch and open apps without activate, and bring an app forward only for a step whose tool says foreground or when the user asks to see it."]
-			: []),
+		"Work in the background so the user's typing isn't taken: launch and open apps without activate, and bring an app forward only for a step whose tool says foreground or when the user asks to see it.",
 		"completed means the host delivered the input to the exact target, or read the change back where the tool says so; unknown means it may or may not have taken effect; refused means nothing was sent.",
 		`If a refusal says input is paused, the user paused agent input in ${app}: tell them, and wait for them to resume it from its menu. Observing still works; don't retry or work around the pause.`,
 		`CALLER_NOT_APPROVED means the user hasn't allowed this agent in ${app}, which asks them once per agent: tell them to choose Allow in its prompt or under Approved Agents in its menu, then retry. SELF_TARGET_REFUSED means the input would reach ${app}'s own menu, prompt or window, which only the user may answer: ask them, and don't work around it.`,
@@ -162,10 +167,6 @@ export function desktopToolRules(app: string, wire: 1 | 2 = 1): string[] {
 	];
 }
 
-/**
- * The desktop tools every host offers agents. `place` names where they act, as in "this Mac";
- * `app` names the signed app that holds the macOS permissions and runs the native service.
- */
 const saveProperties: Record<string, JsonSchema> = {
 	save_path: { type: "string", minLength: 2, maxLength: 1024, pattern: "^/.*\\.[pP][nN][gG]$" },
 	overwrite: { type: "boolean" },
@@ -187,15 +188,20 @@ const webAccessibility: JsonSchema = {
 };
 const webAccessibilityNote =
 	"in a Chromium or Electron app, or a window whose web area is nearly empty, it first turns on the app's web accessibility so web content appears, once per app launch, and reports web_accessibility; it stays on until the app quits. Pass web_accessibility false to leave the app as it is.";
-// native2 launches and opens in the background unless asked to activate (#162).
+// Launching and opening stay in the background unless asked to activate (#162).
 const backgroundNote =
 	"Background unless activate is true: macOS starts the app or hands it the item without bringing it forward, so the user keeps typing where they are. Pass activate only when a later step is foreground or the user asks to see the app; activate brings the app forward and may switch Spaces.";
 const saveNote =
 	"save_path, an absolute .png path in an existing folder, keeps the full-resolution capture; region, in global points, saves only part of it; an existing file needs overwrite true.";
 
-export function desktopTools({ place, app, wire = 1 }: { place: string; app: string; wire?: 1 | 2 }): DesktopTool[] {
-	const activate: Record<string, JsonSchema> = wire === 2 ? { activate: { type: "boolean" } } : {};
-	const foreground: Record<string, JsonSchema> = wire === 2 ? { foreground: { type: "boolean" } } : {};
+/**
+ * The desktop tools every host offers agents. `place` names where they act, as in "this Mac";
+ * `app` names the signed app that holds the macOS permissions and runs the native service.
+ * `wire` is ignored; it once chose the Peekaboo stack's text.
+ */
+export function desktopTools({ place, app }: { place: string; app: string; wire?: 2 }): DesktopTool[] {
+	const activate: Record<string, JsonSchema> = { activate: { type: "boolean" } };
+	const foreground: Record<string, JsonSchema> = { foreground: { type: "boolean" } };
 	return [
 		{
 			name: "desktop_clipboard_read",
@@ -283,7 +289,7 @@ export function desktopTools({ place, app, wire = 1 }: { place: string; app: str
 			name: "desktop_launch",
 			op: "launch",
 			description:
-				`${wire === 2 ? "Launch one app" : "Launch or activate one app"} by absolute .app path or exact bundle ID. ${wire === 2 ? backgroundNote : "Foreground: it brings the app forward and may switch Spaces."} Completed means it is running, not that a window is ready; created_windows lists windows that appeared (attribution exclusive, ambiguous or none). Opens no documents (use desktop_open), extra instances or relaunches. Timeout or interruption is unknown: the app may still open, so check desktop_apps before launching again.`,
+				`Launch one app by absolute .app path or exact bundle ID. ${backgroundNote} Completed means it is running, not that a window is ready; created_windows lists windows that appeared (attribution exclusive, ambiguous or none). Opens no documents (use desktop_open), extra instances or relaunches. Timeout or interruption is unknown: the app may still open, so check desktop_apps before launching again.`,
 			parameters: {
 				type: "object",
 				required: ["application"],
@@ -295,7 +301,7 @@ export function desktopTools({ place, app, wire = 1 }: { place: string; app: str
 			name: "desktop_open",
 			op: "open",
 			description:
-				`Open one existing absolute path (file, folder or app) or one complete, already-encoded URL, in application (path or bundle ID) or the default handler. ${wire === 2 ? backgroundNote : "Foreground: the receiving app comes forward and may switch Spaces."} Completed means macOS accepted it, not that it loaded; created_windows lists new windows as for desktop_launch. A file URL with a query or fragment is refused (serve it over http). After an unknown result, observe the receiving app before opening again.`,
+				`Open one existing absolute path (file, folder or app) or one complete, already-encoded URL, in application (path or bundle ID) or the default handler. ${backgroundNote} Completed means macOS accepted it, not that it loaded; created_windows lists new windows as for desktop_launch. A file URL with a query or fragment is refused (serve it over http). After an unknown result, observe the receiving app before opening again.`,
 			parameters: {
 				type: "object",
 				required: ["item"],
@@ -685,7 +691,7 @@ export function desktopTools({ place, app, wire = 1 }: { place: string; app: str
 			name: "desktop_scroll",
 			op: "scroll",
 			description:
-				`Scroll an element or point from a fresh desktop_inspect snapshot up, down, left or right by amount (1–20 native units, not pixels). Background, without moving the pointer; completed means delivered. A web page with no other background route scrolls with arrow keys while its window's keyboard focus is on the page, not in a field. Unsupported targets are refused. Inspect the new position before scrolling again.${wire === 2 ? " foreground true instead brings the app forward, sends real scroll-wheel ticks with the pointer over the target, then gives the pointer and focus back; it is unknown, with content_moved read back, and is refused while a key or button is held." : ""}`,
+				`Scroll an element or point from a fresh desktop_inspect snapshot up, down, left or right by amount (1–20 native units, not pixels). Background, without moving the pointer; completed means delivered. A web page with no other background route scrolls with arrow keys while its window's keyboard focus is on the page, not in a field. Unsupported targets are refused. Inspect the new position before scrolling again. foreground true instead brings the app forward, sends real scroll-wheel ticks with the pointer over the target, then gives the pointer and focus back; it is unknown, with content_moved read back, and is refused while a key or button is held.`,
 			parameters: {
 				type: "object",
 				required: ["snapshot", "direction", "amount"],
@@ -858,7 +864,7 @@ export function desktopTools({ place, app, wire = 1 }: { place: string; app: str
 			name: "desktop_insert",
 			op: "insert",
 			description:
-				`Insert text at the caret, or over the selection, in the window of a fresh desktop_inspect snapshot, keeping the text around it. Background, without activating the app. When the snapshot shows a focused control, it pastes the whole string, newlines included, through a temporary clipboard and restores it once it reads the edit back (route paste; needs clipboard read access). Otherwise, as in terminals, canvases and web editors, it types into the window's keyboard focus (route type): up to 1000 UTF-16 units, no newlines or tabs (press those with desktop_key), refused under secure keyboard entry, and unknown unless the host reads an observed control back. route forces either one. Instead of text, format image with one absolute path (PNG, JPEG or TIFF up to 10 MiB) or format files with 1–32 absolute paths pastes attachments into a native text area such as TextEdit rich text, Mail or Notes: completed when one U+FFFC per item reads back in place of the selection, then the clipboard is restored. format files into a Finder window's file list copies them into its folder: completed with copy started once every name is in the folder, and refused with PASTE_NAME_EXISTS if one already is. Any other receiver, including web fields, is refused with PASTE_UNVERIFIABLE_RECEIVER before input; clipboard replace pastes there anyway, leaving the item on the clipboard (left_replaced), and is unknown unless the attachment is seen. Every route is refused with SECURE_FIELD_REQUIRES_FILL while a password field has keyboard focus: use desktop_fill_password.${wire === 2 ? " foreground true, for a window that doesn't keep keyboard focus, brings the app forward, types the text with real keys into the snapshot's focused control (or the window's focus), then gives focus back: same limits as route type, unknown, with the control's value as read_back." : ""} ${expectNote}`,
+				`Insert text at the caret, or over the selection, in the window of a fresh desktop_inspect snapshot, keeping the text around it. Background, without activating the app. When the snapshot shows a focused control, it pastes the whole string, newlines included, through a temporary clipboard and restores it once it reads the edit back (route paste; needs clipboard read access). Otherwise, as in terminals, canvases and web editors, it types into the window's keyboard focus (route type): up to 1000 UTF-16 units, no newlines or tabs (press those with desktop_key), refused under secure keyboard entry, and unknown unless the host reads an observed control back. route forces either one. Instead of text, format image with one absolute path (PNG, JPEG or TIFF up to 10 MiB) or format files with 1–32 absolute paths pastes attachments into a native text area such as TextEdit rich text, Mail or Notes: completed when one U+FFFC per item reads back in place of the selection, then the clipboard is restored. format files into a Finder window's file list copies them into its folder: completed with copy started once every name is in the folder, and refused with PASTE_NAME_EXISTS if one already is. Any other receiver, including web fields, is refused with PASTE_UNVERIFIABLE_RECEIVER before input; clipboard replace pastes there anyway, leaving the item on the clipboard (left_replaced), and is unknown unless the attachment is seen. Every route is refused with SECURE_FIELD_REQUIRES_FILL while a password field has keyboard focus: use desktop_fill_password. foreground true, for a window that doesn't keep keyboard focus, brings the app forward, types the text with real keys into the snapshot's focused control (or the window's focus), then gives focus back: same limits as route type, unknown, with the control's value as read_back. ${expectNote}`,
 			parameters: {
 				type: "object",
 				required: ["snapshot"],

@@ -14,8 +14,8 @@ const { values } = parseArgs({
 });
 // Desktop Tools.app links its client and serves its socket here; pass all three to use another host app.
 const state = process.env.DESKTOP_TOOLS_STATE || join(homedir(), ".local", "state", "desktop-tools");
-// An app running the Swift host (#143) bundles its own MCP server beside the client it links, so existing npx configs
-// hand over to it. Any option keeps this server, as does an app without one.
+// The app bundles its own MCP server beside the client it links (0.17.0 and later), so existing npx configs hand over to
+// it. Any option keeps this server, which forwards each call through that client, as does an app without one.
 const bundled = (() => {
     try {
         return join(dirname(realpathSync(join(state, "desktop-client"))), "desktop-tools-mcp");
@@ -37,13 +37,17 @@ if (Object.keys(values).length === 0 && bundled && existsSync(bundled)) {
     await new Promise(() => { });
 }
 const { client = join(state, "desktop-client"), socket = join(state, "desktop.sock"), name: host = "Desktop Tools", } = values;
-if (values.wire !== undefined && values.wire !== "1" && values.wire !== "2")
-    throw new Error("Choose --wire 1 or 2.");
-const config = { client, socket, name: host, wire: values.wire === "2" ? 2 : 1 };
+// --wire 2 chose the Swift host's wire while the Peekaboo stack's was the default. It is the only wire now, but the option
+// still keeps this server instead of handing over, as scripts/contract.mjs needs.
+if (values.wire !== undefined && values.wire !== "2") {
+    throw new Error("--wire 1 was the Peekaboo stack, which is gone; pass --wire 2 or leave it out.");
+}
+const config = { client, socket, name: host };
 const desktop = createDesktop(config);
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 // An app from before 0.17.0 bundles no MCP server, so this one stays, and an npx tag updated without the app runs
-// against an older client and host (#179). Every failed call names both versions, since nothing else shows the skew.
+// against an older client and host (#179), whose Peekaboo wire this server no longer speaks. Every failed call names
+// both versions, since nothing else shows the skew.
 const app = (() => {
     try {
         // <App>.app/Contents/MacOS/desktop-tools-client
@@ -82,9 +86,9 @@ const instructions = [
     "For a refusal before dispatch, follow its concrete recovery hint once when applicable, then refresh the observation; a refusal alone does not prove the capability is missing.",
     "After completed, interrupted, or uncertain input, inspect the current target before deciding whether another action is needed. Never replay input just because its follow-up observation failed.",
     "",
-    ...desktopToolRules(host, config.wire),
+    ...desktopToolRules(host),
 ].join("\n");
-const tools = desktopTools({ place: "this Mac", app: host, wire: config.wire });
+const tools = desktopTools({ place: "this Mac", app: host });
 const byName = new Map(tools.map((tool) => [tool.name, tool]));
 const listed = tools.map(({ name, op, description, parameters }) => ({
     name,

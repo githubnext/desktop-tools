@@ -1,7 +1,7 @@
-import { type DesktopRequest, type DesktopResult } from "./protocol.js";
+import type { DesktopRequest, DesktopResult } from "./protocol.js";
 /** Explicit paths for one signed host and client pair; nothing is discovered. */
 export type DesktopConfig = {
-    /** Absolute path of the signed `desktop-tools-client`. */
+    /** Absolute path of the signed `desktop-tools-client`, the one bundled in the host app. */
     client: string;
     /** Unix socket passed to `desktop_tools_start` in the host app. */
     socket: string;
@@ -10,31 +10,24 @@ export type DesktopConfig = {
     /** Agent named in the host's window label, such as "Claude"; read at each call, so it can be set later. */
     agent?: string;
     /**
-     * Return native results whole, with detection metadata, timings, receipts and every window, instead of the compact
-     * shape written for models. Defaults to `DESKTOP_TOOLS_VERBOSE=1` in the environment.
+     * Return results whole, with detection metadata, timings, receipts and every window, instead of the compact shape
+     * written for models. Defaults to `DESKTOP_TOOLS_VERBOSE=1` in the environment.
      */
     verbose?: boolean;
     /**
-     * 2 when `client` is native2's `desktop-tools-client` (#143), which runs each request whole in a native2 host, so
-     * every check and result comes from Swift. Defaults to 1, `native/`'s client.
+     * Ignored. The Swift host's wire, which this option once chose, is the only one since the Peekaboo stack was
+     * removed; it stays so configs that pass `wire: 2` still type-check.
      */
-    wire?: 1 | 2;
+    wire?: 2;
 };
-/** `data` is the parsed final bounded `text`; image bytes stay only in `image`. */
+/** `data` is the parsed final `text`; image bytes stay only in `image`. */
 export type DesktopClientResult = DesktopResult & {
     data: unknown;
 };
 export type DesktopClient = (request: DesktopRequest, signal?: AbortSignal) => Promise<DesktopClientResult>;
 /**
- * Gives a host refusal its own code and hint, in place of Peekaboo's generic permission code and its advice to grant
- * a permission.
+ * Creates a client bound to one host socket and signed client. Each request goes whole to the client as one tool call,
+ * `desktop_` and its op, and the tool result comes back as the MCP server would send it: the host checks the arguments
+ * and compacts the result.
  */
-export declare function hostRefusal<T extends {
-    code: string;
-    message: string;
-    hint?: unknown;
-}>(error: T): T;
-/** An inspection's JSON within `limit`, keeping the containers an agent can scope into over other elements. */
-export declare function boundedElements(data: Record<string, unknown>, limit?: number): string;
-/** Creates a client bound to one host socket and signed client; calls are independent processes. */
 export declare function createDesktop(config: DesktopConfig): DesktopClient;

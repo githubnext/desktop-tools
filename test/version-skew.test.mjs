@@ -9,7 +9,10 @@ const macOS = { skip: process.platform !== "darwin" && "the client runs only on 
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const server = new URL("../dist/mcp.js", import.meta.url).pathname;
 
-/** An app from before 0.17.0, with no MCP server of its own, whose client fails as a 0.14 one did (#179). */
+/**
+ * An app from before 0.17.0, with no MCP server of its own, whose client fails as a 0.14 one did (#179): it speaks the
+ * Peekaboo stack's wire, not the one this server forwards on, so every call fails.
+ */
 function oldApp(appVersion) {
 	const directory = realpathSync(mkdtempSync(join(tmpdir(), "desktop-tools-skew-")));
 	const app = join(directory, "Desktop Tools.app");
@@ -48,7 +51,7 @@ test("a failed call names the app's version when it differs from the MCP server'
 	try {
 		const result = callApps(state);
 		assert.equal(result.isError, true);
-		assert.match(result.content[0].text, /^HOST_NOT_SERVING: /);
+		assert.match(result.content[0].text, /^The native desktop client exited with status 1\.$/);
 		assert.equal(result.content.at(-1).text, `${app} is version 0.14.0, but this MCP server is ${version}. Updating the npx tag `
 			+ `doesn't update the app, which holds the macOS permissions: ask the user to install Desktop Tools ${version} from `
 			+ `its GitHub release, or to pin the MCP server to v0.14.0.`);

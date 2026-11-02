@@ -3,32 +3,16 @@ import DesktopProtocol
 import Foundation
 import Testing
 
-/// The compact shape must match src/compact.ts byte for byte, so these run Node's on the same recorded results.
+/// The compact shape is what Node's src/compact.ts produced byte for byte; these are its outputs for the recorded results,
+/// written before Node's copy was removed: <name>.compact.json without allWindows, <name>.all.json with it.
 @Suite struct Compact {
-	static let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..").standardized
-
-	static func node(_ fixture: URL, allWindows: Bool) throws -> String {
-		let script = """
-		import { readFileSync } from "node:fs";
-		import { compactResult } from "\(repository.appendingPathComponent("dist/compact.js").path)";
-		process.stdout.write(compactResult(readFileSync(process.argv[1], "utf8"), { allWindows: \(allWindows) }));
-		"""
-		let process = Process()
-		process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-		process.arguments = ["node", "--input-type=module", "-e", script, fixture.path]
-		let pipe = Pipe()
-		process.standardOutput = pipe
-		try process.run()
-		let data = pipe.fileHandleForReading.readDataToEndOfFile()
-		process.waitUntilExit()
-		return String(decoding: data, as: UTF8.self)
-	}
+	static let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../fixtures/compact").standardized
 
 	@Test(arguments: ["inspect-textedit", "windows-textedit"], [false, true])
-	func matchesNode(_ name: String, allWindows: Bool) throws {
-		let fixture = Self.repository.appendingPathComponent("test/fixtures/compact/\(name).json")
-		let text = try String(contentsOf: fixture, encoding: .utf8)
-		#expect(compactResult(text, allWindows: allWindows) == (try Self.node(fixture, allWindows: allWindows)))
+	func matchesRecorded(_ name: String, allWindows: Bool) throws {
+		let text = try String(contentsOf: Self.fixtures.appendingPathComponent("\(name).json"), encoding: .utf8)
+		let expected = try String(contentsOf: Self.fixtures.appendingPathComponent("\(name).\(allWindows ? "all" : "compact").json"), encoding: .utf8)
+		#expect(compactResult(text, allWindows: allWindows) == expected)
 	}
 
 	@Test func leavesPlainTextAlone() {

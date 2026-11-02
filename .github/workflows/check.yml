@@ -17,7 +17,7 @@ jobs:
       # dist/ is checked in for Git installs; it must match a fresh compile exactly.
       - run: npm run check
       - run: npm test
-      # native2 (#143) serves the Node server's instructions and tools/list, compiled in; they must not drift.
+      # The Swift MCP server serves the Node server's instructions and tools/list, compiled in; they must not drift.
       - run: node scripts/contract.mjs --check
       # Hosted consumers import the protocol and client modules off macOS.
       - run: >-
@@ -34,21 +34,16 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      # Unsigned: signing belongs to each embedding app.
-      - run: node dist/build.js --out build --scratch .build/native
-      # The host's caller and self-target rules; Peekaboo's own tests run with npm run peekaboo-test.
-      - run: swift test --package-path native --scratch-path .build/native --filter DesktopToolsCallersTests
+      # Unsigned: signing belongs to each embedding app. The pure Swift host (#143) contains code ported from Peekaboo
+      # and AXorcist, so its build ships their MIT notices (#192).
+      - run: |
+          node dist/build.js --out build --scratch .build/native2
+          test -f build/Licenses/desktop-tools/LICENSE
+          test -f build/Licenses/peekaboo/LICENSE
+          test -f build/Licenses/axorcist/LICENSE
       # Embedders rebuild into the same output; notices from other sources must survive.
       - run: |
           mkdir -p build/Licenses/embedder && echo kept > build/Licenses/embedder/NOTICE
-          node dist/build.js --out build --scratch .build/native
+          node dist/build.js --out build --scratch .build/native2
           test "$(cat build/Licenses/embedder/NOTICE)" = kept
-      # native2 contains code ported from Peekaboo and AXorcist, so its build ships their MIT notices (#192).
-      - run: |
-          node dist/build.js --native2 --out build2 --scratch .build
-          test -f build2/Licenses/desktop-tools/LICENSE
-          test -f build2/Licenses/peekaboo/LICENSE
-          test -f build2/Licenses/axorcist/LICENSE
-      # native2 (#143) runs beside the shipped stack until the cutover; keep it building and its tests passing.
-      - run: swift build -c release --package-path native2 --scratch-path .build/native2
       - run: swift test --package-path native2 --scratch-path .build/native2

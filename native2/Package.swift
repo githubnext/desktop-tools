@@ -6,18 +6,18 @@ import PackageDescription
 // The npm package ships Sources without Tests, and SwiftPM refuses a test target whose folder is missing.
 let tests = FileManager.default.fileExists(atPath: Context.packageDirectory + "/Tests")
 
-// The single-codebase spike from #143: no Peekaboo and no Node. Only DesktopMac touches macOS.
+// The desktop tools' Swift host, runtime, client and MCP server (#143): no Peekaboo and no Node. Only DesktopMac touches macOS.
 let package = Package(
 	name: "DesktopTools2",
 	platforms: [.macOS(.v15)],
 	products: [
 		.executable(name: "desktop-tools-host", targets: ["desktop-tools-host"]),
 		.executable(name: "desktop-tools-mcp", targets: ["desktop-tools-mcp"]),
-		// One call per run, for createDesktop's wire 2 and embedders that spawn a client per request.
+		// One call per run, or every call on one connection with --serve, for createDesktop and embedders.
 		.executable(name: "desktop-tools-client", targets: ["desktop-tools-client"]),
-		// The embedding runtime the menu bar app loads, with native/'s C ABI (docs/embed.md).
+		// The embedding runtime the menu bar app loads, with the C ABI in docs/embed.md.
 		.library(name: "DesktopTools", type: .dynamic, targets: ["DesktopTools"]),
-		// The menu bar app that loads it, a copy of native/'s with the same callers module.
+		// The menu bar app that loads it.
 		.executable(name: "desktop-tools-app", targets: ["desktop-tools-app"]),
 	],
 	targets: [

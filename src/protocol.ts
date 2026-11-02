@@ -26,14 +26,14 @@ export type DesktopApplication = { path: string } | { bundle_id: string };
 export type DesktopLaunch = {
 	op: "launch";
 	application: DesktopApplication;
-	/** native2 (wire 2) only: bring the app forward; it launches in the background otherwise. */
+	/** Bring the app forward; it launches in the background otherwise. */
 	activate?: boolean;
 };
 export type DesktopOpen = {
 	op: "open";
 	item: { path: string } | { url: string };
 	application?: DesktopApplication;
-	/** native2 (wire 2) only: bring the receiving app forward; it opens in the background otherwise. */
+	/** Bring the receiving app forward; it opens in the background otherwise. */
 	activate?: boolean;
 };
 

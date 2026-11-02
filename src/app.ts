@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -16,29 +16,24 @@ function run(command: string[]) {
 }
 
 /**
- * Builds the native products into `<out>/build` and assembles an unsigned `<out>/Desktop Tools.app`, or `Desktop Tools Dev.app` for `dev`.
- * `native2` puts the pure Swift host's runtime and client in place of native/'s, and adds its MCP server (#143).
+ * Builds the native products into `<out>/build` and assembles an unsigned `<out>/Desktop Tools.app`, or `Desktop Tools Dev.app` for `dev`:
+ * the pure Swift host's runtime, client and MCP server, and the menu bar app that loads the runtime (#143).
  */
-export function assemble(out: string, scratch?: string, dev = false, native2 = false) {
+export function assemble(out: string, scratch?: string, dev = false) {
 	const build = join(out, "build");
-	run(["node", join(root, "dist", "build.js"), "--out", build, ...(scratch ? ["--scratch", scratch] : []), ...(native2 ? ["--native2"] : [])]);
+	run(["node", join(root, "dist", "build.js"), "--out", build, ...(scratch ? ["--scratch", scratch] : [])]);
 	const name = dev ? "Desktop Tools Dev" : "Desktop Tools";
 	const app = join(out, `${name}.app`);
 	rmSync(app, { recursive: true, force: true });
 	const bin = join(app, "Contents", "MacOS");
 	mkdirSync(bin, { recursive: true });
 	mkdirSync(join(app, "Contents", "Resources"), { recursive: true });
-	for (const name of ["desktop-tools-app", "libDesktopTools.dylib", "desktop-tools-client"]) {
+	for (const name of ["desktop-tools-app", "libDesktopTools.dylib", "desktop-tools-client", "desktop-tools-mcp"]) {
 		copyFileSync(join(build, name), join(bin, name));
 	}
-	chmodSync(join(bin, "desktop-tools-app"), 0o755);
-	chmodSync(join(bin, "desktop-tools-client"), 0o755);
-	if (native2) {
-		copyFileSync(join(build, "desktop-tools-mcp"), join(bin, "desktop-tools-mcp"));
-		chmodSync(join(bin, "desktop-tools-mcp"), 0o755);
-	}
+	for (const name of ["desktop-tools-app", "desktop-tools-client", "desktop-tools-mcp"]) chmodSync(join(bin, name), 0o755);
 	cpSync(join(build, "Licenses"), join(app, "Contents", "Resources", "Licenses"), { recursive: true });
-	copyFileSync(join(root, "native", "resources", "AppIcon.icns"), join(app, "Contents", "Resources", "AppIcon.icns"));
+	copyFileSync(join(root, "native2", "resources", "AppIcon.icns"), join(app, "Contents", "Resources", "AppIcon.icns"));
 	const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string };
 	writeFileSync(
 		join(app, "Contents", "Info.plist"),
@@ -78,7 +73,7 @@ export function assemble(out: string, scratch?: string, dev = false, native2 = f
 
 /**
  * Signs inside out; the client's exact identifier, the bundle's plus `.desktop-client`, is what the runtime admits.
- * native2's MCP server is a client of the same host, so it carries the same identifier.
+ * The bundled MCP server is a client of the same host, so it carries the same identifier.
  */
 export function sign(app: string, identity: string, release: boolean) {
 	const plist = join(app, "Contents", "Info.plist");
@@ -92,7 +87,7 @@ export function sign(app: string, identity: string, release: boolean) {
 	const bin = join(app, "Contents", "MacOS");
 	run([...codesign, join(bin, "libDesktopTools.dylib")]);
 	for (const client of ["desktop-tools-client", "desktop-tools-mcp"]) {
-		if (existsSync(join(bin, client))) run([...codesign, "--identifier", `${bundle}.desktop-client`, join(bin, client)]);
+		run([...codesign, "--identifier", `${bundle}.desktop-client`, join(bin, client)]);
 	}
 	run([...codesign, app]);
 	run(["codesign", "--verify", "--deep", "--strict", app]);

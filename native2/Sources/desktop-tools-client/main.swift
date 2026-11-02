@@ -6,7 +6,7 @@ import Foundation
 // The signed client embedders run, since the host serves only its own app's client:
 //
 //   desktop-tools-client <socket> <tool> [--verbose]   one tool call, with its arguments as a JSON object on stdin
-//   desktop-tools-client <socket> --serve              many calls over one connection, as createDesktop makes with wire 2
+//   desktop-tools-client <socket> --serve              many calls over one connection, as createDesktop makes
 //   desktop-tools-client [<socket>] status | repair   what native/'s client prints for the same commands
 //
 // One call prints one JSON line: {"result": <MCP tool result>}, or {"error": {"code", "message"}} and exits 1 when

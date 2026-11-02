@@ -75,6 +75,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 			stop: { type: "boolean", default: false },
 			scratch: { type: "string" },
 			"no-open": { type: "boolean", default: false },
+			// --native2 chose the pure Swift host while it shipped beside Peekaboo's; it is the only build now.
 			native2: { type: "boolean", default: false },
 		},
 		strict: true,
@@ -88,7 +89,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 		rmSync(staging, { recursive: true, force: true });
 		mkdirSync(staging, { recursive: true });
 		try {
-			const built = assemble(staging, values.scratch && resolve(values.scratch), true, values.native2);
+			const built = assemble(staging, values.scratch && resolve(values.scratch), true);
 			sign(built, identity, false);
 			stop();
 			rmSync(devApp, { recursive: true, force: true });
@@ -99,8 +100,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 		console.log(devApp);
 		if (!values["no-open"]) {
 			const state = launch();
-			const wire = values.native2 ? " --wire 2" : "";
-			console.log(`Serving ${join(state, "desktop.sock")}. Use it with: DESKTOP_TOOLS_STATE=${state} node dist/mcp.js${wire}`);
+			console.log(`Serving ${join(state, "desktop.sock")}. Use it with: DESKTOP_TOOLS_STATE=${state} node dist/mcp.js`);
 		}
 	}
 }
