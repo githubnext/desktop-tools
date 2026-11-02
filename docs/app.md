@@ -26,6 +26,22 @@ Download the notarized DMG from the [latest release](https://github.com/githubne
 
 Anything running as the user could use those grants, so the app asks before serving each agent (see [approved agents](#approved-agents)). Grant them only on machines where that is acceptable, and quit the app when it isn't needed.
 
+## Updates
+
+The app keeps itself up to date from this repository's [GitHub Releases](https://github.com/githubnext/desktop-tools/releases), which anyone can read without signing in.
+
+- **Update Automatically**, on by default, checks a minute after launch and then once a day (a failed check is retried an hour later). A newer release is downloaded and checked in the background, then installed once agents have run no operation for 10 minutes, input isn't paused and no Desktop Tools prompt is open. Turn it off and the app only checks when you ask.
+- **Check for Updates…** checks at once. It says when the app is up to date or why a check failed; when there is a newer release it downloads it and asks before installing (**Install and Relaunch** or **Later**). Below the item the menu shows the running version and when it last checked, or why the last update failed.
+- An update that is downloaded but not installed yet shows as **Install Desktop Tools *version* and Relaunch**, and is also installed when you quit the app, ready for the next launch.
+
+Installing stops serving new calls, lets the calls already running finish (at most 30 seconds), replaces the app in place in one rename, and opens the new version through LaunchServices once the old one has exited. Agents reconnect on their next call: the client waits for the app to serve again, as in [Keeping the socket served](#keeping-the-socket-served). Accessibility, Screen Recording and Keyboard input stay granted, and approved agents and settings are kept, because the new app has the same bundle ID and signature requirement.
+
+Nothing is installed unless the release's disk image and the app inside it are signed with Developer ID by team `8S43JJMN6B`, notarized, and pass Gatekeeper's assessment, and the app has the bundle ID `dev.githubnext.desktop-tools`, satisfies the running app's own designated requirement, and is the newer version the release names. The app must be able to write to the folder it is installed in, such as Applications; otherwise the update fails and names the release page to download it from. Each check and update is noted in the [log](#approved-agents).
+
+The development app (`Desktop Tools Dev`) and any build not signed by that team never update themselves and have no update items in their menu.
+
+To test a release build against another release list, open it with `DESKTOP_TOOLS_UPDATE_FEED` set to a URL that returns the same JSON as GitHub's list releases API, such as a `file:` URL; the app passes it on when it relaunches, as it does `DESKTOP_TOOLS_STATE`. Updates from it are checked the same way.
+
 ## Approved agents
 
 The first time an agent calls, the app asks **Allow *name* to control this Mac?**, naming who signed it and where it runs from, with **Allow** and **Don't Allow**. Until you answer, and after Don't Allow, every request from that agent is refused with `CALLER_NOT_APPROVED`, listings and screen captures included; the agent is told to ask you, and is never left waiting. The answer is remembered in `callers.json` in the state folder (`~/.local/state/desktop-tools`), readable only by you, and the app asks about each agent once. Updating from 0.13.1 or earlier, each agent you use is asked about once.
