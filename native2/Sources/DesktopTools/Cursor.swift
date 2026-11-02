@@ -332,14 +332,19 @@ private final class Cursor {
 		let distance = max(delta.length, 1)
 		let length = min(Tuning.travelShort + min(distance / 1600, 1) * (Tuning.travelLong - Tuning.travelShort), longest)
 		let bend = min(distance * Tuning.bend, Tuning.bendMost)
-		let control = CGPoint(x: (from.x + target.x) / 2 - delta.dy / distance * bend, y: (from.y + target.y) / 2 + delta.dx / distance * bend)
+		let mid = CGPoint(x: (from.x + target.x) / 2, y: (from.y + target.y) / 2)
+		let normal = CGVector(dx: -delta.dy / distance * bend, dy: delta.dx / distance * bend)
+		let control = CGPoint(x: mid.x + normal.dx, y: mid.y + normal.dy)
 		let start = CACurrentMediaTime()
 		await run { [self] now, _ in
-			let u = min((now - start) / length, 1)
-			let p = Ease.overshoot(u, back: Tuning.overshoot), q = 1 - p
-			position = CGPoint(
-				x: q * q * from.x + 2 * q * p * control.x + p * p * target.x,
-				y: q * q * from.y + 2 * q * p * control.y + p * p * target.y)
+			let u: Double = min((now - start) / length, 1)
+			let p: CGFloat = Ease.overshoot(u, back: Tuning.overshoot)
+			let q: CGFloat = 1 - p
+			// A quadratic Bézier's weights for its start, control and end points.
+			let a: CGFloat = q * q, b: CGFloat = 2 * q * p, c: CGFloat = p * p
+			let x: CGFloat = a * from.x + b * control.x + c * target.x
+			let y: CGFloat = a * from.y + b * control.y + c * target.y
+			position = CGPoint(x: x, y: y)
 			return u < 1
 		}
 	}
