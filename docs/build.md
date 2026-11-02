@@ -19,25 +19,15 @@ From a clone:
 ```sh
 git clone https://github.com/githubnext/desktop-tools && cd desktop-tools
 npm ci
-npm run build:native          # writes build/, scratch in native/.build
+npm run build:native          # writes build/, scratch in native2/.build
 npm run build:js && npm run check   # after editing src/
 ```
 
-The build:
+The build compiles the pure Swift package in `native2/` (#143) in release mode. It has no dependencies outside the macOS SDK.
 
-1. Resolves only the versions in `Package.resolved`.
-2. Checks that the runtime's allowed operations survive the embedded host's allowlist.
-3. Builds in release mode.
+`--out` receives `libDesktopTools.dylib` (the embedding runtime, with the C ABI in [embed.md](embed.md)), `desktop-tools-client`, `desktop-tools-mcp` (the Swift MCP server) and `desktop-tools-app` (the [Desktop Tools app](app.md) host), and `Licenses/<name>/` notices for this package and for Peekaboo and AXorcist, whose code parts of `native2/` were ported from. Existing files in `<out>/Licenses` are kept, except notices a build of the removed Peekaboo stack left there for dependencies this build doesn't contain.
 
-Peekaboo is vendored in `native/vendor/Peekaboo`: version 4.8.0 with our changes, which you edit there like any other source. `git diff peekaboo-upstream-4d43dc9 -- native/vendor/Peekaboo` shows them, and [`native/vendor/README.md`](https://github.com/githubnext/desktop-tools/blob/main/native/vendor/README.md) explains each one.
-
-`--out` receives `libDesktopTools.dylib`, `desktop-tools-client`, `desktop-tools-app` (the [Desktop Tools app](app.md) host), and `Licenses/<dependency>/` notices for this package, Peekaboo and every resolved pin. Existing files in `<out>/Licenses` are kept.
-
-Give each concurrent build its own `--scratch` directory, or run builds one at a time. The default scratch is `native/.build` inside the package, which is not suitable for an installed dependency.
-
-`--native2` builds the pure Swift host (#143) from `native2/` alone, with no Peekaboo and no other dependency, in `<scratch>/native2` (or `native2/.build`). `--out` then receives native2's `libDesktopTools.dylib`, `desktop-tools-client`, `desktop-tools-mcp` and `desktop-tools-app`, with notices for this package only; notices a `native/` build left in `<out>/Licenses` are removed. The dylib exports the same C ABI, but its client speaks a different wire, so an embedder switches by passing `--native2` and `createDesktop({ wire: 2 })` together (see [native2/CUTOVER.md](../native2/CUTOVER.md)). Until `native/` is removed, `native2/Sources/desktop-tools-app` is a copy of `native/sources/app`; a test keeps the two identical.
-
-Peekaboo's own tests take the real desktop operation locks in `~/.peekaboo` (`global.lock` and its turnstile) whenever a test uses the default coordination root. The path comes from the account database, so changing `HOME` doesn't isolate it. A hung or slow test run blocks every desktop operation for the same user, including the installed Desktop Tools app. A timed-out operation names the processes holding the lock open. Run Peekaboo tests with a narrow `--filter` and a time limit, and stop any run that hangs.
+Give each concurrent build its own `--scratch` directory, or run builds one at a time. The default scratch is `native2/.build` inside the package, which is not suitable for an installed dependency. `--native2`, which chose this build while the Peekaboo stack shipped beside it, is accepted and changes nothing.
 
 The build does not sign or stage the Swift runtime. Embedding apps own both. If an app's deployment target needs bundled Swift libraries, stage them with `xcrun swift-stdlib-tool --copy` into `Contents/Frameworks`; binaries carry an `@loader_path/../Frameworks` rpath for that.
 
@@ -52,7 +42,7 @@ npm run dev-app            # build, sign, install and open
 npm run dev-app -- --stop  # quit it
 ```
 
-`npm run dev-app -- --native2` bundles the pure Swift host's app, `libDesktopTools.dylib` and `desktop-tools-client` from `native2/` in place of `native/`'s, keeping the same app, identity and state folder (see [native2/CUTOVER.md](../native2/CUTOVER.md)). Run the MCP server against it with `--wire 2`, or run the Swift MCP server it also bundles, `Desktop Tools Dev.app/Contents/MacOS/desktop-tools-mcp`, which finds the app's socket and opens the app in the background when nothing serves it. Building without the switch puts `native/`'s back.
+The app bundles the Swift MCP server, `Desktop Tools Dev.app/Contents/MacOS/desktop-tools-mcp`, which finds the app's socket and opens the app in the background when nothing serves it. `DESKTOP_TOOLS_STATE=~/.local/state/desktop-tools-dev node dist/mcp.js` hands over to it.
 
 Every checkout and worktree installs the same `~/Library/Application Support/desktop-tools/dev/Desktop Tools Dev.app`. It has its own bundle identity, `dev.githubnext.desktop-tools.dev`, nested under the release app's, and the name **Desktop Tools Dev**. Building quits the running copy, replaces the bundle in place and opens it again through LaunchServices with `open`. Launching its executable directly can attribute permission checks to the launching terminal or agent instead of the app.
 
@@ -66,7 +56,7 @@ Every build is signed with one identity, so the designated requirement stays the
 git config desktopTools.codesignIdentity <SHA-1>
 ```
 
-It lives in the repository's `.git/config`, which all worktrees share, and is never committed. Ad-hoc signing (`-`) is refused, because it can't keep permissions across builds. Builds use `native/.build` as scratch unless you pass `--scratch <directory>`; give concurrent builds their own. Don't install a development build in `/Applications`.
+It lives in the repository's `.git/config`, which all worktrees share, and is never committed. Ad-hoc signing (`-`) is refused, because it can't keep permissions across builds. Builds use `native2/.build` as scratch unless you pass `--scratch <directory>`; give concurrent builds their own. Don't install a development build in `/Applications`.
 
 ## Releases
 

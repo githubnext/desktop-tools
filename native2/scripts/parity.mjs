@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// Runs the same tool calls through the Swift spike and the Node server and prints where their results differ.
+// Runs the same tool calls through two MCP servers and prints where their results differ: by default this checkout's
+// release build and `node dist/mcp.js`, which hands over to the installed app's bundled server, so a change is checked
+// against the last release.
 //
 //   node native2/scripts/parity.mjs calls <file.json>   each [tool, args], sent as is
 //   node native2/scripts/parity.mjs steps <file.json>   each [tool, args] after a fresh inspect of the fixture window
@@ -11,7 +13,7 @@
 // "$win:App:Title" the fresh desktop_windows target of its window with that title, and "$movedwin:App:Title" that
 // target with its bounds one point off, as a window that moved since. With --ids, PIDs, window and Space IDs are
 // ignored too, for steps that launch apps or open windows. Objects are compared with sorted keys; snapshot IDs, process
-// start identities, the route (local in Swift, bridge in Node), timings and the observation's own fields are ignored, so an
+// start identities, the route (local, or bridge from servers before the cutover), timings and the observation's own fields are ignored, so an
 // action compares by its action object and the observation's field names.
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -20,8 +22,8 @@ import { parseArgs } from "node:util";
 const { values, positionals } = parseArgs({
 	allowPositionals: true,
 	options: {
-		swift: { type: "string", default: "native2/.build/release/desktop-tools-mcp" },
-		node: { type: "string", default: "node dist/mcp.js" },
+		server: { type: "string", default: "native2/.build/release/desktop-tools-mcp" },
+		baseline: { type: "string", default: "node dist/mcp.js" },
 		app: { type: "string", default: "fixture" },
 		window: { type: "string", default: "Click Fixture" },
 		window2: { type: "string" },
@@ -31,7 +33,7 @@ const { values, positionals } = parseArgs({
 });
 const [mode, file] = positionals;
 if (!["calls", "steps"].includes(mode) || !file) {
-	console.error("Usage: node native2/scripts/parity.mjs calls|steps <file.json> [--swift cmd] [--node cmd] [--app name] [--window title] [--window2 title] [--all]");
+	console.error("Usage: node native2/scripts/parity.mjs calls|steps <file.json> [--server cmd] [--baseline cmd] [--app name] [--window title] [--window2 title] [--all]");
 	process.exit(1);
 }
 const entries = JSON.parse(readFileSync(file, "utf8"));
@@ -156,19 +158,19 @@ async function run(command) {
 }
 
 // One server at a time: they drive the same desktop.
-const swift = await run(values.swift);
-const node = await run(values.node);
+const current = await run(values.server);
+const baseline = await run(values.baseline);
 let same = 0;
 entries.forEach(([tool, args], index) => {
-	const [a, b] = [normal(swift[index].summary), normal(node[index].summary)];
+	const [a, b] = [normal(current[index].summary), normal(baseline[index].summary)];
 	const label = `${tool} ${JSON.stringify(args ?? {})}`.slice(0, 120);
 	if (a === b) {
 		same++;
-		if (values.all) console.log(`SAME ${label}  (swift ${swift[index].ms} ms, node ${node[index].ms} ms)`);
+		if (values.all) console.log(`SAME ${label}  (server ${current[index].ms} ms, baseline ${baseline[index].ms} ms)`);
 		return;
 	}
-	console.log(`DIFF ${label}  (swift ${swift[index].ms} ms, node ${node[index].ms} ms)`);
-	console.log(`  swift: ${a.slice(0, 1500)}`);
-	console.log(`  node:  ${b.slice(0, 1500)}`);
+	console.log(`DIFF ${label}  (server ${current[index].ms} ms, baseline ${baseline[index].ms} ms)`);
+	console.log(`  server:   ${a.slice(0, 1500)}`);
+	console.log(`  baseline: ${b.slice(0, 1500)}`);
 });
 console.log(`${same} of ${entries.length} the same`);

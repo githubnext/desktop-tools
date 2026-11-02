@@ -5,9 +5,10 @@ c.stdout.on("data",d=>{buf+=d;let i;while((i=buf.indexOf("\n"))>=0){const l=buf.
 const req=(method,params={})=>new Promise(r=>{const id=n++;w.set(id,r);c.stdin.write(JSON.stringify({jsonrpc:"2.0",id,method,params})+"\n")});
 return {req,call:(name,args)=>req("tools/call",{name,arguments:args}),stop:()=>c.kill()}}
 const j=r=>{const t=r.content.find(c=>c.text?.startsWith("{"));return t?JSON.parse(t.text):{}};
-// Times the core tools on the fixture window through the Swift spike and the Node server: node native2/scripts/bench.mjs [runs]
+// Times the core tools on the fixture window through this checkout's release build and the installed app's server, which
+// node dist/mcp.js hands over to: node native2/scripts/bench.mjs [runs]
 const runs=Number(process.argv[2]??10);
-const S={swift:"native2/.build/release/desktop-tools-mcp",node:"node dist/mcp.js"};
+const S={build:"native2/.build/release/desktop-tools-mcp",installed:"node dist/mcp.js"};
 const p=(xs,q)=>{const s=[...xs].sort((a,b)=>a-b);return Math.round(s[Math.min(s.length-1,Math.floor(q*s.length))])};
 const res={};
 for(const [name,cmd] of Object.entries(S)){
@@ -39,5 +40,5 @@ for(const [name,cmd] of Object.entries(S)){
  }
  s.stop();
 }
-console.log("scenario   node p50/p90   swift p50/p90   speedup  (non-completed)");
-for(const [k,v] of Object.entries(res)) console.log(k.padEnd(10),`${v.node.p50}/${v.node.p90}`.padStart(12),`${v.swift.p50}/${v.swift.p90}`.padStart(14),(v.node.p50/v.swift.p50).toFixed(1).padStart(8)+"x",`  node ${v.node.bad} swift ${v.swift.bad}`);
+console.log("scenario   installed p50/p90   build p50/p90   speedup  (non-completed)");
+for(const [k,v] of Object.entries(res)) console.log(k.padEnd(10),`${v.installed.p50}/${v.installed.p90}`.padStart(17),`${v.build.p50}/${v.build.p90}`.padStart(14),(v.installed.p50/v.build.p50).toFixed(1).padStart(8)+"x",`  installed ${v.installed.bad} build ${v.build.bad}`);

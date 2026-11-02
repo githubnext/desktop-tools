@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Writes the MCP contract the Swift server (native2, #143) must serve, from today's Node server: its
-// instructions and tools/list, compiled into the Swift code so no resource bundle has to travel with an embedded host.
-// With --check, fails when they differ, so the TS definitions stay the source. It runs the server with --wire 2, so the
-// text native2 owns (desktopTools and desktopToolRules with wire 2) is what it serves, and embedders on wire 2 get it too.
+// Writes the MCP contract the Swift server (native2, #143) serves, from the Node server: its instructions and
+// tools/list, compiled into the Swift code so no resource bundle has to travel with an embedded host. With --check,
+// fails when they differ, so the TS definitions in src/tools.ts, which embedders import as /tools, stay the source.
+// --wire 2 keeps the Node server from handing over to an installed app's bundled server.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 

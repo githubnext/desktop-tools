@@ -46,4 +46,4 @@ Any process running as you can use the app's grants while it serves agents. Quit
 
 Documentation is at [githubnext.github.io/desktop-tools](https://githubnext.github.io/desktop-tools/), built from [`docs/`](docs/).
 
-MIT licensed. Native builds link third-party code whose [licenses](docs/licenses.md) must ship with them.
+MIT licensed. Native builds contain code ported from third-party projects whose [licenses](docs/licenses.md) must ship with them.

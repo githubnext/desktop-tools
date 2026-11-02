@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Times read-only tools through any MCP server, so today's Node server and the Swift spike (#143) run the same scenarios.
+// Times read-only tools through any MCP server, so two builds or releases run the same scenarios.
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";

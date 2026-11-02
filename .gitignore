@@ -1,8 +1,4 @@
 node_modules/
-native/.build/
-native/.swiftpm/
 .check/
 build/
 .build/
-# SwiftPM writes these when the vendored test packages build; upstream tracks only some.
-native/vendor/Peekaboo/**/Package.resolved

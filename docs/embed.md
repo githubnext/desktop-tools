@@ -1,12 +1,12 @@
 # Embed
 
-1. Copy `libDesktopTools.dylib` and `desktop-tools-client` from a [native build](build.md) into the app bundle, and ship `Licenses/`.
-2. Sign the library, the client, and the app with the same Apple Development or Developer ID team. Sign the client with an exact identifier, for example `codesign --identifier <app-id>.desktop-client`.
+1. Copy `libDesktopTools.dylib` and `desktop-tools-client`, and optionally `desktop-tools-mcp`, from a [native build](build.md) into the app bundle, and ship `Licenses/`.
+2. Sign the library, the client, and the app with the same Apple Development or Developer ID team. Sign the client with an exact identifier, for example `codesign --identifier <app-id>.desktop-client`, and the MCP server with the same one, since the host admits exactly one client identifier.
 3. From the app's GUI process, load the library and call its C ABI:
 
 | Symbol | Meaning |
 | --- | --- |
-| `void desktop_tools_start(const char *socket, const char *client)` | Serve the Bridge on `socket` for the exact signed `client` identifier from this app's team |
+| `void desktop_tools_start(const char *socket, const char *client)` | Serve the desktop tools on `socket` for the exact signed `client` identifier from this app's team |
 | `char *desktop_tools_status(void)` | JSON `{ state, error?, accessibility, screenRecording, eventSynthesizing, clipboardRead, cursor, highlight, paused }`; free with `desktop_tools_free` |
 | `void desktop_tools_check(void)` | Check now that the socket is still published: publish it again if it was removed or replaced, and retry a failed start at once. The runtime also watches the socket on its own. Call this when the app is opened again (`applicationShouldHandleReopen`), since the client opens its containing app when it finds no host serving |
 | `void desktop_tools_stop(void)` | Drain native operations and stop; poll status until `stopped` |
