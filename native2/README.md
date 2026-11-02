@@ -46,6 +46,8 @@ swiftc -O native2/fixture/main.swift -o native2/.build/fixture
 (nohup native2/.build/fixture >/tmp/fixture.log 2>&1 &)
 ```
 
+The cursor lab, `native2/fixture/cursorlab/run.sh`, is a playground for the agent cursor's motion (`DesktopTools/Cursor.swift`). Agents break out of your real pointer, click in three scene windows, then merge back into the pointer or fade. The lab window has switches and sliders for each principle and timing, a ¼× slow motion, and each input's wait for its cursor measured against `Hooks.pointerLimit`. Changes save to `~/.local/state/desktop-tools2/cursor-lab.json`, and `--send` starts a run at launch. Unlike the real cursor, the lab's overlay shows in captures and recordings.
+
 Differences that are intended: the route is `local`, not `bridge`, since there is no bridge; Peekaboo's `diagnostics` aren't sent; a key refused because focus isn't in the window says refused, since nothing was sent, where Node says unknown; and desktop_launch and desktop_open run in the background unless `activate` is true, where Node always brings the app forward (#162).
 
 ## Status
