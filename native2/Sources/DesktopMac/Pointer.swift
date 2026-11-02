@@ -190,7 +190,15 @@ extension Mac {
 			return nil
 		}()
 		guard let (element, how) = pick else {
-			throw Refusal("DESKTOP_ACTION_FAILED", "No pressable accessibility element was found at (\(Int(point.x)), \(Int(point.y))) in PID \(window.pid). Background clicks press the accessibility element at the target point, and nothing pressable was found there — the point may be empty, a custom-drawn view, or an element that exposes no press action. Nothing was clicked. Inspect again and click an element, or click with a modifier to send a real pointer click in the foreground.")
+			// Chromium marks only elements with their own click listener as pressable, and pages that listen once at the
+			// root (Google's jsaction, React and other frameworks) mark nothing (#230). Chromium takes a click routed to
+			// its window in the background, so the page's own hit testing decides, as for a real click.
+			if routesThroughSkyLight(window.pid) {
+				var delivery = try routedClick(at: point, kind: .single, window: window)
+				delivery.fields.append(("note", "Nothing at the point exposes an Accessibility press, so the click was sent as a pointer click routed to the window, where the page handles it."))
+				return delivery
+			}
+			throw Refusal("DESKTOP_ACTION_FAILED", "No pressable accessibility element was found at (\(Int(point.x)), \(Int(point.y))) in PID \(window.pid). Background clicks press the accessibility element at the target point, and nothing pressable was found there — the point may be empty, a custom-drawn view, or an element that exposes no press action. Nothing was clicked. Inspect again and click an element, or click with foreground true to send a real pointer click.")
 		}
 		// Only the same app's other windows are caught here; another app's window on top is not.
 		if let owner = AX.element(AX.value(element, kAXWindowAttribute)), let id = AX.windowID(owner), id != window.windowID {
@@ -205,9 +213,15 @@ extension Mac {
 			try window.check()
 			let error = AXUIElementSetAttributeValue(element, kAXSelectedAttribute as CFString, kCFBooleanTrue)
 			guard error == .success else { return Delivery(state: .indeterminate, mechanism: "accessibility_value", evidence: "completion_unknown", units: 1) }
-			return .accepted("accessibility_value")
+			var delivery = Delivery.accepted("accessibility_value")
+			delivery.fields.append(("note", JSON(selectedRowNote)))
+			return delivery
 		}
 	}
+
+	/// A row selected through Accessibility changes the selection without a mouse event, so an app that acts on a
+	/// selection only when NSApp.currentEvent is user input ignores it (#225).
+	public static let selectedRowNote = "The row was selected through Accessibility, not with a mouse event, so an app that acts only on user input, by checking NSApp.currentEvent, may ignore it. If the app didn't respond, click again with foreground true."
 
 	// MARK: Presses WebKit would redirect
 

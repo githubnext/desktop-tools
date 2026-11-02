@@ -261,8 +261,9 @@ extension Mac {
 
 	// MARK: Modifier click
 
-	/// A click holding command, option or shift, which Accessibility presses can't carry: activate the app, click
-	/// with the real pointer, then give the pointer and focus back.
+	/// A click with the real pointer, holding command, option or shift or none: activate the app, click, then give the
+	/// pointer and focus back. Modifiers need it, since Accessibility presses can't carry them, and so do apps that act
+	/// only when NSApp.currentEvent is a real mouse event (#225).
 	public static func modifierClick(at point: CGPoint, kind: ClickKind, modifiers: [String], window: ClickWindow) throws -> Delivery {
 		guard window.bounds.contains(point) else {
 			var refusal = Refusal("DESKTOP_ACTION_FAILED", "Modifier-click point must be finite and inside the exact target window.")
@@ -406,7 +407,7 @@ extension Mac {
 			("cursor_restoration", JSON(cursor.rawValue)), ("focus_restoration", JSON(focusRestoration.rawValue)),
 			("error", .object([
 				("code", "DESKTOP_ACTION_UNVERIFIED"),
-				("message", JSON("The click was sent as real pointer input holding \(modifiers.joined(separator: " and ")), which activated the app and moved the pointer, then restored them (pointer \(cursor.rawValue), focus \(focusRestoration.rawValue)). Its effect can't be confirmed.")),
+				("message", JSON("The click was sent as real pointer input\(modifiers.isEmpty ? "" : " holding \(modifiers.joined(separator: " and "))"), which activated the app and moved the pointer, then restored them (pointer \(cursor.rawValue), focus \(focusRestoration.rawValue)). Its effect can't be confirmed.")),
 				("hint", "Inspect the window to see what the click did, such as which items are selected. Never repeat the click blindly."),
 			])),
 		]
