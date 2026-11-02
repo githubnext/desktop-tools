@@ -7,6 +7,7 @@ private struct Runtime {
 	let start: @convention(c) (UnsafePointer<CChar>, UnsafePointer<CChar>) -> Void
 	let status: @convention(c) () -> UnsafeMutablePointer<CChar>?
 	let stop: @convention(c) () -> Void
+	let activity: @convention(c) () -> UnsafeMutablePointer<CChar>?
 	let check: @convention(c) () -> Void
 	let free: @convention(c) (UnsafeMutableRawPointer?) -> Void
 	let permission: @convention(c) (UnsafePointer<CChar>) -> Void
@@ -32,6 +33,7 @@ private struct Runtime {
 		start = symbol("desktop_tools_start")
 		status = symbol("desktop_tools_status")
 		stop = symbol("desktop_tools_stop")
+		activity = symbol("desktop_tools_activity")
 		check = symbol("desktop_tools_check")
 		free = symbol("desktop_tools_free")
 		permission = symbol("desktop_tools_permission")
@@ -112,6 +114,8 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	private var waiting: [Caller] = []
 	// Agent-supplied passwords need the user's approval for each fill unless the user turned this on.
 	private var passwords = UserDefaults.standard.bool(forKey: "agentPasswords")
+	/// Nil in the development app and any build not signed by the release team; they never update themselves.
+	private var updater: Updater?
 
 	override init() {
 		let bin = Bundle.main.executableURL!.deletingLastPathComponent()
@@ -181,7 +185,38 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
 		log("Desktop Tools \(version) started, serving \(socket)")
 		runtime.start(socket, client)
+		updater = Updater.make(
+			log: { [weak self] in self?.log($0) },
+			lastActivity: { [weak self] in self?.lastActivity() },
+			busy: { [weak self] in
+				guard let self else { return true }
+				// Relaunching would resume paused input and drop the questions on screen.
+				return paused || !waiting.isEmpty || Confirmations.shared.asking
+			},
+			drain: { [weak self] in await self?.drain() },
+			resume: { [weak self] in
+				guard let self else { return }
+				runtime.start(socket, client)
+			})
+		updater?.start()
 		render()
+	}
+
+	/// When an agent last ran an operation the activity log records, if any has since launch.
+	private func lastActivity() -> Date? {
+		struct Entry: Decodable { var time: Double }
+		guard let pointer = runtime.activity() else { return nil }
+		defer { runtime.free(pointer) }
+		let entries = try? JSONDecoder().decode([Entry].self, from: Data(String(cString: pointer).utf8))
+		return entries?.map(\.time).max().map(Date.init(timeIntervalSince1970:))
+	}
+
+	/// Stops serving and waits for the calls already running to finish; the runtime gives them at most 30 seconds.
+	private func drain() async {
+		runtime.stop()
+		for _ in 0..<700 where read()?.state != "stopped" {
+			try? await Task.sleep(for: .milliseconds(50))
+		}
 	}
 
 	/// Opening the app again, as a person does when it seems stuck and `desktop-client repair` does, checks that
@@ -194,6 +229,7 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 	func applicationWillTerminate(_: Notification) {
 		log("Desktop Tools quit")
 		runtime.stop()
+		updater?.installAtQuit()
 	}
 
 	private func log(_ message: String) {
@@ -250,6 +286,20 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 		open.toolTip = "Every operation agents ran, with its app, window, agent and outcome, but never typed text or clipboard contents."
 		menu.addItem(open)
 		menu.addItem(.separator())
+		if let updater {
+			let update = NSMenuItem(title: updater.title, action: updater.enabled ? #selector(chooseUpdate) : nil,
+				keyEquivalent: "")
+			update.target = self
+			update.subtitle = updater.detail
+			menu.addItem(update)
+			let automatic = NSMenuItem(title: "Update Automatically", action: #selector(toggleAutomaticUpdates),
+				keyEquivalent: "")
+			automatic.target = self
+			automatic.state = updater.automatic ? .on : .off
+			automatic.toolTip = "Check for a new release daily and install it once agents have been idle for 10 minutes. Only releases notarized and signed by the Desktop Tools team are installed."
+			menu.addItem(automatic)
+			menu.addItem(.separator())
+		}
 		let pause = NSMenuItem(title: "Pause All Input", action: #selector(togglePause), keyEquivalent: "")
 		pause.target = self
 		pause.state = paused ? .on : .off
@@ -383,6 +433,16 @@ private final class Host: NSObject, NSApplicationDelegate, NSMenuDelegate {
 			systemSymbolName: symbol,
 			accessibilityDescription: paused ? "Desktop Tools, input paused" : "Desktop Tools")
 		item.button?.toolTip = paused ? "Desktop Tools: input paused" : "Desktop Tools"
+	}
+
+	@objc private func chooseUpdate() {
+		updater?.choose()
+	}
+
+	@objc private func toggleAutomaticUpdates() {
+		guard let updater else { return }
+		updater.automatic.toggle()
+		log(updater.automatic ? "Automatic updates on" : "Automatic updates off")
 	}
 
 	@objc private func toggleCursor() {

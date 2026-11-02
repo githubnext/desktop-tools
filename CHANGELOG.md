@@ -4,6 +4,10 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Added
+
+- The app updates itself from GitHub Releases. **Update Automatically**, on by default, checks at launch and daily, downloads a newer release, and installs it once agents have been idle for 10 minutes, after the calls already running finish, then relaunches. **Check for Updates…** checks at once and asks before installing. Only a release notarized and signed with Developer ID by the Desktop Tools team, with the app's bundle ID, is installed, so permissions and approved agents are kept. The development app never updates itself. See [Updates](docs/app.md#updates).
+
 ### Removed
 
 - The Peekaboo stack, which the app stopped shipping in 0.17.0: `native/` with its vendored Peekaboo, its client and runtime, the release workflow's `stack` input, and wire 1, the Node tool logic behind `createDesktop` without `wire: 2`. `desktop-tools-build`, `desktop-tools-app` and `npm run dev-app` build only the Swift host in `native2/`, and accept `--native2` without effect; `createDesktop` and `dist/mcp.js` with options always forward to its `desktop-tools-client`, and accept `wire: 2` and `--wire 2` without effect, while `--wire 1` is refused. `dist/mcp.js` with no options still hands over to the app's bundled MCP server. An embedder whose app still embeds `native/`'s runtime must stay on 0.18.0 or move to `native2/`'s. The npm package no longer ships `native/`, and `npm run peekaboo-test` is gone. ([#233](https://github.com/githubnext/desktop-tools/pull/233))

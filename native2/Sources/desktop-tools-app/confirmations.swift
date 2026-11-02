@@ -32,6 +32,7 @@ final class Confirmations: NSObject {
 	private var queue: [Pending] = []
 	private var showing: Pending?
 	private var alert: NSAlert?
+	private var notice: NSAlert?
 
 	/// The user's answer, or nil when the request was cancelled before it was shown.
 	func ask(_ request: Request) async -> Answer? {
@@ -60,6 +61,34 @@ final class Confirmations: NSObject {
 		} else if let index = queue.firstIndex(where: { $0.request.key == key }) {
 			for waiter in queue.remove(at: index).waiters { waiter.resume(returning: nil) }
 		}
+	}
+
+	/// Whether a question is showing or waiting to show.
+	var asking: Bool {
+		showing != nil || !queue.isEmpty
+	}
+
+	/// Shows a message with only an OK button, such as the result of checking for updates. It answers nothing, so it
+	/// doesn't wait in the queue; a second one replaces the first.
+	func tell(_ title: String, _ message: String) {
+		notice?.window.orderOut(nil)
+		let alert = NSAlert()
+		alert.messageText = title
+		alert.informativeText = message
+		let ok = alert.addButton(withTitle: "OK")
+		ok.target = self
+		ok.action = #selector(dismissNotice)
+		alert.layout()
+		alert.window.level = .modalPanel
+		alert.window.center()
+		notice = alert
+		NSApp.activate()
+		alert.window.makeKeyAndOrderFront(nil)
+	}
+
+	@objc private func dismissNotice() {
+		notice?.window.orderOut(nil)
+		notice = nil
 	}
 
 	private func showNext() {
