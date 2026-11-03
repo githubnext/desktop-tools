@@ -625,7 +625,7 @@ extension Tools {
 		// A scope is walked from its own element, so a busy window can't spend the budget before the walk reaches
 		// it, and the subtree's text comes back whole (#204).
 		let root = try await scopeRoot(scope, source, generation: generation)
-		let (tree, change) = try await webRead(pid: pid, allowed: web, tree: { $0 }) {
+		let (tree, change) = try await webRead(pid: pid, allowed: web, restore: !web, tree: { $0 }) {
 			if let root {
 				return try await run { Mac.elements(root: root.reference, budget: wideBudget) }
 			}

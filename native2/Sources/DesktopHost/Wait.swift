@@ -259,7 +259,8 @@ struct WaitCondition: Sendable {
 			source = try await Tools.scopeSource(ScopeRequest(snapshot: snapshot, element: element), pid: pid, windowID: window)
 		}
 		let generation = Mac.generation(pid)
-		let (tree, web) = try await Tools.webRead(pid: pid, allowed: request["web_accessibility"]?.bool != false, tree: { $0 }) {
+		let web = request["web_accessibility"]?.bool != false
+		let (tree, change) = try await Tools.webRead(pid: pid, allowed: web, restore: !web, tree: { $0 }) {
 			try await run {
 				do {
 					return try Mac.elements(pid: pid, windowID: window, budget: wide)
@@ -289,18 +290,11 @@ struct WaitCondition: Sendable {
 				"traversed_element_count": JSON(tree.elements.count),
 				"truncated": JSON(!truncation.isEmpty),
 				"truncation": .array(truncation.map(JSON.string)),
-				"web_accessibility": web.map { JSON($0.change.rawValue) },
-				"web_accessibility_via": web?.via.map { JSON($0.rawValue) },
+				"web_accessibility": change.map { JSON($0.change.rawValue) },
+				"web_accessibility_via": change?.via.map { JSON($0.rawValue) },
 			])
 		}
-		let found = selected.filter { element in
-			let attributes = element.attributes
-			guard attributes["role"] == match["role"]?.string || element.type == match["role"]?.string else { return false }
-			if let title = match["title"]?.string, element.label != title, attributes["title"] != title { return false }
-			if let value = match["value"]?.string, Self.readable(element) != value { return false }
-			if let identifier = match["identifier"]?.string, attributes["identifier"] != identifier { return false }
-			return true
-		}
+		let found = selected.filter { Self.matches($0, match) }
 		return .object([
 			"application_name": Mac.appName(pid).map(JSON.string),
 			"window_title": tree.windowTitle.map(JSON.string),
@@ -321,12 +315,43 @@ struct WaitCondition: Sendable {
 			"traversed_element_count": JSON(tree.elements.count),
 			"truncated": JSON(!truncation.isEmpty),
 			"truncation": .array(truncation.map(JSON.string)),
-			"web_accessibility": web.map { JSON($0.change.rawValue) },
-			"web_accessibility_via": web?.via.map { JSON($0.rawValue) },
+			"web_accessibility": change.map { JSON($0.change.rawValue) },
+			"web_accessibility_via": change?.via.map { JSON($0.rawValue) },
 			"target_receipt": generation.map { .object([
 				("pid", JSON(pid)), ("process_start_identity_decimal", JSON(String($0))), ("window_id", JSON(window)),
 			]) },
 		])
+	}
+
+	/// Whether an element fits an element condition's role, title, value and identifier.
+	static func matches(_ element: Element, _ match: JSON) -> Bool {
+		let attributes = element.attributes
+		guard attributes["role"] == match["role"]?.string || element.type == match["role"]?.string else { return false }
+		if let title = match["title"]?.string, element.label != title, attributes["title"] != title { return false }
+		if let value = match["value"]?.string, readable(element) != value { return false }
+		if let identifier = match["identifier"]?.string, attributes["identifier"] != identifier { return false }
+		return true
+	}
+
+	/// Where a snapshot for a matched element lists from, given every element's depth in pre-order: the outermost
+	/// ancestor of `match` whose subtree has at most `limit` elements, so the listing shows as much around the
+	/// element as an unscoped inspection would, or the element itself when even its parent's subtree is larger.
+	static func listingRoot(depths: [Int], match: Int, limit: Int) -> Int {
+		func size(_ start: Int) -> Int {
+			var end = start + 1
+			while end < depths.count, depths[end] > depths[start] { end += 1 }
+			return end - start
+		}
+		var root = match
+		var index = match
+		while index > 0 {
+			// The nearest earlier element that is shallower is the parent.
+			guard let parent = depths[..<index].lastIndex(where: { $0 < depths[index] }) else { break }
+			guard size(parent) <= limit else { break }
+			root = parent
+			index = parent
+		}
+		return root
 	}
 
 	/// Secure text field values are never read.
@@ -490,10 +515,28 @@ struct WaitCondition: Sendable {
 		return (matched, result, image)
 	}
 
-	/// Inspects once after an element appears, so the result carries a snapshot that action tools accept.
+	/// Inspects once after an element appears, so the result carries a snapshot that action tools accept. When an
+	/// inspection's 200 elements, which leave off-screen content out, miss the element, it inspects again with the
+	/// larger scoped budget, listing the subtree around the first match (#232).
 	private func confirm() async -> (inspection: JSON, image: (data: String, mimeType: String)?) {
+		var request = InspectRequest()
+		request.web = self.request["web_accessibility"]?.bool != false
+		let first = await confirm(request)
+		guard first.inspection["snapshot_id"] == .null, first.inspection["error"] == nil else { return first }
+		let match = element!
+		request.root = { ordered in
+			guard let found = ordered.firstIndex(where: { Self.matches($0, match) }) else { return nil }
+			let depths = ordered.map { $0.attributes["depth"].flatMap(Int.init) ?? 0 }
+			return Self.listingRoot(depths: depths, match: found, limit: ElementBudget().maxElements)
+		}
+		let scoped = await confirm(request)
+		return scoped.inspection["snapshot_id"] == .null ? first : scoped
+	}
+
+	private func confirm(_ request: InspectRequest) async -> (inspection: JSON, image: (data: String, mimeType: String)?) {
 		do {
-			let (data, image) = try await Tools.observation(pid: pid!, windowID: window!)
+			let observed = try await Tools.observation(pid: pid!, windowID: window!, request, started: .now)
+			let (data, image) = (observed.data, observed.image)
 			let match = element!
 			let elements = (data["ui_elements"]?.array ?? []).filter { element in
 				let attributes = element["attributes"]
@@ -505,8 +548,9 @@ struct WaitCondition: Sendable {
 			return (.object([
 				"snapshot_id": elements.isEmpty ? .null : data["snapshot_id"],
 				"window_title": data["window_title"],
+				"scope": elements.isEmpty ? nil : data["scope"],
 				"elements": .array(Array(elements.prefix(maxRows))),
-				"note": elements.isEmpty ? "The element is not among this inspection's elements, which stop at its first 200. Inspect again with a scope that contains it to act on it." : nil,
+				"note": elements.isEmpty ? "The element is not among this inspection's elements, even read with a scope's larger budget; it may have changed since the match. Inspect again to act on it." : nil,
 			]), elements.isEmpty ? nil : image)
 		} catch {
 			return (.object([("snapshot_id", .null), ("error", JSON((error as? ToolError)?.message ?? String(describing: error)))]), nil)
@@ -556,7 +600,26 @@ extension Tools {
 		guard let expect = arguments["expect"] else { return nil }
 		guard case .object = expect else { throw ToolError("expect must be an object naming a desktop_wait condition with until.") }
 		if expect["op"] != nil { throw ToolError("expect takes desktop_wait's arguments without op.") }
-		return try WaitCondition(expect, maxTimeout: expectMax, defaultTimeout: expectDefault)
+		do { return try WaitCondition(expect, maxTimeout: expectMax, defaultTimeout: expectDefault) } catch let error as ToolError {
+			throw ToolError("expect: \(error.message)")
+		}
+	}
+
+	/// An action's expect with the target its snapshot observed filled in where the condition leaves it out, so
+	/// a condition on the snapshot's app or window needn't repeat its pid and window (#224). A condition that names
+	/// another app keeps its own target, and its window isn't taken from this one.
+	static func expectTarget(_ expect: JSON, pid: pid_t, window: Int) -> JSON {
+		guard case .object = expect, let until = expect["until"]?.string, conditions.contains(until) else { return expect }
+		var filled = expect
+		if until == "window_appears" || appConditions.contains(until) {
+			if expect["pid"] == nil, expect["bundle_id"] == nil { filled.set("pid", JSON(Int(pid))) }
+			return filled
+		}
+		if expect["pid"] == nil { filled.set("pid", JSON(Int(pid))) }
+		// A dialog condition without a window reads the whole app, which also sees a dialog in a new window.
+		let takesWindow = until == "window_gone" || elementConditions.contains(until) || textConditions.contains(until)
+		if takesWindow, expect["window"] == nil, filled["pid"]?.int == Int(pid) { filled.set("window", JSON(window)) }
+		return filled
 	}
 
 	/// Runs an action once, and when its outcome is unknown, polls the expected condition briefly. The condition

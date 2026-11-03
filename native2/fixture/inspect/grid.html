@@ -1,0 +1,14 @@
+<!doctype html>
+<!-- #232 and #224: 260 visible buttons fill the 200-element budget before a visible field; a button reveals another. -->
+<html><head><meta charset="utf-8"><title>Grid fixture</title>
+<style>body{font:12px sans-serif;margin:8px} #grid button{width:44px;height:26px;margin:1px;font-size:10px}</style></head>
+<body>
+<div id="grid"></div>
+<p><button type="button" id="reveal" onclick="document.getElementById('hidden').hidden=false">Reveal</button>
+<button type="button" id="hidden" hidden>Confirm revealed</button></p>
+<label>Service account name <input aria-label="Service account name"></label>
+<script>
+const grid = document.getElementById("grid");
+for (let i = 0; i < 260; i++) { const b = document.createElement("button"); b.type = "button"; b.textContent = "B" + i; grid.append(b); }
+</script>
+</body></html>

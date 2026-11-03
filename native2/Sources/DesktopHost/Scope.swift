@@ -93,11 +93,16 @@ extension Tools {
 extension Tools {
 	/// Reads a window with its app's web accessibility turned on when `allowed`: before the read for an app that
 	/// ships Chromium, or after a read that found a nearly empty web area; then reads again once the tree is built.
-	/// Ported from the native client's WebAccessibilityPolicy.
+	/// Ported from the native client's WebAccessibilityPolicy. With `restore`, as when an agent passes
+	/// web_accessibility false, it first turns it back off where this host turned it on (#231).
 	static func webRead<T>(
-		pid: pid_t, allowed: Bool, tree: (T) -> ElementTree, _ read: () async throws -> T
+		pid: pid_t, allowed: Bool, restore: Bool = false, tree: (T) -> ElementTree, _ read: () async throws -> T
 	) async throws -> (T, (change: WebAccessibilityChange, via: WebAccessibilityVia?)?) {
 		var web: (change: WebAccessibilityChange, via: WebAccessibilityVia?)?
+		defer { if web?.change == .enabled { WebAccessibilityIdle.watch() } }
+		if restore, let via = Mac.restoreWebAccessibility(pid: pid) {
+			web = (.restored, via)
+		}
 		if allowed, Mac.shipsChromium(pid) {
 			web = Mac.enableWebAccessibility(pid: pid, chromium: true)
 			if web?.change == .enabled { try await Task.sleep(for: .milliseconds(500)) }
@@ -130,4 +135,35 @@ extension Tools {
 /// A duration in seconds.
 func seconds(_ duration: Duration) -> Double {
 	Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
+}
+
+/// Turns web accessibility back off in apps where this host turned it on and no read has relied on it for as long
+/// as a snapshot lives, so a heavy page stops paying for it once the agent is done, while every live snapshot's
+/// web elements stay readable (#231).
+enum WebAccessibilityIdle {
+	static let idle: Duration = .seconds(600)
+	private static let lock = NSLock()
+	nonisolated(unsafe) private static var watching = false
+
+	static func watch() {
+		lock.lock()
+		defer { lock.unlock() }
+		guard !watching else { return }
+		watching = true
+		Task.detached {
+			while true {
+				try? await Task.sleep(for: .seconds(60))
+				_ = Mac.restoreIdleWebAccessibility(idle)
+				if !keepWatching() { return }
+			}
+		}
+	}
+
+	/// Stops watching once nothing is left to turn off; a later turn-on starts it again.
+	private static func keepWatching() -> Bool {
+		lock.lock()
+		defer { lock.unlock() }
+		if !Mac.ownsWebAccessibility { watching = false }
+		return watching
+	}
 }

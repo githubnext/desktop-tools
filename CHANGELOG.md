@@ -4,6 +4,16 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Added
+
+- Chrome and Electron web accessibility that Desktop Tools turned on is turned back off once no read of that app has relied on it for 10 minutes, so a heavy page doesn't stay slow until the app quits. `web_accessibility: false` on `desktop_inspect`, `desktop_read` or `desktop_wait` turns it off at once and reports `restored`. Web accessibility another assistive app turned on is never turned off. ([#231](https://github.com/githubnext/desktop-tools/issues/231))
+
+### Fixed
+
+- `expect` on a snapshot-targeted `desktop_click`, `desktop_key`, `desktop_drag` or `desktop_insert` takes its `pid`, and `window` for window, element and text conditions, from the snapshot, instead of refusing with "pid must be a positive integer". A refusal from `expect` now says it came from `expect`. ([#224](https://github.com/githubnext/desktop-tools/issues/224))
+- `desktop_inspect` leaves out elements wholly outside the window, or scrolled out of their scroll or web area, counting them in `offscreen_omitted`, so a long page's off-screen content no longer spends the 200-element budget before what's visible. A `scope` still reads off-screen content. ([#178](https://github.com/githubnext/desktop-tools/issues/178))
+- `desktop_wait` with `element_appears` returns a snapshot that holds the element it matched even past the 200-element budget: it inspects again, listing the subtree around the match (`inspection.scope`), instead of returning `snapshot_id: null`. ([#232](https://github.com/githubnext/desktop-tools/issues/232))
+
 ## [0.19.0] - 2026-11-02
 
 ### Added
