@@ -20,7 +20,7 @@ If the app has **File > Export as PDF…**, as Preview, Pages, Safari and Notes 
 3. inspect the window that holds the panel. Find the **PDF** menu button at the bottom left *(unverified: role `AXMenuButton`, title `PDF`)*.
 4. `desktop_click` the PDF button. The fresh observation lists the open menu's items first.
 5. `desktop_element_action` with `action: "AXPick"` on **Save as PDF** (or `desktop_click` it). A Save panel opens.
-6. `desktop_dialog` with the app target. Expect `is_file_panel` true. Use its resolved window target for the next calls.
+6. `desktop_dialog` with the app target. Expect `is_file_dialog` true. Use its resolved window target for the next calls.
 7. `desktop_dialog_answer` with `path: "/Users/me/Desktop/out.pdf"`. Expect `completed`: the panel reads back the folder and name.
 8. `desktop_dialog_answer` with `button: "Save"`.
 
@@ -78,7 +78,7 @@ An app's **File > Open…** (⌘O), or its "add a project" or "choose folder" bu
 5. `desktop_click` the family row, then the typeface row, each from the latest observation.
 6. `desktop_type` the size field with `text: "18"`, then `desktop_key` `enter`.
 
-**Verify:** inspect the panel and check that the family and typeface rows read as selected (`isSelected`) and that the size field shows the value. The text itself carries no readable font through `desktop_read`.
+**Verify:** inspect the panel and check that the family and typeface rows show `selected: true` and that the size field shows the value. The text itself carries no readable font through `desktop_read`.
 
 **Goes wrong:**
 
@@ -234,7 +234,7 @@ There is no pinch or rotate gesture. Use the app's own command: it acts on an ex
 - `desktop_type` on a web field that isn't focused is refused before any input, with a hint to click it first. Clicking is never done implicitly.
 - Typed web text is at most 1,000 UTF-16 code units with no newlines or tabs.
 - An `unknown` result means the readback didn't match. Autocomplete or input masks can reformat the text, such as phone numbers. Inspect before retrying.
-- Password fields are refused, because password entry is not supported.
+- Password fields refuse `desktop_type` with `SECURE_FIELD_REQUIRES_FILL`; fill them with `desktop_fill_password`, preferably from a Keychain item.
 - An autocomplete popup can take focus after typing. Press `escape` with `desktop_key` before the next click if it covers the next field.
 
 ## Pick from a native select in a browser
