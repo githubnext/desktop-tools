@@ -66,6 +66,10 @@ struct WebAccessibilityLedger {
 nonisolated(unsafe) private var ledger = WebAccessibilityLedger()
 private let enabledLock = NSLock()
 
+/// Empty WKWebView groups a read already waited on, by pid and element hash.
+nonisolated(unsafe) private var awaitedGroups: Set<String> = []
+private let awaitedLock = NSLock()
+
 extension Mac {
 	/// Turns it on for the app's current generation. AXEnhancedUserInterface can change how other apps animate and
 	/// place windows, so it is tried only when `chromium` allows it and only after AXManualAccessibility was rejected.
@@ -97,6 +101,50 @@ extension Mac {
 		default:
 			return (.unknown, nil)
 		}
+	}
+
+	/// Whether a read found a WKWebView whose tree WebKit hasn't built yet (#5): WebKit builds it in the web content
+	/// process only once an assistive client asks, so the first read of a new web view finds only a group, with no
+	/// web area, where the page is, and the web area appears under it a moment later. Only an app with a WebKit
+	/// content process of its own counts, and each group counts once, so a group that never fills costs one wait.
+	public static func awaitsWebKitTree(pid: pid_t, _ elements: [Element]) -> Bool {
+		guard !elements.contains(where: { $0.attributes["role"] == "AXWebArea" }) else { return false }
+		let waiting = elements.filter { element in
+			guard element.attributes["role"] == "AXGroup", element.frame.width >= 100, element.frame.height >= 100 else { return false }
+			return awaitsWebArea(element.reference)
+		}
+		guard !waiting.isEmpty, let name = NSRunningApplication(processIdentifier: pid)?.localizedName,
+		      NSWorkspace.shared.runningApplications.contains(where: {
+		      	$0.bundleIdentifier == "com.apple.WebKit.WebContent" && $0.localizedName?.hasPrefix(name + " ") == true
+		      })
+		else { return false }
+		let keys = waiting.map { "\(pid):\(CFHash($0.reference))" }
+		return awaitedLock.withLock {
+			let fresh = keys.filter { !awaitedGroups.contains($0) }
+			awaitedGroups.formUnion(fresh)
+			if awaitedGroups.count > 512 { awaitedGroups = Set(fresh) }
+			return !fresh.isEmpty
+		}
+	}
+
+	/// Whether a group looks like a web view the read reached before WebKit built its tree: within three levels it
+	/// holds a web area the read didn't include, or at most a few elements, such as an empty scroll area.
+	static func awaitsWebArea(_ group: AXUIElement) -> Bool {
+		var level = [group], seen = 0
+		for _ in 0..<3 {
+			var next: [AXUIElement] = []
+			for element in level {
+				AXUIElementSetMessagingTimeout(element, 0.2)
+				for child in (AX.value(element, kAXChildrenAttribute) as? [AXUIElement]) ?? [] {
+					if AX.string(child, kAXRoleAttribute) == "AXWebArea" { return true }
+					seen += 1
+					if seen > 3 { return false }
+					next.append(child)
+				}
+			}
+			level = next
+		}
+		return true
 	}
 
 	/// Turns it back off for the app's current generation when this host turned it on, setting back the attribute
@@ -150,3 +198,4 @@ extension Mac {
 		}
 	}
 }
+

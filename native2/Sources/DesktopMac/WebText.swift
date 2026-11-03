@@ -189,3 +189,17 @@ struct AXWebTextMarkers: WebTextMarkerAccess {
 		return value
 	}
 }
+
+extension Mac {
+	/// Whether the element is a web terminal's hidden input: xterm.js's helper textarea, as in Google Cloud Shell, VS
+	/// Code for the Web and Jupyter (#229). It hands every key and paste to the terminal and clears itself, so its value
+	/// never shows what was typed or pasted, and the terminal sends it to a remote shell that echoes it, or runs it,
+	/// whenever its connection allows.
+	public static func isTerminalInput(_ element: AXUIElement) -> Bool {
+		AXUIElementSetMessagingTimeout(element, 0.2)
+		if let classes = AX.value(element, "AXDOMClassList") as? [String], classes.contains("xterm-helper-textarea") { return true }
+		// xterm.js labels the textarea "Terminal input"; Safari doesn't always report the DOM class.
+		let names = [kAXDescriptionAttribute, kAXTitleAttribute].compactMap { AX.string(element, $0) }
+		return names.contains("Terminal input") && isWebField(element)
+	}
+}

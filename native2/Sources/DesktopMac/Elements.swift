@@ -498,7 +498,14 @@ extension Mac {
 	static func focusedID(_ tree: ElementTree, app: AXUIElement, before: AXUIElement?) -> String? {
 		let focused = tree.elements.filter { $0.attributes["isFocused"] == "true" }
 		if focused.count == 1 { return focused[0].id }
-		guard focused.count > 1, !tree.incompleteAccessibilityRead, !tree.deadlineReached, let before else { return nil }
+		guard focused.count > 1, !tree.incompleteAccessibilityRead, !tree.deadlineReached else { return nil }
+		// A WKWebView's app names no focused element, and the web area and its scroll area report focus along with
+		// the page's focused field, which is the one receiver (#5).
+		guard let before else {
+			guard focused.contains(where: { $0.attributes["role"] == "AXWebArea" }) else { return nil }
+			let fields = focused.filter { !["AXWebArea", "AXScrollArea", "AXGroup"].contains($0.attributes["role"] ?? "") }
+			return fields.count == 1 ? fields[0].id : nil
+		}
 		AXUIElementSetMessagingTimeout(app, 0.2)
 		guard let raw = AX.value(app, kAXFocusedUIElementAttribute), CFGetTypeID(raw) == AXUIElementGetTypeID()
 		else { return nil }

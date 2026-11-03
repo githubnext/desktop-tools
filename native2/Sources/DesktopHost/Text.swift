@@ -43,6 +43,21 @@ let finderNameRefusal = Refusal(
 
 /// A text field inside a Finder window's file list, in any view: its name field for one file. Ported from the native
 /// client's isFinderFileName; snapshots keep no parents, so the field must lie within an element that lists files.
+/// A paste into a web terminal's input, which can never be confirmed (#229).
+let terminalPasteRefusal = {
+	var refusal = Refusal(
+		"PASTE_UNVERIFIABLE_RECEIVER",
+		"The focused control is a web terminal's input (xterm.js, as in Cloud Shell), which hands a paste to the terminal and clears itself, so the paste could never be confirmed and its text would stay on the clipboard. The terminal's shell can also run pasted text later, once its connection catches up. Nothing was pasted.",
+		hint: "Omit route, or pass route type, to type one line without its newline; check it on screen with desktop_inspect ocr true, then press Return with desktop_key to run it.",
+		fromHost: false
+	)
+	refusal.reason = "operation_unsupported"
+	return refusal
+}()
+
+/// What a typed insertion into a web terminal's input can and can't show (#229).
+private let terminalTypedMessage = "The text was typed into a web terminal's input (xterm.js), which passes it to the terminal and keeps none of it to read back. The terminal shows typed text once its shell echoes it; if nothing shows, its connection may be slow or stalled, and the text can still arrive later. Nothing was run: no Return was typed."
+
 func isFinderFileName(_ observed: Element, in snapshot: Snapshot) -> Bool {
 	guard observed.attributes["role"] == "AXTextField",
 	      NSRunningApplication(processIdentifier: snapshot.pid)?.bundleIdentifier == "com.apple.finder"
@@ -320,6 +335,13 @@ extension Tools {
 					let focused = snapshot.focused
 					var delivery = try Mac.foregroundType(text, target: KeyboardTarget(window: window(snapshot), focusedRole: focused?.attributes["role"], focusedFrame: focused?.frame), control: focused?.reference)
 					delivery.fields.insert(("receiver", JSON(focused == nil ? "window_focus" : "observed_control")), at: 0)
+					if let focused, Mac.isTerminalInput(focused.reference), !delivery.fields.contains(where: { $0.0 == "error" }) {
+						delivery.fields.append(("web_terminal", true))
+						delivery.fields.append(("error", .object([
+							("code", "INSERTION_UNVERIFIED"), ("message", JSON(terminalTypedMessage)),
+							("hint", "Inspect the terminal with ocr true until the text shows, then press Return with desktop_key to run it. Never type it again or switch routes because it hasn't shown yet."),
+						])))
+					}
 					if !delivery.fields.contains(where: { $0.0 == "error" }) {
 						let readBack = delivery.fields.first { $0.0 == "read_back" }?.1.string
 						let seen = readBack.map { value in
@@ -340,10 +362,16 @@ extension Tools {
 		}
 		let send = {
 			let observed = await Snapshots.shared.get(snapshotID)
+			// A web terminal's input clears itself, so a paste into it could never be confirmed: it would leave the
+			// text on the clipboard and could still run in the shell later (#229). It is typed instead.
+			let terminal = (try? await run { observed?.focused.map { Mac.isTerminalInput($0.reference) } == true }) ?? false
+			if terminal, route == "paste" {
+				return await act("insert", snapshotID: snapshotID, element: nil, early: terminalPasteRefusal) { _, _ in throw terminalPasteRefusal }
+			}
 			// Without an observed focused control there's no text to read back, so insertion types into window focus.
-			let types = route == "type" || (route == nil && observed?.focused == nil)
+			let types = route == "type" || (route == nil && (observed?.focused == nil || terminal))
 			if types {
-				return await act("insert", snapshotID: snapshotID, element: nil, early: route == "type" ? typedRefusal : nil, precheck: { _, _ in
+				return await act("insert", snapshotID: snapshotID, element: nil, early: route == "type" || terminal ? typedRefusal : nil, precheck: { _, _ in
 					if let typedRefusal { throw typedRefusal }
 					if IsSecureEventInputEnabled() { throw secureEntryRefusal() }
 				}) { snapshot, _ in
@@ -351,9 +379,14 @@ extension Tools {
 					var delivery = try Mac.insertKeys(text, target: KeyboardTarget(window: window(snapshot), focusedRole: focused?.attributes["role"], focusedFrame: focused?.frame))
 					delivery.fields = [("receiver", JSON(focused == nil ? "window_focus" : "observed_control"))]
 					// Delivered keystrokes don't show what the receiver did with them.
+					if terminal { delivery.fields.append(("web_terminal", true)) }
 					if delivery.outcome == "completed", delivery.state != .confirmedChange {
 						delivery.unverified = true
-						delivery.fields.append(("error", .object([
+						delivery.fields.append(("error", .object(terminal ? [
+							("code", "INSERTION_UNVERIFIED"),
+							("message", JSON(terminalTypedMessage)),
+							("hint", "Inspect the terminal with ocr true until the text shows, then press Return with desktop_key to run it. Never type it again or switch routes because it hasn't shown yet."),
+						] : [
 							("code", "INSERTION_UNVERIFIED"),
 							("message", "The text was typed into the window's keyboard focus, but nothing could read back what the receiver did with it."),
 							("hint", "Inspect the window, or capture it with desktop_screen, to check the text before acting again; do not repeat the insertion blindly."),
