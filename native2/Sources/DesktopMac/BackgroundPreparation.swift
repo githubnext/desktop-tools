@@ -94,7 +94,8 @@ extension Mac {
 	}
 
 	/// Makes an inactive app's exact window key: an activation record, then a routed click on its blank title bar.
-	/// Throws Refusal when nothing was sent, and PreparationStopped once something was. Returns the units sent.
+	/// Throws Refusal when nothing was sent, and PreparationStopped once something was. Returns the units sent, 0
+	/// when the window is already key in an app that takes itself for active.
 	static func prepareBackgroundWindow(_ window: ClickWindow) throws -> Int {
 		func refused(_ cause: String) -> Refusal {
 			Refusal("DESKTOP_ACTION_FAILED", "The background window couldn't be prepared for keyboard input, so nothing was sent: \(cause)",
@@ -111,6 +112,12 @@ extension Mac {
 		      AX.value(element, kAXMinimizedAttribute) as? Bool != true, AX.value(element, "AXFullScreen") as? Bool != true,
 		      (AX.value(element, "AXSheets") as? [AXUIElement] ?? []).isEmpty
 		else { throw refused("it isn't a standard window without a sheet.") }
+		// After an earlier preparation the app takes itself for active, with this window key. Another title-bar click
+		// soon after the last one would be a double-click there, which zooms the window.
+		if AX.value(app, kAXFrontmostAttribute) as? Bool == true,
+		   let focused = AX.element(AX.value(app, kAXFocusedWindowAttribute)), AX.windowID(focused) == window.windowID {
+			return 0
+		}
 		let controls = [kAXCloseButtonAttribute, kAXMinimizeButtonAttribute, kAXZoomButtonAttribute].compactMap { name in
 			AX.element(AX.value(element, name)).flatMap(AX.frame)
 		}

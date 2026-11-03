@@ -102,7 +102,15 @@ extension Tools {
 			web = Mac.enableWebAccessibility(pid: pid, chromium: true)
 			if web?.change == .enabled { try await Task.sleep(for: .milliseconds(500)) }
 		}
-		let first = try await read()
+		var first = try await read()
+		// A new WKWebView's tree appears a moment after the first read asks for it (#5).
+		if allowed, web == nil, Mac.awaitsWebKitTree(pid: pid, tree(first).elements) {
+			let deadline = ContinuousClock.now + .seconds(2)
+			repeat {
+				try await Task.sleep(for: .milliseconds(250))
+				first = try await read()
+			} while ContinuousClock.now < deadline && webAreas(tree(first).elements).isEmpty
+		}
 		guard allowed, !tree(first).truncated else { return (first, web) }
 		if web?.change == .enabled {
 			// A fresh Chrome turned on with AXEnhancedUserInterface takes about two seconds to build its tree. The

@@ -14,6 +14,60 @@ extension Snapshot {
 	var focused: Element? { focusedID.flatMap { elements[$0] } }
 }
 
+/// Adds key_window to a key result. Keys sent into a window that couldn't be made key are unknown, since only the
+/// key window's views, such as a SwiftUI List or a web view, take some keys (#226).
+private func keyWindow(_ preparation: KeyPreparation, _ delivery: inout Delivery) {
+	guard let field = preparation.field else { return }
+	delivery.fields.append(("key_window", JSON(field)))
+	guard case let .unavailable(cause) = preparation, delivery.outcome == "completed" else { return }
+	delivery.unverified = true
+	delivery.fields.append(("error", .object([
+		("code", "KEY_WINDOW_UNAVAILABLE"),
+		("message", JSON("The keys were sent, but the app isn't active and its window couldn't be made key, so a key that only the key window's views handle, such as Delete or Return in a list or table, or a shortcut in a web view, may not have arrived. \(cause)")),
+		("hint", "Inspect the window to check before acting again. desktop_menu runs menu commands in the background; for a key only a view handles, bring the window forward with desktop_focus first."),
+	])))
+}
+
+/// Adds what became of a window whose own focus left keys no view (#226): `list_focused` when its selected list
+/// took focus, or an unknown result when no view had focus, since AppKit drops such a key unless it is a menu
+/// shortcut.
+private func viewFocus(_ focused: KeyboardTarget?, original: KeyboardTarget, _ delivery: inout Delivery) {
+	if let focused, focused.focusedRole != original.focusedRole || focused.focusedFrame != original.focusedFrame {
+		delivery.fields.append(("list_focused", true))
+		return
+	}
+	guard focused == nil, delivery.outcome == "completed" else { return }
+	delivery.unverified = true
+	delivery.fields.append(("error", .object([
+		("code", "KEY_NO_FOCUSED_VIEW"),
+		("message", "The keys were sent, but no view in the window had keyboard focus, only the window itself, so a key that isn't a menu shortcut, such as Delete or Return, most likely reached nothing. An Accessibility click selects a row or control without giving it keyboard focus."),
+		("hint", "Inspect the window to check. Use desktop_menu for a command in the menu bar; for a key only a view handles, focus the view first, for example with desktop_focus and a foreground click."),
+	])))
+}
+
+/// Preparation that sent input and stopped, so no keys were sent.
+private func preparationStopped(_ preparation: KeyPreparation, receiver: JSON) -> Delivery? {
+	guard case let .stopped(units, cause) = preparation else { return nil }
+	var delivery = Delivery(state: .indeterminate, mechanism: "window_targeted_events", evidence: "completion_unknown", units: units)
+	delivery.fields = [("receiver", receiver), ("key_window", "not_key"), ("error", .object([
+		("code", "DESKTOP_ACTION_FAILED"),
+		("message", "Making the background window key didn't finish, so no keys were sent. Its window activation or title-bar click may have reached the app."),
+		("cause", JSON(cause)), ("hint", "Inspect the window again before another input."),
+	]))]
+	return delivery
+}
+
+/// A key refused after the window was made key: no key was sent, but the app saw the activation and click.
+private func refusedAfterPreparation(_ refusal: Refusal, preparation: KeyPreparation, receiver: JSON) -> Delivery {
+	var delivery = Delivery(state: .indeterminate, mechanism: "window_targeted_events", evidence: "completion_unknown", units: preparation.units)
+	delivery.fields = [("receiver", receiver), ("key_window", "made_key"), ("error", .object([
+		("code", JSON(refusal.code)),
+		("message", JSON("The window was made key without activating its app, but no key was sent: \(refusal.message)")),
+		("hint", "Inspect the window again before another input; its keyboard focus may have moved."),
+	]))]
+	return delivery
+}
+
 extension Tools {
 	static func modifierList(_ value: JSON?) throws -> [String] {
 		guard let value else { return [] }
@@ -68,12 +122,27 @@ extension Tools {
 				}
 				if !sequence {
 					let focused = snapshot.focused
-					var delivery = try Mac.press(chords[0], target: KeyboardTarget(window: window, focusedRole: focused?.attributes["role"], focusedFrame: focused?.frame))
-					delivery.fields = [("receiver", JSON(focused == nil ? "window_focus" : "observed_control"))]
+					let snapshotTarget = KeyboardTarget(window: window, focusedRole: focused?.attributes["role"], focusedFrame: focused?.frame)
+					let preparation = try Mac.prepareKeys(snapshotTarget)
+					if let stopped = preparationStopped(preparation, receiver: receiver) { return stopped }
+					let listTarget = Mac.focusSelectedList(snapshotTarget)
+					let target = listTarget ?? snapshotTarget
+					var delivery: Delivery
+					do { delivery = try Mac.press(chords[0], target: target) } catch let refusal as Refusal where preparation.units > 0 {
+						return refusedAfterPreparation(refusal, preparation: preparation, receiver: receiver)
+					}
+					delivery.fields = [("receiver", receiver)]
+					keyWindow(preparation, &delivery)
+					viewFocus(listTarget, original: snapshotTarget, &delivery)
 					return delivery
 				}
 				// A sequence goes to whatever has focus in the window, which each key may move.
-				let target = KeyboardTarget(window: window, focusedRole: nil, focusedFrame: nil)
+				let windowTarget = KeyboardTarget(window: window, focusedRole: nil, focusedFrame: nil)
+				let preparation = try Mac.prepareKeys(windowTarget)
+				if let stopped = preparationStopped(preparation, receiver: receiver) { return stopped }
+				let listTarget = Mac.focusSelectedList(windowTarget)
+				// Later keys go wherever the first one moved focus, so only the window is checked for them.
+				let target = windowTarget
 				var sent = 0
 				for (index, chord) in chords.enumerated() {
 					if index > 0 { usleep(keySequenceGap) }
@@ -81,6 +150,8 @@ extension Tools {
 						let delivery = try Mac.press(chord, target: target)
 						guard delivery.outcome == "completed" else { throw Refusal("KEY_SEQUENCE_STOPPED", "A key's delivery couldn't be confirmed.") }
 						sent += 1
+					} catch let refusal as Refusal where sent == 0 && preparation.units > 0 {
+						return refusedAfterPreparation(refusal, preparation: preparation, receiver: receiver)
 					} catch let refusal as Refusal where sent > 0 {
 						var stopped = Delivery(state: .indeterminate, mechanism: "window_targeted_events", evidence: "completion_unknown", units: sent)
 						stopped.fields = [
@@ -92,6 +163,8 @@ extension Tools {
 				}
 				var delivery = Delivery(state: .dispatchedUnverified, mechanism: "window_targeted_events", evidence: "delivery_accepted", units: nil)
 				delivery.fields = [("receiver", "window_focus"), ("keys_requested", JSON(chords.count)), ("keys_sent", JSON(sent))]
+				keyWindow(preparation, &delivery)
+				viewFocus(listTarget, original: windowTarget, &delivery)
 				return delivery
 			}
 		}

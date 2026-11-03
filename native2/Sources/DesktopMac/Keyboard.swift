@@ -53,6 +53,35 @@ public struct KeyboardTarget: Sendable {
 	}
 }
 
+/// What making a background window key before keys did.
+public enum KeyPreparation: Sendable, Equatable {
+	/// The app is active, so its key window already takes keys.
+	case notNeeded
+	/// The window was made key without activating the app, with this many inputs (an activation record and a click),
+	/// or none when an earlier preparation left it key (already_key).
+	case prepared(units: Int)
+	/// The window couldn't be made key, for this reason, and nothing was sent to it.
+	case unavailable(String)
+	/// Preparation sent this many inputs and then stopped, so no keys may follow.
+	case stopped(units: Int, cause: String)
+
+	/// The result's key_window field.
+	public var field: String? {
+		switch self {
+		case .notNeeded: nil
+		case let .prepared(units): units > 0 ? "made_key" : "already_key"
+		case .unavailable, .stopped: "not_key"
+		}
+	}
+
+	public var units: Int {
+		switch self {
+		case let .prepared(units), let .stopped(units, _): units
+		default: 0
+		}
+	}
+}
+
 /// Peekaboo's explanation of why background keys can't move focus to a window.
 let backgroundFocusRemediation = "Background keystrokes follow the application's own keyboard focus and cannot be aimed at a window that does not hold it; such a window also refuses accessibility focus requests, so no amount of retrying moves focus there in the background. To type into this window anyway, pass foreground true to desktop_insert, which brings the app forward, types with real keys and gives focus back; desktop_set_value doesn't take text. Use foreground delivery only when the window may take focus."
 
@@ -140,7 +169,9 @@ extension Mac {
 		)
 		guard let focusedWindow = AX.element(AX.value(app, kAXFocusedWindowAttribute)), AX.windowID(focusedWindow) == window.windowID
 		else { throw refusal }
-		guard let focused = AX.element(AX.value(app, kAXFocusedUIElementAttribute)) else {
+		// A WKWebView's focused field lives in its web content process, and the app names no focused element for it,
+		// though the field itself reports AXFocused (#5).
+		guard let focused = AX.element(AX.value(app, kAXFocusedUIElementAttribute)) ?? focusedWebElement(focusedWindow) else {
 			// A sandboxed app's Open or Save panel is drawn by another process, which holds its focus and doesn't
 			// take background keys (#200).
 			if hostsRemoteContent(focusedWindow, pid: window.pid) {
@@ -165,6 +196,99 @@ extension Mac {
 			else { throw refusal }
 		}
 		return focused
+	}
+
+	/// Makes an inactive app's exact window key before keys go to it (#226). Only the key window's views take keys:
+	/// a SwiftUI List's Delete and Return, an onDeleteCommand, or a WKWebView's Edit-menu shortcuts drop a background
+	/// key into a window that isn't key, while an AppKit table or text field takes it anyway. The window must hold the
+	/// app's focus or the app must hold none, so this never moves focus between windows; otherwise it refuses as
+	/// requireKeyboardFocus does, with nothing sent.
+	public static func prepareKeys(_ target: KeyboardTarget) throws -> KeyPreparation {
+		guard !isActive(target.window) else { return .notNeeded }
+		let app = AXUIElementCreateApplication(target.window.pid)
+		AXUIElementSetMessagingTimeout(app, 0.2)
+		if let focusedWindow = AX.element(AX.value(app, kAXFocusedWindowAttribute)), AX.windowID(focusedWindow) != target.window.windowID {
+			_ = try requireKeyboardFocus(target)
+		}
+		do {
+			let units = try prepareBackgroundWindow(target.window)
+			// A web view reports its web area focused for a moment after its window becomes key, before the page's
+			// focus returns to the field the snapshot saw.
+			let deadline = Date().addingTimeInterval(0.5)
+			while (try? requireKeyboardFocus(target)) == nil, Date() < deadline { usleep(50_000) }
+			return .prepared(units: units)
+		} catch let refusal as Refusal {
+			return .unavailable(refusal.message)
+		} catch let stopped as PreparationStopped {
+			return .stopped(units: stopped.units, cause: stopped.cause)
+		}
+	}
+
+	/// When the window itself holds keyboard focus, so no view takes keys, focuses the window's one list, table or
+	/// outline with a selected row, as clicking the row does (#226). An Accessibility press selects a row without
+	/// making its list first responder, and AppKit drops a key such as Delete or Return that reaches the window
+	/// itself. Returns the target to send to when the list took focus, `target` when a view already has focus, and nil
+	/// when the window keeps it. Focus never leaves the window.
+	public static func focusSelectedList(_ target: KeyboardTarget) -> KeyboardTarget? {
+		let window = target.window
+		let app = AXUIElementCreateApplication(window.pid)
+		AXUIElementSetMessagingTimeout(app, 0.2)
+		guard let focusedWindow = AX.element(AX.value(app, kAXFocusedWindowAttribute)), AX.windowID(focusedWindow) == window.windowID,
+		      let focused = AX.element(AX.value(app, kAXFocusedUIElementAttribute))
+		else { return target }
+		AXUIElementSetMessagingTimeout(focused, 0.2)
+		guard AX.string(focused, kAXRoleAttribute) == kAXWindowRole else { return target }
+		var lists: [AXUIElement] = []
+		var level = [focusedWindow], visited = 0
+		for _ in 0..<8 where !level.isEmpty && visited < 400 {
+			var next: [AXUIElement] = []
+			for element in level {
+				AXUIElementSetMessagingTimeout(element, 0.2)
+				for child in (AX.value(element, kAXChildrenAttribute) as? [AXUIElement]) ?? [] {
+					visited += 1
+					let role = AX.string(child, kAXRoleAttribute)
+					if role == kAXOutlineRole || role == kAXTableRole || role == kAXListRole {
+						AXUIElementSetMessagingTimeout(child, 0.2)
+						let rows = (AX.value(child, kAXSelectedRowsAttribute) ?? AX.value(child, kAXSelectedChildrenAttribute)) as? [AXUIElement]
+						if rows?.isEmpty == false { lists.append(child) }
+					} else if role != kAXRowRole {
+						next.append(child)
+					}
+				}
+			}
+			level = next
+		}
+		guard lists.count == 1, let list = lists.first,
+		      AXUIElementSetAttributeValue(list, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success,
+		      let now = AX.element(AX.value(app, kAXFocusedUIElementAttribute)), CFEqual(now, list)
+		else { return nil }
+		return KeyboardTarget(window: window, focusedRole: AX.string(list, kAXRoleAttribute), focusedFrame: AX.frame(list))
+	}
+
+	/// The deepest element under a window's web area that reports AXFocused, for a web view whose app names none.
+	static func focusedWebElement(_ window: AXUIElement) -> AXUIElement? {
+		func children(_ element: AXUIElement) -> [AXUIElement] {
+			AXUIElementSetMessagingTimeout(element, 0.2)
+			return (AX.value(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+		}
+		func isFocused(_ element: AXUIElement) -> Bool { (AX.value(element, kAXFocusedAttribute) as? Bool) == true }
+		var level = [window], webAreas: [AXUIElement] = []
+		for _ in 0..<6 where webAreas.isEmpty && !level.isEmpty {
+			level = level.flatMap(children)
+			webAreas = level.filter { AX.string($0, kAXRoleAttribute) == "AXWebArea" }
+		}
+		// The field can sit inside elements that don't report focus, such as its label, so the whole page is searched,
+		// breadth first, for the deepest focused element.
+		var found = webAreas.last(where: isFocused)
+		guard found != nil else { return nil }
+		level = webAreas.filter(isFocused)
+		var visited = 0
+		while !level.isEmpty, visited < 1000 {
+			level = level.flatMap(children)
+			visited += level.count
+			if let deeper = level.last(where: isFocused) { found = deeper }
+		}
+		return found
 	}
 
 	/// Whether some element under `window` belongs to another process, as a remote view's content does.
