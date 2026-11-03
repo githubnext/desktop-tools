@@ -4,6 +4,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-02
+
 ### Added
 
 - Chrome and Electron web accessibility that Desktop Tools turned on is turned back off once no read of that app has relied on it for 10 minutes, so a heavy page doesn't stay slow until the app quits. `web_accessibility: false` on `desktop_inspect`, `desktop_read` or `desktop_wait` turns it off at once and reports `restored`. Web accessibility another assistive app turned on is never turned off. ([#231](https://github.com/githubnext/desktop-tools/issues/231))
@@ -331,7 +333,8 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 - The first release: a signed, notarized Desktop Tools menu bar app, and the desktop tools served over MCP. ([#28](https://github.com/githubnext/desktop-tools/pull/28), [#29](https://github.com/githubnext/desktop-tools/pull/29), [#12](https://github.com/githubnext/desktop-tools/pull/12))
 
-[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/githubnext/desktop-tools/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/githubnext/desktop-tools/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/githubnext/desktop-tools/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/githubnext/desktop-tools/compare/v0.17.1...v0.18.0
 [0.17.1]: https://github.com/githubnext/desktop-tools/compare/v0.17.0...v0.17.1
