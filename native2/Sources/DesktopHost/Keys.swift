@@ -23,7 +23,7 @@ private func keyWindow(_ preparation: KeyPreparation, _ delivery: inout Delivery
 	delivery.unverified = true
 	delivery.fields.append(("error", .object([
 		("code", "KEY_WINDOW_UNAVAILABLE"),
-		("message", JSON("The keys were sent, but the app isn't active and its window couldn't be made key, so a key that only the key window's views handle, such as Delete or Return in a list or table, or a shortcut in a web view, may not have arrived. \(cause)")),
+		("message", JSON("The keys were sent, but the app isn't active and its window couldn't be made key, so a key that only the key window's views handle, such as Delete or Return in a list or table, or a shortcut in a web view, may not have arrived. It couldn't be made key because \(cause)")),
 		("hint", "Inspect the window to check before acting again. desktop_menu runs menu commands in the background; for a key only a view handles, bring the window forward with desktop_focus first."),
 	])))
 }

@@ -98,8 +98,7 @@ extension Mac {
 	/// when the window is already key in an app that takes itself for active.
 	static func prepareBackgroundWindow(_ window: ClickWindow) throws -> Int {
 		func refused(_ cause: String) -> Refusal {
-			Refusal("DESKTOP_ACTION_FAILED", "The background window couldn't be prepared for keyboard input, so nothing was sent: \(cause)",
-			        hint: "Bring the window forward with desktop_focus, inspect it again, and retry.")
+			preparationRefusal(cause: cause)
 		}
 		guard CGPreflightPostEventAccess() else { throw refused("event posting isn't allowed.") }
 		try window.check()
@@ -167,5 +166,20 @@ extension Mac {
 		// Let the window become key before keys follow.
 		Thread.sleep(forTimeInterval: 0.05)
 		return units
+	}
+}
+
+/// Refusal to make a background window key, which sent nothing. `cause` stands alone, for a caller that sends
+/// its input anyway, as keys do, and must not say nothing was sent.
+func preparationRefusal(cause: String) -> Refusal {
+	Refusal("DESKTOP_ACTION_FAILED", "The background window couldn't be prepared for keyboard input, so nothing was sent: \(cause)",
+	        hint: "Bring the window forward with desktop_focus, inspect it again, and retry.")
+}
+
+extension Refusal {
+	/// The cause of a preparationRefusal, without its claim that nothing was sent.
+	var preparationCause: String {
+		let prefix = "The background window couldn't be prepared for keyboard input, so nothing was sent: "
+		return message.hasPrefix(prefix) ? String(message.dropFirst(prefix.count)) : message
 	}
 }

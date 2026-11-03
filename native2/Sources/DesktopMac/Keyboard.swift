@@ -60,7 +60,7 @@ public enum KeyPreparation: Sendable, Equatable {
 	/// The window was made key without activating the app, with this many inputs (an activation record and a click),
 	/// or none when an earlier preparation left it key (already_key).
 	case prepared(units: Int)
-	/// The window couldn't be made key, for this reason, and nothing was sent to it.
+	/// The window couldn't be made key, for this reason, and no preparation was sent to it.
 	case unavailable(String)
 	/// Preparation sent this many inputs and then stopped, so no keys may follow.
 	case stopped(units: Int, cause: String)
@@ -218,7 +218,7 @@ extension Mac {
 			while (try? requireKeyboardFocus(target)) == nil, Date() < deadline { usleep(50_000) }
 			return .prepared(units: units)
 		} catch let refusal as Refusal {
-			return .unavailable(refusal.message)
+			return .unavailable(refusal.preparationCause)
 		} catch let stopped as PreparationStopped {
 			return .stopped(units: stopped.units, cause: stopped.cause)
 		}
