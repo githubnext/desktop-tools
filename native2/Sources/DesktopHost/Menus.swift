@@ -27,7 +27,7 @@ func appTargetJSON(_ pid: pid_t, _ generation: UInt64) -> JSON {
 	.object([("pid", JSON(pid)), ("process_start_identity_decimal", JSON(String(generation)))])
 }
 
-private func menuPath(_ value: JSON?) throws -> [String] {
+func menuPath(_ value: JSON?) throws -> [String] {
 	guard let list = value?.array, (1...8).contains(list.count),
 	      let titles = Optional(list.compactMap(\.string)), titles.count == list.count,
 	      titles.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf16.count <= 512 })

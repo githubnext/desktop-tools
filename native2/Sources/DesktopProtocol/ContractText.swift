@@ -1476,7 +1476,7 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 	},
 	{
 		"name": "desktop_click",
-		"description": "Click an element or point from a fresh desktop_inspect snapshot: kind single (default), double, right, middle or triple. Background, without moving the pointer; completed means delivered to that window, and a single click on a text field also reports whether it got focus. With modifiers (command, option, shift) it is foreground: the host activates the app and clicks with the real pointer and keys, then restores them, and the result is unknown, so inspect to check. A Control-click is kind right. Stale or unsupported targets are refused before input. Optional expect is one desktop_wait condition this input should make true. It must not hold beforehand, or nothing is sent; if the outcome is unknown and it holds within timeout_ms (default 3000, at most 10000), the outcome becomes completed.",
+		"description": "Click an element or point from a fresh desktop_inspect snapshot: kind single (default), double, right, middle or triple. Background, without moving the pointer; completed means delivered to that window, and a single click on a text field also reports whether it got focus. A background single click is an Accessibility press or selection, not a mouse event (in Chromium apps, a pointer click routed to the window where nothing is pressable), so an app that acts only on real user input may ignore it. With foreground true, or modifiers (command, option, shift), it is foreground: the host activates the app and clicks with the real pointer and keys, then restores them, and the result is unknown, so inspect to check. A Control-click is kind right. A right click lists the context_menu it opened; a background app's menu closes when other input arrives, so pass menu_path (exact titles) to choose an item in the same call. Stale or unsupported targets are refused before input. Optional expect is one desktop_wait condition this input should make true. It must not hold beforehand, or nothing is sent; if the outcome is unknown and it holds within timeout_ms (default 3000, at most 10000), the outcome becomes completed.",
 		"inputSchema": {
 			"type": "object",
 			"required": [
@@ -1536,6 +1536,19 @@ Recipes for multi-step tasks, such as printing to PDF, installing from a DMG or 
 					"minItems": 1,
 					"maxItems": 3,
 					"uniqueItems": true
+				},
+				"foreground": {
+					"type": "boolean"
+				},
+				"menu_path": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"minLength": 1,
+						"maxLength": 512
+					},
+					"minItems": 1,
+					"maxItems": 8
 				},
 				"expect": {
 					"type": "object",

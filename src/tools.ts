@@ -667,7 +667,7 @@ export function desktopTools({ place, app }: { place: string; app: string; wire?
 			name: "desktop_click",
 			op: "click",
 			description:
-				`Click an element or point from a fresh desktop_inspect snapshot: kind single (default), double, right, middle or triple. Background, without moving the pointer; completed means delivered to that window, and a single click on a text field also reports whether it got focus. With modifiers (command, option, shift) it is foreground: the host activates the app and clicks with the real pointer and keys, then restores them, and the result is unknown, so inspect to check. A Control-click is kind right. Stale or unsupported targets are refused before input. ${expectNote}`,
+				`Click an element or point from a fresh desktop_inspect snapshot: kind single (default), double, right, middle or triple. Background, without moving the pointer; completed means delivered to that window, and a single click on a text field also reports whether it got focus. A background single click is an Accessibility press or selection, not a mouse event (in Chromium apps, a pointer click routed to the window where nothing is pressable), so an app that acts only on real user input may ignore it. With foreground true, or modifiers (command, option, shift), it is foreground: the host activates the app and clicks with the real pointer and keys, then restores them, and the result is unknown, so inspect to check. A Control-click is kind right. A right click lists the context_menu it opened; a background app's menu closes when other input arrives, so pass menu_path (exact titles) to choose an item in the same call. Stale or unsupported targets are refused before input. ${expectNote}`,
 			parameters: {
 				type: "object",
 				required: ["snapshot"],
@@ -683,6 +683,8 @@ export function desktopTools({ place, app }: { place: string; app: string; wire?
 						maxItems: 3,
 						uniqueItems: true,
 					},
+					...foreground,
+					menu_path: menuPath,
 					expect,
 				},
 			},

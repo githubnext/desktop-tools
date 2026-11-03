@@ -346,3 +346,148 @@ extension Mac {
 		return Set(list.compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.intValue })
 	}
 }
+
+// MARK: Context menus (#227)
+
+/// One item of an open context menu, as a click result lists it.
+public struct ContextMenuRow: Sendable, Equatable {
+	public let path: [String]
+	public let enabled: Bool
+	public let submenu: Bool
+	public init(path: [String], enabled: Bool, submenu: Bool) {
+		self.path = path
+		self.enabled = enabled
+		self.submenu = submenu
+	}
+}
+
+/// A context menu open in an app, held only for the call that opened it: a background app's menu closes as soon as
+/// anything else takes input, so its items are listed or pressed in that call.
+public struct OpenMenu: @unchecked Sendable {
+	let element: AXUIElement
+	let pid: pid_t
+}
+
+extension Mac {
+	/// The context menu the app has open, waiting up to `seconds` for it: an AXMenu among the app's children, else the
+	/// AXMenu at the center of the app's new pop-up menu window. nil when none opened that Accessibility can see.
+	public static func openContextMenu(pid: pid_t, seconds: Double = 1) -> OpenMenu? {
+		let app = AXUIElementCreateApplication(pid)
+		AXUIElementSetMessagingTimeout(app, 0.5)
+		let deadline = Date().addingTimeInterval(seconds)
+		repeat {
+			if let menu = children(app).first(where: { AX.string($0, kAXRoleAttribute) == kAXMenuRole }) {
+				return OpenMenu(element: menu, pid: pid)
+			}
+			for frame in popUpMenuFrames(pid: pid) {
+				var hit: AXUIElement?
+				guard AXUIElementCopyElementAtPosition(app, Float(frame.midX), Float(frame.midY), &hit) == .success, var current = hit else { continue }
+				for _ in 0..<4 {
+					if AX.string(current, kAXRoleAttribute) == kAXMenuRole { return OpenMenu(element: current, pid: pid) }
+					guard let parent = AX.element(AX.value(current, kAXParentAttribute)) else { break }
+					current = parent
+				}
+			}
+			Thread.sleep(forTimeInterval: 0.05)
+		} while Date() < deadline
+		return nil
+	}
+
+	/// The app's on-screen windows at the pop-up menu level, where context menus draw.
+	static func popUpMenuFrames(pid: pid_t) -> [CGRect] {
+		let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+		return rows.compactMap { row in
+			guard row[kCGWindowOwnerPID as String] as? pid_t == pid, row[kCGWindowLayer as String] as? Int == Int(CGWindowLevelForKey(.popUpMenuWindow)),
+			      let raw = row[kCGWindowBounds as String] as? NSDictionary, let bounds = CGRect(dictionaryRepresentation: raw)
+			else { return nil }
+			return bounds
+		}
+	}
+
+	/// The open menu's items, depth first through submenus, at most 60; separators and untitled items are left out.
+	public static func contextMenuRows(_ menu: OpenMenu) -> [ContextMenuRow] {
+		var rows: [ContextMenuRow] = []
+		func walk(_ element: AXUIElement, path: [String], depth: Int) {
+			for item in children(element) where rows.count < 60 {
+				guard AX.string(item, kAXRoleAttribute) == kAXMenuItemRole, let title = menuTitle(item), !title.isEmpty else { continue }
+				let submenu = children(item).first { AX.string($0, kAXRoleAttribute) == kAXMenuRole }
+				rows.append(ContextMenuRow(path: path + [title], enabled: (AX.value(item, kAXEnabledAttribute) as? Bool) != false, submenu: submenu != nil))
+				if let submenu, depth < 3 { walk(submenu, path: path + [title], depth: depth + 1) }
+			}
+		}
+		walk(menu.element, path: [], depth: 1)
+		return rows
+	}
+
+	private static func menuTitle(_ item: AXUIElement) -> String? {
+		AX.string(item, kAXTitleAttribute) ?? AX.string(item, kAXValueAttribute)
+	}
+
+	/// The one enabled leaf at the literal path in an open context menu, or why there is none.
+	public static func contextMenuItem(_ menu: OpenMenu, path: [String]) -> Result<AXUIElement, Refusal> {
+		resolveMenuPath(
+			menu.element, path: path,
+			items: { children($0).filter { AX.string($0, kAXRoleAttribute) == kAXMenuItemRole } },
+			title: menuTitle,
+			submenu: { children($0).first { AX.string($0, kAXRoleAttribute) == kAXMenuRole } },
+			enabled: { (AX.value($0, kAXEnabledAttribute) as? Bool) != false }
+		)
+	}
+
+	/// Walks literal titles through a menu's items and submenus to one enabled leaf.
+	static func resolveMenuPath<Node>(
+		_ root: Node, path: [String], items: (Node) -> [Node], title: (Node) -> String?, submenu: (Node) -> Node?, enabled: (Node) -> Bool
+	) -> Result<Node, Refusal> {
+		var level = root
+		for (index, wanted) in path.enumerated() {
+			let candidates = items(level)
+			let matches = candidates.filter { title($0).map { $0.utf16.elementsEqual(wanted.utf16) } == true }
+			guard matches.count == 1, let item = matches.first else {
+				let place = index == 0 ? "in the context menu" : "under \(String(reflecting: path[index - 1]))"
+				let titles = candidates.compactMap(title).filter { !$0.isEmpty }.prefix(30).map { String(reflecting: $0) }
+				return .failure(Refusal(
+					"DESKTOP_ACTION_FAILED",
+					matches.isEmpty
+						? "No menu item titled \(String(reflecting: wanted)) \(place). Titles must match exactly. Titles \(place): \(titles.joined(separator: ", "))."
+						: "The menu path is ambiguous: \(matches.count) items titled \(String(reflecting: wanted)) \(place).",
+					hint: "Right-click again with a menu_path from these titles."
+				))
+			}
+			let next = submenu(item)
+			if index == path.count - 1 {
+				guard next == nil else {
+					return .failure(Refusal("DESKTOP_ACTION_FAILED", "\(String(reflecting: wanted)) opens a submenu; add the title of one of its items to menu_path.", hint: "Right-click again with the full path to a command."))
+				}
+				guard enabled(item) else {
+					return .failure(Refusal("DESKTOP_ACTION_FAILED", "The menu item \(String(reflecting: wanted)) is disabled.", hint: "Inspect the target to see why, then right-click again."))
+				}
+				return .success(item)
+			}
+			guard let next else {
+				return .failure(Refusal("DESKTOP_ACTION_FAILED", "\(String(reflecting: wanted)) has no submenu.", hint: "Right-click again with a menu_path whose last title is a command."))
+			}
+			level = next
+		}
+		return .failure(Refusal("DESKTOP_ACTION_FAILED", "The menu path names no item."))
+	}
+
+	/// Presses an item of an open context menu, which closes the menu. Throws a Refusal, having pressed nothing, for a
+	/// Paste item while a password field has focus.
+	public static func pressContextMenuItem(_ item: AXUIElement, pid: pid_t) throws -> AXError {
+		if focusIsSecure(pid), isPasteMenuItem(item) { throw secureFocusRefusal }
+		AXUIElementSetMessagingTimeout(item, 2)
+		return AXUIElementPerformAction(item, kAXPressAction as CFString)
+	}
+
+	/// Closes an open context menu without choosing anything; true when it is gone afterwards.
+	@discardableResult
+	public static func closeContextMenu(_ menu: OpenMenu) -> Bool {
+		AXUIElementSetMessagingTimeout(menu.element, 1)
+		_ = AXUIElementPerformAction(menu.element, kAXCancelAction as CFString)
+		for _ in 0..<10 {
+			if popUpMenuFrames(pid: menu.pid).isEmpty { return true }
+			Thread.sleep(forTimeInterval: 0.05)
+		}
+		return false
+	}
+}
