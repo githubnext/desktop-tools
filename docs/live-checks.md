@@ -45,6 +45,6 @@ These stay manual, because they are destructive, change system settings, need a 
 - **#86 and #92 in other apps:** Numbers, Excel, Mail and Chrome, and a long Finder folder of 300 or more files.
 - **#88 in other apps:** Chrome, read-only native text views and Preview PDFs.
 - **#107 web accessibility in Electron apps:** inspect a Slack, VS Code or Discord window and check that `web_accessibility` is `enabled`, with `web_accessibility_via` `manual`, once per launch and the web content's fields are listed, that the app's window still moves and resizes normally, that the log lists **Turn on web accessibility** once, and that it still runs while input is paused.
-- **#5 background paste into web content (spike, before any patch):** with a WebKit app such as Safari in the background and a textarea focused, answer: (1) is Edit > Paste `AXEnabled`, with and without the host's background key-window preparation; (2) does an Accessibility press of Edit > Paste paste into the focused textarea; (3) must the textarea get `AXFocused` first?
+- **#5 in Safari:** checked only in a `WKWebView` test app. With Safari in the background and a page's text field focused, check that the first `desktop_inspect` lists the field and that `desktop_key` Command-V pastes into it.
 - **#27 Codex:** adding the server to Codex's configuration.
 - Anything that asks for a password or an administrator's approval.
