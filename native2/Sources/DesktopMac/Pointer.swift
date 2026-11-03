@@ -229,7 +229,7 @@ extension Mac {
 		var prepared = 0
 		if !isActive(window) {
 			do { prepared = try prepareBackgroundWindow(window) } catch let refusal as Refusal {
-				let cause = refusal.message.components(separatedBy: "nothing was sent: ").last ?? refusal.message
+				let cause = refusal.preparationCause
 				throw Refusal(
 					"DESKTOP_ACTION_FAILED",
 					"Nothing at \(where_) exposes an Accessibility press, and Chrome takes a background pointer click only in a window that is key in its app, which couldn't be arranged: \(cause) Nothing was clicked.",
