@@ -193,11 +193,7 @@ extension Mac {
 			// Chromium marks only elements with their own click listener as pressable, and pages that listen once at the
 			// root (Google's jsaction, React and other frameworks) mark nothing (#230). Chromium takes a click routed to
 			// its window in the background, so the page's own hit testing decides, as for a real click.
-			if routesThroughSkyLight(window.pid) {
-				var delivery = try routedClick(at: point, kind: .single, window: window)
-				delivery.fields.append(("note", "Nothing at the point exposes an Accessibility press, so the click was sent as a pointer click routed to the window, where the page handles it."))
-				return delivery
-			}
+			if routesThroughSkyLight(window.pid) { return try chromiumClick(at: point, window: window) }
 			throw Refusal("DESKTOP_ACTION_FAILED", "No pressable accessibility element was found at (\(Int(point.x)), \(Int(point.y))) in PID \(window.pid). Background clicks press the accessibility element at the target point, and nothing pressable was found there — the point may be empty, a custom-drawn view, or an element that exposes no press action. Nothing was clicked. Inspect again and click an element, or click with foreground true to send a real pointer click.")
 		}
 		// Only the same app's other windows are caught here; another app's window on top is not.
@@ -222,6 +218,54 @@ extension Mac {
 	/// A row selected through Accessibility changes the selection without a mouse event, so an app that acts on a
 	/// selection only when NSApp.currentEvent is user input ignores it (#225).
 	public static let selectedRowNote = "The row was selected through Accessibility, not with a mouse event, so an app that acts only on user input, by checking NSApp.currentEvent, may ignore it. If the app didn't respond, click again with foreground true."
+
+	/// A pointer click routed to a Chromium window where nothing is pressable (#230). AppKit drops a routed left click
+	/// in a window that isn't key in its app, as in a Chrome launched in the background and never activated, and a
+	/// window's Accessibility focus doesn't tell. So unless the app is in front, the window is first made key the way
+	/// background keys are sent (prepareBackgroundWindow), and the click is unknown unless the app then takes itself
+	/// for active with this window focused.
+	static func chromiumClick(at point: CGPoint, window: ClickWindow) throws -> Delivery {
+		let where_ = "(\(Int(point.x)), \(Int(point.y)))"
+		var prepared = 0
+		if !isActive(window) {
+			do { prepared = try prepareBackgroundWindow(window) } catch let refusal as Refusal {
+				let cause = refusal.message.components(separatedBy: "nothing was sent: ").last ?? refusal.message
+				throw Refusal(
+					"DESKTOP_ACTION_FAILED",
+					"Nothing at \(where_) exposes an Accessibility press, and Chrome takes a background pointer click only in a window that is key in its app, which couldn't be arranged: \(cause) Nothing was clicked.",
+					hint: "Click with foreground true, or bring the window forward with desktop_focus and click again."
+				)
+			} catch let stopped as PreparationStopped {
+				var delivery = Delivery(state: .indeterminate, mechanism: "window_targeted_events", evidence: "completion_unknown", units: stopped.units)
+				delivery.fields.append(("error", .object([
+					("code", "DESKTOP_ACTION_FAILED"),
+					("message", JSON("Making the window key for a routed click stopped partway, and the click wasn't sent: \(stopped.cause)")),
+					("hint", "Inspect the window before trying again; click with foreground true if the page didn't respond."),
+				])))
+				return delivery
+			}
+		}
+		var delivery = try routedClick(at: point, kind: .single, window: window)
+		delivery = Delivery(state: delivery.state, mechanism: prepared > 0 ? "composite" : delivery.mechanism, evidence: delivery.evidence, units: (delivery.units ?? 0) + prepared)
+		delivery.fields.append(("note", "Nothing at the point exposes an Accessibility press, so the click was sent as a pointer click routed to the window, where the page handles it."))
+		if !isActive(window) && !takesItselfForActive(window) {
+			delivery.unverified = true
+			delivery.fields.append(("error", .object([
+				("code", "DESKTOP_ACTION_UNVERIFIED"),
+				("message", "The click was routed to the window, but the window couldn't be confirmed key in its app, and Chrome drops a click in a window that isn't, so it may not have reached the page."),
+				("hint", "Inspect the page to see whether the click took effect; if not, click with foreground true."),
+			])))
+		}
+		return delivery
+	}
+
+	/// Whether the app considers itself active with this window focused, as it does after prepareBackgroundWindow.
+	static func takesItselfForActive(_ window: ClickWindow) -> Bool {
+		let app = AXUIElementCreateApplication(window.pid)
+		AXUIElementSetMessagingTimeout(app, 0.5)
+		return AX.value(app, kAXFrontmostAttribute) as? Bool == true
+			&& AX.element(AX.value(app, kAXFocusedWindowAttribute)).flatMap(AX.windowID) == window.windowID
+	}
 
 	// MARK: Presses WebKit would redirect
 
