@@ -12,7 +12,30 @@ public struct ElementBudget: Sendable {
 	public var maxElements = 200
 	public var maxChildren = 100
 	public var seconds: Double = 15
+	/// Skips elements wholly outside the window, or outside the scroll or web area that clips them, with their
+	/// subtrees, so off-screen content doesn't spend the budget (#178). A scoped read leaves this off, so content
+	/// an agent scrolls to stays reachable through a scope.
+	public var visibleOnly = false
 	public init() {}
+}
+
+/// The rects an element's descendants are clipped to: the window, narrowed by each scroll or web area around them.
+public enum VisibleClip {
+	static let clippingRoles: Set<String> = ["AXScrollArea", "AXWebArea"]
+
+	/// Whether an element with a read position lies wholly outside `clip`. An element on its edge still counts as
+	/// visible, as a row half scrolled into view does.
+	public static func outside(_ frame: CGRect, clip: CGRect?) -> Bool {
+		guard let clip, !clip.isNull else { return false }
+		return !frame.intersects(clip) && !(frame.width <= 0 || frame.height <= 0)
+	}
+
+	/// The clip for an element's descendants.
+	public static func narrowed(_ clip: CGRect?, role: String, frame: CGRect) -> CGRect? {
+		guard let clip, clippingRoles.contains(role), frame.width > 0, frame.height > 0 else { return clip }
+		let narrowed = clip.intersection(frame)
+		return narrowed.isNull ? clip : narrowed
+	}
 }
 
 /// One emitted element, with the live reference later actions resolve it by.
@@ -38,6 +61,9 @@ public struct ElementTree: @unchecked Sendable {
 	public var maxChildrenPerNodeReached = false
 	public var deadlineReached = false
 	public var incompleteAccessibilityRead = false
+	/// Elements a visible-only walk skipped because they lay outside the window or the area clipping them; their
+	/// descendants weren't read, so they aren't counted.
+	public var offscreenSkipped = 0
 
 	public init() {}
 
@@ -124,6 +150,8 @@ private func normalize(_ value: String?) -> String? {
 
 private struct Descriptor {
 	let frame: CGRect
+	/// Whether the frame's origin was read, rather than defaulted to zero.
+	let positioned: Bool
 	let role: String
 	let isSecure: Bool
 	let title, label, value, description, help, roleDescription, identifier: String?
@@ -133,8 +161,9 @@ private struct Descriptor {
 	let keyboardShortcut: String?
 
 	init(_ values: [String: Any]) {
-		frame = CGRect(origin: AX.point(values[kAXPositionAttribute] as CFTypeRef?) ?? .zero,
-		               size: AX.size(values[kAXSizeAttribute] as CFTypeRef?) ?? .zero)
+		let position = AX.point(values[kAXPositionAttribute] as CFTypeRef?)
+		positioned = position != nil
+		frame = CGRect(origin: position ?? .zero, size: AX.size(values[kAXSizeAttribute] as CFTypeRef?) ?? .zero)
 		role = values[kAXRoleAttribute] as? String ?? "Unknown"
 		isSecure = role == "AXSecureTextField" || values[kAXSubroleAttribute] as? String == "AXSecureTextField"
 		title = values[kAXTitleAttribute] as? String
@@ -208,6 +237,8 @@ private struct Walk {
 	let deadline: ContinuousClock.Instant
 	let budget: ElementBudget
 	var tree = ElementTree()
+	/// What a visible-only walk keeps elements within; nil reads everything.
+	var clip: CGRect?
 	var visited: [AXUIElement] = []
 	var columnHeaders: [AXUIElement] = []
 	/// Only Notification Center's custom action names are listed; elsewhere they are arbitrary app text.
@@ -278,8 +309,17 @@ private struct Walk {
 
 		let (read, incomplete) = descriptor(element)
 		if incomplete { tree.incompleteAccessibilityRead = true }
+		if let descriptor = read, !incomplete, descriptor.positioned, VisibleClip.outside(descriptor.frame, clip: clip),
+		   descriptor.isFocused != true
+		{
+			tree.offscreenSkipped += 1
+			return
+		}
 		if let descriptor = read, !incomplete { emit(descriptor, element, depth: depth) }
+		let outer = clip
+		if let descriptor = read, !incomplete { clip = VisibleClip.narrowed(clip, role: descriptor.role, frame: descriptor.frame) }
 		processChildren(element, depth: depth)
+		clip = outer
 	}
 
 	mutating func emit(_ descriptor: Descriptor, _ element: AXUIElement, depth: Int) {
@@ -380,6 +420,7 @@ extension Mac {
 			CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil
 		}
 		var walk = Walk(deadline: deadline, budget: budget)
+		if budget.visibleOnly { walk.clip = Mac.window(windowID)?.bounds }
 		walk.listsCustomActions = CustomActions.isNotificationCenter(pid)
 		walk.tree.windowTitle = AX.string(window, kAXTitleAttribute)
 		walk.process(window, depth: 0)

@@ -19,8 +19,12 @@ struct InspectRequest: Sendable {
 	var pixels = false
 	var ocr = false
 	var scope: ScopeRequest?
-	/// Whether the read may turn on a Chromium or Electron app's web accessibility.
+	/// Whether the read may turn on a Chromium or Electron app's web accessibility; false also turns it back off
+	/// where this host turned it on (#231).
 	var web = true
+	/// Instead of `scope`, picks the listed subtree's root from the fresh read's elements in pre-order, as a wait
+	/// does for the element it matched (#232).
+	var root: (@Sendable ([Element]) -> Int?)?
 }
 
 /// An element ID from an earlier accessibility snapshot of the same window.
@@ -126,9 +130,14 @@ extension Tools {
 		var source: ScopeSource?
 		if let scope = request.scope { source = try await scopeSource(scope, pid: pid, windowID: windowID) }
 		var budget = ElementBudget()
-		if source != nil { (budget.maxDepth, budget.maxElements, budget.maxChildren, budget.seconds) = (64, 4000, 1000, 18) }
 		let accessibility = !request.pixels
-		let ((window, image, elements, captureDone), web) = try await webRead(pid: pid, allowed: accessibility && request.web, tree: \.2) {
+		if source != nil || request.root != nil {
+			(budget.maxDepth, budget.maxElements, budget.maxChildren, budget.seconds) = (64, 4000, 1000, 18)
+		} else {
+			// Off-screen content is left to a scope, which reads it whole (#178).
+			budget.visibleOnly = true
+		}
+		let ((window, image, elements, captureDone), web) = try await webRead(pid: pid, allowed: accessibility && request.web, restore: !request.web, tree: \.2) {
 			try await read(pid: pid, windowID: windowID, generation: generation, budget: accessibility ? budget : nil, started: started)
 		}
 		let detectionDone = ContinuousClock.now
@@ -153,6 +162,15 @@ extension Tools {
 				("from_snapshot", JSON(request.snapshot)), ("from_element", JSON(request.element)), ("element", JSON(root.id)),
 				("role", root.attributes["role"].map(JSON.string) ?? .null), ("label", root.label.map(JSON.string) ?? .null),
 			])
+		} else if let choose = request.root, case let ordered = preorder(elements.elements), let position = choose(ordered),
+		          ordered.indices.contains(position)
+		{
+			listed = subtree(ordered, at: position)
+			let root = ordered[position]
+			scope = .object([
+				("element", JSON(root.id)), ("role", root.attributes["role"].map(JSON.string) ?? .null),
+				("label", root.label.map(JSON.string) ?? .null),
+			])
 		} else {
 			// Grouped by type as Peekaboo returns them, with an open menu's items first.
 			let grouped = elementTypeOrder.flatMap { type in elements.elements.filter { $0.type == type } }
@@ -173,9 +191,10 @@ extension Tools {
 			"web_accessibility": web.map { JSON($0.change.rawValue) },
 			"web_accessibility_via": web?.via.map { JSON($0.rawValue) },
 			"snapshot_id": JSON(id),
-			"element_count": JSON(source == nil ? elements.elements.count : listed.count),
+			"element_count": JSON(scope == nil ? elements.elements.count : listed.count),
+			"offscreen_omitted": elements.offscreenSkipped > 0 ? JSON(elements.offscreenSkipped) : nil,
 			"scope": scope,
-			"traversed_element_count": source.map { _ in JSON(elements.elements.count) },
+			"traversed_element_count": scope.map { _ in JSON(elements.elements.count) },
 			"ui_elements": .array(listed.map(json)),
 			"coordinate_context": .object([
 				("version", 1),

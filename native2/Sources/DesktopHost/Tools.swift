@@ -32,6 +32,13 @@ public enum Tools {
 	static func whole(_ name: String, arguments: JSON, client: pid_t? = nil) async -> ToolResult {
 		if let refusal = await admission(name, arguments: arguments, client: client) { return refused(name, refusal) }
 		Hooks.admitted()
+		var arguments = arguments
+		// expect takes the app and window it leaves out from the action's snapshot, as the input does (#224).
+		if expectTools.contains(name), let expect = arguments["expect"], let id = arguments["snapshot"]?.string,
+		   let snapshot = await Snapshots.shared.get(id)
+		{
+			arguments.set("expect", expectTarget(expect, pid: snapshot.pid, window: snapshot.windowID))
+		}
 		// Node checks expect before the action's own arguments.
 		if expectTools.contains(name), arguments["expect"] != nil {
 			do {

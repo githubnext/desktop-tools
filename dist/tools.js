@@ -99,7 +99,7 @@ const waitCondition = {
 // The condition's other fields are desktop_wait's, and validateExpect checks them, so they aren't repeated per action.
 const expect = {
     type: "object",
-    description: "until and its arguments, as desktop_wait takes them, and an optional timeout_ms.",
+    description: "until and its arguments, as desktop_wait takes them, and an optional timeout_ms. A pid, and a window for window, element and text conditions, default to the action's snapshot.",
     required: ["until"],
     properties: {
         until: waitCondition.until,
@@ -167,9 +167,9 @@ const saveProperties = {
 };
 const webAccessibility = {
     type: "boolean",
-    description: "false leaves a Chromium or Electron app's web accessibility as it is, so its web content may be missing.",
+    description: "false doesn't turn on a Chromium or Electron app's web accessibility, so its web content may be missing, and turns it back off if Desktop Tools turned it on.",
 };
-const webAccessibilityNote = "in a Chromium or Electron app, or a window whose web area is nearly empty, it first turns on the app's web accessibility so web content appears, once per app launch, and reports web_accessibility; it stays on until the app quits. Pass web_accessibility false to leave the app as it is.";
+const webAccessibilityNote = "in a Chromium or Electron app, or a window whose web area is nearly empty, it first turns on the app's web accessibility so web content appears, once per app launch, and reports web_accessibility. It can slow heavy pages, so Desktop Tools turns it back off after 10 minutes without a read of that app; pass web_accessibility false to turn it off now (restored).";
 // Launching and opening stay in the background unless asked to activate (#162).
 const backgroundNote = "Background unless activate is true: macOS starts the app or hands it the item without bringing it forward, so the user keeps typing where they are. Pass activate only when a later step is foreground or the user asks to see the app; activate brings the app forward and may switch Spaces.";
 const saveNote = "save_path, an absolute .png path in an existing folder, keeps the full-resolution capture; region, in global points, saves only part of it; an existing file needs overwrite true.";
@@ -562,7 +562,7 @@ export function desktopTools({ place, app }) {
         {
             name: "desktop_inspect",
             op: "inspect",
-            description: `Read one window's Accessibility elements and a screenshot by pid and window, returning the single-use snapshot_id that input tools take. Read-only and never activates or focuses, except that ${webAccessibilityNote} mode pixels, for windows Accessibility can't read, gives a snapshot for point clicks, scrolls and drags only. A large window lists its first 200 elements and reports truncated: pass scope (a container's snapshot and element from an earlier inspection) to list its subtree with a much larger budget. Each element gives id, role, label, value when it differs, bounds as [x, y, width, height] in global points, state only when set (enabled false or \"unknown\", selected, focused, actionable, settable), kind when its role description adds to the role, and attributes such as identifier, help, actions and depth. ocr true adds recognized_text, whose box centers are points for this snapshot. ${saveNote}`,
+            description: `Read one window's Accessibility elements and a screenshot by pid and window, returning the single-use snapshot_id that input tools take. Read-only and never activates or focuses, except that ${webAccessibilityNote} mode pixels, for windows Accessibility can't read, gives a snapshot for point clicks, scrolls and drags only. Elements wholly outside the window, or scrolled out of their scroll or web area, are left out and counted in offscreen_omitted. A large window lists its first 200 elements and reports truncated: pass scope (a container's snapshot and element from an earlier inspection) to list its subtree, off-screen content included, with a much larger budget. Each element gives id, role, label, value when it differs, bounds as [x, y, width, height] in global points, state only when set (enabled false or \"unknown\", selected, focused, actionable, settable), kind when its role description adds to the role, and attributes such as identifier, help, actions and depth. ocr true adds recognized_text, whose box centers are points for this snapshot. ${saveNote}`,
             parameters: {
                 type: "object",
                 required: ["pid", "window"],
@@ -598,7 +598,7 @@ export function desktopTools({ place, app }) {
         {
             name: "desktop_wait",
             op: "wait",
-            description: `Wait until one condition holds and return what matched, or timed_out with the last observation; use it instead of polling after a launch, page load, export or dialog. Read-only; it polls every 200 ms to 2 s for timeout_ms, an integer from 100 to ${WAIT_MAX_MS} (default ${WAIT_DEFAULT_MS}). until is window_appears (exactly one of bundle_id or pid, optional title or title_contains) or window_gone (pid, window); dialog_appears or dialog_gone (pid, optional window); element_appears or element_gone (pid, window and a required element object: role plus at least one of title, value or identifier, e.g. {role: "AXButton", title: "Save"}); text_changes, text_equals or text_contains (pid, window, optional scope or element, whose role plus title or identifier picks the element whose value is read; text_equals and text_contains need text); app_running, app_frontmost or app_quit (bundle_id or pid). A matched element comes with inspection.snapshot_id and its IDs for action tools; if that is null, inspect first. Element and text polls read as desktop_inspect does: ${webAccessibilityNote} Uncertain absence never counts as gone.`,
+            description: `Wait until one condition holds and return what matched, or timed_out with the last observation; use it instead of polling after a launch, page load, export or dialog. Read-only; it polls every 200 ms to 2 s for timeout_ms, an integer from 100 to ${WAIT_MAX_MS} (default ${WAIT_DEFAULT_MS}). until is window_appears (exactly one of bundle_id or pid, optional title or title_contains) or window_gone (pid, window); dialog_appears or dialog_gone (pid, optional window); element_appears or element_gone (pid, window and a required element object: role plus at least one of title, value or identifier, e.g. {role: "AXButton", title: "Save"}); text_changes, text_equals or text_contains (pid, window, optional scope or element, whose role plus title or identifier picks the element whose value is read; text_equals and text_contains need text); app_running, app_frontmost or app_quit (bundle_id or pid). A matched element comes with inspection.snapshot_id and its IDs for action tools, scoped around it (inspection.scope) when an unscoped inspection doesn't list it; if that is null, inspect first. Element and text polls read as desktop_inspect does: ${webAccessibilityNote} Uncertain absence never counts as gone.`,
             parameters: {
                 type: "object",
                 required: ["until"],

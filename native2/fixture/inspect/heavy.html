@@ -1,0 +1,10 @@
+<!doctype html>
+<!-- #231: a heavy page, 3000 rows of 8 cells with links, whose accessibility tree costs Chrome memory and time. -->
+<html><head><meta charset="utf-8"><title>Heavy page fixture</title></head>
+<body><table id="t"></table>
+<script>
+const t = document.getElementById("t");
+let html = "";
+for (let r = 0; r < 3000; r++) { html += "<tr>"; for (let c = 0; c < 8; c++) html += `<td><a href="#${r}-${c}">Cell ${r}:${c}</a></td>`; html += "</tr>"; }
+t.innerHTML = html;
+</script></body></html>
