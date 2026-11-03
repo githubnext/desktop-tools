@@ -121,7 +121,10 @@ extension Mac {
 			AX.element(AX.value(element, name)).flatMap(AX.frame)
 		}
 		// Everything drawn in the title row is excluded; a subtree outside the row is skipped, since AppKit keeps
-		// children inside their parents.
+		// children inside their parents. Chromium draws its tab strip in the title row, inside groups that span the
+		// whole window, and leaves an empty unlabeled group where the strip is blank, so there only leaves count, and
+		// not a blank one.
+		let chromium = shipsChromium(window.pid)
 		var geometry = TitleBarGeometry(bounds: window.bounds, controls: controls, occupied: [])
 		guard let row = geometry.row else { throw refused("its title bar has no standard window controls.") }
 		let band = CGRect(x: window.bounds.minX, y: row.lowerBound - 4, width: window.bounds.width, height: row.upperBound - row.lowerBound + 8)
@@ -134,13 +137,17 @@ extension Mac {
 			guard visited <= 512 else { throw refused("its window has too many elements in the title row.") }
 			AXUIElementSetMessagingTimeout(node, 0.5)
 			guard let frame = AX.frame(node), frame.intersects(band) else { continue }
-			occupied.append(frame)
-			queue += AX.value(node, kAXChildrenAttribute) as? [AXUIElement] ?? []
+			let children = AX.value(node, kAXChildrenAttribute) as? [AXUIElement] ?? []
+			if !chromium || children.isEmpty && !isBlankChrome(node) { occupied.append(frame) }
+			queue += children
 		}
 		geometry = TitleBarGeometry(bounds: window.bounds, controls: controls, occupied: occupied)
 		guard let point = geometry.point() else { throw refused("its title bar has no blank space to click.") }
 		var hit: AXUIElement?
-		guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success, let hit, CFEqual(hit, element) else {
+		guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success, let hit,
+		      CFEqual(hit, element) || chromium && isBlankChrome(hit) && (AX.value(hit, kAXChildrenAttribute) as? [AXUIElement] ?? []).isEmpty
+		      && AX.element(AX.value(hit, kAXWindowAttribute)).flatMap(AX.windowID) == window.windowID
+		else {
 			throw refused("the title-bar point doesn't hit the window itself.")
 		}
 
@@ -167,6 +174,18 @@ extension Mac {
 		Thread.sleep(forTimeInterval: 0.05)
 		return units
 	}
+}
+
+/// An unlabeled group or unknown element that takes no press, such as the empty group where Chromium's tab strip is
+/// blank.
+func isBlankChrome(_ element: AXUIElement) -> Bool {
+	AXUIElementSetMessagingTimeout(element, 0.5)
+	guard let role = AX.string(element, kAXRoleAttribute), role == kAXGroupRole || role == kAXUnknownRole else { return false }
+	let labels = [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute, kAXHelpAttribute].compactMap { AX.string(element, $0) }
+	guard labels.allSatisfy(\.isEmpty) else { return false }
+	var names: CFArray?
+	_ = AXUIElementCopyActionNames(element, &names)
+	return !((names as? [String]) ?? []).contains(kAXPressAction)
 }
 
 /// Refusal to make a background window key, which sent nothing. `cause` stands alone, for a caller that sends
