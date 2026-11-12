@@ -299,11 +299,14 @@ private struct Walk {
 		return (result, false)
 	}
 
-	mutating func process(_ element: AXUIElement, depth: Int) {
-		guard ContinuousClock.now < deadline else { tree.deadlineReached = true; return }
-		guard depth < budget.maxDepth else { tree.maxDepthReached = true; return }
-		guard tree.elements.count < budget.maxElements else { tree.maxElementCountReached = true; return }
-		guard !visited.contains(where: { CFEqual($0, element) }) else { return }
+	/// Reads one element and its subtree. Returns false when it lay off screen and was skipped, so it doesn't count
+	/// toward its parent's child cap.
+	@discardableResult
+	mutating func process(_ element: AXUIElement, depth: Int) -> Bool {
+		guard ContinuousClock.now < deadline else { tree.deadlineReached = true; return true }
+		guard depth < budget.maxDepth else { tree.maxDepthReached = true; return true }
+		guard tree.elements.count < budget.maxElements else { tree.maxElementCountReached = true; return true }
+		guard !visited.contains(where: { CFEqual($0, element) }) else { return true }
 		visited.append(element)
 		AXUIElementSetMessagingTimeout(element, timeout() ?? 0.01)
 
@@ -313,13 +316,14 @@ private struct Walk {
 		   descriptor.isFocused != true
 		{
 			tree.offscreenSkipped += 1
-			return
+			return false
 		}
 		if let descriptor = read, !incomplete { emit(descriptor, element, depth: depth) }
 		let outer = clip
 		if let descriptor = read, !incomplete { clip = VisibleClip.narrowed(clip, role: descriptor.role, frame: descriptor.frame) }
 		processChildren(element, depth: depth)
 		clip = outer
+		return true
 	}
 
 	mutating func emit(_ descriptor: Descriptor, _ element: AXUIElement, depth: Int) {
@@ -385,14 +389,19 @@ private struct Walk {
 	mutating func processChildren(_ element: AXUIElement, depth: Int) {
 		let read = children(element)
 		if read.incomplete { tree.incompleteAccessibilityRead = true }
-		if read.elements.count > budget.maxChildren { tree.maxChildrenPerNodeReached = true }
-		let limited = read.elements.prefix(budget.maxChildren)
-		for (index, child) in limited.enumerated() {
-			process(child, depth: depth + 1)
-			guard index < limited.count - 1 else { break }
+		// A visible-only walk doesn't count children it skipped as off screen toward the cap, so a long list scrolled to
+		// its middle still lists the rows on screen (#249). It reads at most ten times the cap, since each skipped
+		// child still costs a read.
+		let scanned = read.elements.prefix(clip == nil ? budget.maxChildren : budget.maxChildren * 10)
+		var counted = 0
+		for (index, child) in scanned.enumerated() {
+			if counted == budget.maxChildren { tree.maxChildrenPerNodeReached = true; return }
+			if process(child, depth: depth + 1) { counted += 1 }
+			guard index < scanned.count - 1 else { break }
 			if tree.elements.count >= budget.maxElements { tree.maxElementCountReached = true; return }
 			if ContinuousClock.now >= deadline { tree.deadlineReached = true; return }
 		}
+		if read.elements.count > scanned.count { tree.maxChildrenPerNodeReached = true }
 	}
 }
 
