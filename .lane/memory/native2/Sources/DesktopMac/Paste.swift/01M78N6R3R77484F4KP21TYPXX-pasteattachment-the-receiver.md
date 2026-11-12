@@ -3,6 +3,10 @@ id: 01M78N6R3R77484F4KP21TYPXX
 anchor: '@file'
 created: 2026-11-12T19:54:24Z
 norm: '1'
+sig: 27abcba5e975f16e
+body_hash: d23058b9832794d1
+raw_hash: cf982114ea9b7925
+lines: 1-595
 supersedes: 01M5D5AB34JDWZ565DVTAB86HD
 ---
 
