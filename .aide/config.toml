@@ -1,0 +1,6 @@
+# AIDE settings for this project. Keys: githubnext/aide docs/dot-aide.md
+schema = 1
+
+[project]
+name = "Desktop Tools"
+accent = "#c9714f"
