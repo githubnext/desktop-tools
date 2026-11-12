@@ -53,16 +53,23 @@ final class PasswordFill: @unchecked Sendable {
 
 	/// Asks the embedding app to confirm one fill; nil when it can't ask or nobody answered in time.
 	private func ask(_ context: Hooks.SecureTextFillContext) async -> Bool? {
-		let caller = Callers.shared.resolve(client: context.client)?.caller.name ?? "An agent"
+		let named = Hooks.call?.agent
+		let caller = named?.name ?? Callers.shared.resolve(client: context.client)?.caller.name ?? "An agent"
 		let app = context.applicationName ?? context.bundleIdentifier ?? "an app"
 		let place = context.webHost.map { "\(app), on \($0)" } ?? app
-		let request: [String: String] = [
+		var request: [String: String] = [
 			"key": "password-fill",
 			"title": "Allow \(caller) to fill a password?",
 			"message": "\(caller) wants to type a password it supplied into a password field in \(place). Desktop Tools never shows or records the password.",
 			"allow": "Allow Once",
 			"deny": "Deny",
 		]
+		// Which agent asked, for a client that serves several, so the app can name it and ask the right person.
+		if let named { request["agent"] = named.key }
+		// The parts, for an app that words its own question.
+		request["agent_name"] = caller
+		request["app"] = app
+		if let host = context.webHost { request["web_host"] = host }
 		let json = String(decoding: try! JSONSerialization.data(withJSONObject: request, options: [.sortedKeys]), as: UTF8.self)
 		let next: (UInt64, @convention(c) (UInt64, UnsafePointer<CChar>) -> Void)? = lock.withLock {
 			guard let confirm else { return nil }
