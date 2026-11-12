@@ -55,6 +55,12 @@ private func dialogWindows(_ pid: pid_t) async -> [DialogWindow] {
 
 /// Reads the target's dialog; a native refusal reads as the bridge reported it, an unmatched dialog as the client did.
 private func readDialog(_ target: DialogTarget) async throws -> DialogRead {
+	// A sheet's own window holds no Accessibility tree; the sheet is read through the window it's attached to (#245).
+	if let id = target.window?.id, let listing = try? await Mac.windows(pid: target.pid),
+	   let parent = listing["windows"]?.array?.first(where: { $0["window_id"]?.int == id })?["sheet_of_window_id"]?.int
+	{
+		throw BridgeError(message: "Window \(id) is a sheet attached to window \(parent), and Accessibility reaches the sheet only through window \(parent). Pass window \(parent)'s target from desktop_windows, or the app's target from desktop_apps")
+	}
 	let windows = await dialogWindows(target.pid)
 	let read: DialogRead
 	do {

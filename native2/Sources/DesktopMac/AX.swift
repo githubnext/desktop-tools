@@ -83,6 +83,41 @@ enum AX {
 		let bounds: CGRect?
 		let isMinimized: Bool?
 		let isMain: Bool?
+		/// The sheets attached to the window, which the window server lists as windows of their own (#245).
+		var sheets: [Sheet] = []
+	}
+
+	/// An attached sheet: the window number Accessibility reports for it, which can be its parent's, and its bounds.
+	struct Sheet {
+		let id: Int?
+		let bounds: CGRect?
+
+		/// Whether a window server row is this sheet's window.
+		func matches(id other: Int, bounds frame: CGRect) -> Bool {
+			if id == other { return true }
+			guard let bounds else { return false }
+			// AppKit's sheet window has the sheet's bounds; a SwiftUI alert's window adds a transparent margin around it.
+			return frame.insetBy(dx: -1, dy: -1).contains(bounds) && abs(bounds.midX - frame.midX) <= 2 && abs(bounds.midY - frame.midY) <= 2
+				&& frame.width - bounds.width <= 200 && frame.height - bounds.height <= 200
+		}
+	}
+
+	/// A window's attached sheets. A sheet's own window number is often unreadable, so its bounds identify it too.
+	static func sheets(of window: AXUIElement) -> [Sheet] {
+		sheetElements(of: window).map { sheet in
+			AXUIElementSetMessagingTimeout(sheet, 0.2)
+			return Sheet(id: windowID(sheet), bounds: frame(sheet))
+		}
+	}
+
+	/// A window's AXSheet elements: AppKit lists them among the window's children, and few apps support AXSheets.
+	static func sheetElements(of window: AXUIElement) -> [AXUIElement] {
+		var seen: [AXUIElement] = []
+		for element in (value(window, "AXSheets") as? [AXUIElement] ?? []) + (value(window, kAXChildrenAttribute) as? [AXUIElement] ?? [])
+		where string(element, kAXRoleAttribute) == "AXSheet" && !seen.contains(where: { CFEqual($0, element) }) {
+			seen.append(element)
+		}
+		return seen
 	}
 
 	struct Windows {
@@ -170,7 +205,8 @@ enum AX {
 				title: fields[0] as? String ?? "",
 				bounds: origin.flatMap { origin in size.map { CGRect(origin: origin, size: $0) } },
 				isMinimized: fields[3] as? Bool,
-				isMain: fields[4] as? Bool
+				isMain: fields[4] as? Bool,
+				sheets: remaining() > 0 ? sheets(of: window) : []
 			))
 		}
 		return result

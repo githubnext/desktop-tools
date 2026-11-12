@@ -53,6 +53,8 @@ private struct Row {
 	var isKey: Bool?
 	var capability: String
 	var reason: String?
+	/// The window this one is attached to as a sheet.
+	var sheetOf: Int?
 }
 
 private func plural(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
@@ -110,6 +112,16 @@ extension Mac {
 					}
 					var row = Row(id: cg.id, title: cg.title, bounds: cg.bounds, isOnScreen: cg.isOnScreen, isMinimized: cg.parked,
 					              isKey: nil, capability: unmatched.0, reason: unmatched.1)
+					// A sheet is its own window to the window server, but Accessibility reaches it only as its parent's
+					// AXSheet, and input reaches it only through a snapshot of the parent (#245).
+					if !ax.descriptors.contains(where: { $0.id == cg.id }),
+					   let parent = ax.descriptors.first(where: { parent in parent.id != cg.id && parent.sheets.contains { $0.matches(id: cg.id, bounds: cg.bounds) } }),
+					   let parentID = parent.id
+					{
+						row.capability = "pixels_only"
+						row.reason = "attached_sheet"
+						row.sheetOf = parentID
+					}
 					if let ax = ax.descriptors.first(where: { $0.id == cg.id }) {
 						row.isMinimized = ax.isMinimized ?? cg.parked
 						row.isKey = key(cg.id)
@@ -188,6 +200,7 @@ extension Mac {
 					"display_asleep": place.asleep.map(JSON.bool),
 					"observation_capability": JSON(row.capability),
 					"observation_reason": row.reason.map(JSON.string),
+					"sheet_of_window_id": row.sheetOf.map { JSON($0) },
 					"process_start_identity_decimal": identity,
 					"target": .object([
 						("pid", JSON(pid)), ("process_start_identity_decimal", identity), ("window_id", JSON(row.id)),
@@ -198,6 +211,41 @@ extension Mac {
 			"inventory_completeness": warnings.isEmpty ? "complete" : "partial",
 			"inventory_warnings": .array(warnings.map(JSON.string)),
 		])
+	}
+}
+
+extension Mac {
+	/// The on-screen windows of the sheets attached to a window, frontmost last, which a capture of the window alone
+	/// leaves out (#245).
+	/// The window an untitled window is attached to as a sheet, if it is one (#245).
+	public static func sheetParent(pid: pid_t, windowID: Int) -> Int? {
+		guard let window = window(windowID), window.pid == pid, window.title.isEmpty else { return nil }
+		let app = AXUIElementCreateApplication(pid)
+		AXUIElementSetMessagingTimeout(app, 0.5)
+		let windows = AX.value(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
+		var ids: [Int?] = []
+		for candidate in windows {
+			AXUIElementSetMessagingTimeout(candidate, 0.5)
+			ids.append(AX.windowID(candidate))
+		}
+		guard !ids.contains(windowID) else { return nil }
+		for (candidate, id) in zip(windows, ids) {
+			if let id, AX.sheets(of: candidate).contains(where: { $0.matches(id: windowID, bounds: window.bounds) }) { return id }
+		}
+		return nil
+	}
+
+	public static func attachedSheets(pid: pid_t, windowID: Int) -> [(id: Int, bounds: CGRect)] {
+		let app = AXUIElementCreateApplication(pid)
+		AXUIElementSetMessagingTimeout(app, 0.5)
+		guard let window = (AX.value(app, kAXWindowsAttribute) as? [AXUIElement] ?? []).first(where: { AX.windowID($0) == windowID }) else { return [] }
+		AXUIElementSetMessagingTimeout(window, 0.5)
+		let sheets = AX.sheets(of: window)
+		guard !sheets.isEmpty else { return [] }
+		// The window list runs front to back.
+		return cgRows().reversed().filter { row in
+			row.pid == pid && row.id != windowID && row.layer == 0 && row.isOnScreen && sheets.contains { $0.matches(id: row.id, bounds: row.bounds) }
+		}.map { ($0.id, $0.bounds) }
 	}
 }
 

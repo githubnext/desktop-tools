@@ -59,6 +59,17 @@ extension Tools {
 		}
 		let save = try saveRequest(arguments)
 
+		// A sheet's own window has no Accessibility tree and takes no input; its parent's snapshot holds both (#245).
+		if request.scope == nil, let parent = try await run({ Mac.sheetParent(pid: pid, windowID: windowID) }) {
+			return ToolResult(text: JSON.object([
+				"inspection_error": .object([("code", "ATTACHED_SHEET"), ("message", JSON(
+					"Window \(windowID) is a sheet attached to window \(parent). Accessibility reaches the sheet only through window \(parent), "
+						+ "and input reaches it only through a snapshot of window \(parent). Inspect window \(parent) instead: its snapshot "
+						+ "shows the sheet and lists it as an AXSheet with its text and buttons."))]),
+				"requested_target": .object([("pid", JSON(pid)), ("window_id", JSON(windowID)), ("mode", JSON(mode))]),
+				"parent_window_id": JSON(parent),
+			]).text, isError: true)
+		}
 		var retried = false
 		let observed: Observation
 		do {
@@ -116,7 +127,14 @@ extension Tools {
 	}
 
 	static func observation(pid: pid_t, windowID: Int) async throws -> (JSON, (data: String, mimeType: String)) {
-		let observed = try await observation(pid: pid, windowID: windowID, InspectRequest(), started: .now)
+		let observed: Observation
+		do {
+			observed = try await observation(pid: pid, windowID: windowID, InspectRequest(), started: .now)
+		} catch let error as ToolError where error.message.range(of: "incomplete|sparse", options: [.regularExpression, .caseInsensitive]) != nil {
+			// Input that opens a sheet or alert often leaves the tree mid-change for a moment (#244), as inspect retries.
+			try await Task.sleep(for: .milliseconds(500))
+			observed = try await observation(pid: pid, windowID: windowID, InspectRequest(), started: .now)
+		}
 		return (observed.data, observed.image)
 	}
 
@@ -235,7 +253,7 @@ extension Tools {
 		// loads rows as they're read grows and moves what's below, so a screenshot taken during the walk can show
 		// content where it no longer is, and a point read off it misses (#159).
 		let elements = try await run { try budget.map { try Mac.elements(pid: pid, windowID: windowID, budget: $0) } ?? ElementTree() }
-		let image = try await Mac.captureWindow(windowID, bounds: window.bounds)
+		let image = try await Mac.captureWindow(windowID, bounds: window.bounds, pid: pid)
 		let captureDone = ContinuousClock.now
 		guard Mac.generation(pid) == generation, let after = Mac.window(windowID), after.pid == pid, after.bounds == window.bounds else {
 			throw ToolError("invalidRequest: Snapshot is stale: Exact observation window changed during the observation. Inspect it again.")

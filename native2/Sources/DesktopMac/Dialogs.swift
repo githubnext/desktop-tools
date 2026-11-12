@@ -289,6 +289,12 @@ private func onlyCandidate(pid: pid_t, windowID: Int?, windows: [DialogWindow], 
 	return (found[0], generation)
 }
 
+/// A button's title, or its description where SwiftUI puts an alert button's title (#245).
+private func buttonTitle(_ button: AXUIElement) -> String? {
+	[kAXTitleAttribute, kAXDescriptionAttribute].lazy.compactMap { text(button, $0) }
+		.first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+}
+
 private func buttons(_ dialog: AXUIElement, budget: Budget) throws -> [AXUIElement] {
 	try collect(dialog, roles: ["AXButton"], budget: budget)
 }
@@ -414,7 +420,7 @@ extension Mac {
 			"bounds": Mac.boundsJSON(AX.frame(dialog) ?? .zero),
 		])
 		let buttonRows = try buttons(dialog, budget: budget).compactMap { button -> (String, Bool, Bool)? in
-			guard let title = text(button, kAXTitleAttribute) else { return nil }
+			guard let title = buttonTitle(button) else { return nil }
 			return (title, flag(button, kAXEnabledAttribute) ?? true, flag(button, "AXDefault") ?? false)
 		}
 		let fieldRows = try textFields(dialog, budget: budget).enumerated().map { index, field in
@@ -445,16 +451,16 @@ extension Mac {
 		let matches = all.filter { button in
 			guard flag(button, kAXEnabledAttribute) == true, Mac.actions(button).contains(kAXPressAction) else { return false }
 			if wanted == "default" { return text(button, kAXIdentifierAttribute) == "OKButton" }
-			return text(button, kAXTitleAttribute).map(normalized) == wanted
+			return buttonTitle(button).map(normalized) == wanted
 		}
 		guard matches.count == 1 else {
-			let available = all.enumerated().map { "\($0):\(text($1, kAXTitleAttribute) ?? "untitled")" }.joined(separator: ", ")
+			let available = all.enumerated().map { "\($0):\(buttonTitle($1) ?? "untitled")" }.joined(separator: ", ")
 			throw refusal(matches.isEmpty ? "No unique enabled AXPress dialog button matched the request." : "Dialog button selection is ambiguous across \(matches.count) exact matches.",
 			              hint: "Candidate window ID: \(candidate.window.id). Available buttons: \(available.isEmpty ? "none" : available). Run dialog list and provide one unique exact button name.")
 		}
 		let button = matches[0]
 		var details = targetDetails(pid, generation, candidate.window.id)
-		details += [("button", text(button, kAXTitleAttribute) ?? title), ("method", "button")]
+		details += [("button", buttonTitle(button) ?? title), ("method", "button")]
 		if let identifier = text(button, kAXIdentifierAttribute), !identifier.isEmpty { details.append(("button_identifier", identifier)) }
 		AXUIElementSetMessagingTimeout(button, 0)
 		let leaf: Delivery
