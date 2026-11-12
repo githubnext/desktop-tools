@@ -58,11 +58,13 @@ extension Mac {
 			NSWorkspace.shared.runningApplications.contains { $0.bundleIdentifier == "com.apple.ScreenSaver.Engine" }
 		}
 
-		var layout: JSON?
-		if let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
-		   let id = tisString(source, kTISPropertyInputSourceID)
-		{
-			layout = .object(["id": JSON(id), "name": tisString(source, kTISPropertyLocalizedName).map(JSON.string)])
+		// Text Input Sources must be read on the main thread: off it, HIToolbox can trap on a queue assertion and take
+		// the host down mid-call, which agents saw as "host closed the connection" after a desktop_open (#244).
+		let layout = await MainActor.run { () -> JSON? in
+			guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+			      let id = tisString(source, kTISPropertyInputSourceID)
+			else { return nil }
+			return .object(["id": JSON(id), "name": tisString(source, kTISPropertyLocalizedName).map(JSON.string)])
 		}
 		let pointer = CGEvent(source: nil).map(\.location).map { point -> JSON in
 			.object(["x": JSON(Double(point.x)), "y": JSON(Double(point.y)), "display_index": WindowPlaces().pointerDisplay(point).map { JSON($0) }])

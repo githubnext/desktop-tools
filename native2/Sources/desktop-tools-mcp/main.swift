@@ -203,7 +203,22 @@ func call(_ key: String, tool: String, arguments: JSON) async -> JSON {
 		if case .system("connect", _) = error {
 			return errorResult("The Desktop Tools 2 host isn't serving at \(socketPath). Start it with: native2/.build/debug/desktop-tools-host")
 		}
-		return errorResult(error.description)
+		// The request may have reached the host, which can stop or restart mid-call. An action may then have taken
+		// effect, as a desktop_open whose host stopped after Xcode opened the file did (#244), so it is unknown, never
+		// a plain error an agent reads as "nothing happened".
+		if Contract.actions.contains(tool) {
+			let action: JSON = .object([("action", .object([
+				("outcome", "unknown"), ("action", JSON(tool)), ("retry_safety", "unsafe"),
+				("error", .object([("code", "HOST_CONNECTION_LOST"), ("message", JSON(
+					"\(error.description) The Desktop Tools host stopped while running \(tool), so it may have taken effect. "
+						+ "Observe the target (desktop_windows, desktop_inspect) before deciding whether to act again; don't repeat it blindly."))])),
+			]))])
+			return .object([
+				("content", [.object([("type", "text"), ("text", "Outcome: unknown.")]), .object([("type", "text"), ("text", JSON(action.text))])]),
+				("isError", true),
+			])
+		}
+		return errorResult("\(error.description) Nothing was changed by this read; call it again.")
 	} catch {
 		return errorResult(String(describing: error))
 	}
