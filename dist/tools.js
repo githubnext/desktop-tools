@@ -229,7 +229,7 @@ export function desktopTools({ place, app }) {
         {
             name: "desktop_windows",
             op: "windows",
-            description: `List one app's windows by pid, with the target that window tools take. Read-only. Each row's availability gives state (available, limited or unavailable), a reason (minimized, app_hidden, other_space, off_screen, session_locked, display_asleep, accessibility_unavailable…) and a hint naming the tool that recovers it; check it before acting, since nothing recovers automatically. Rows also carry space_ids, and display_index off the main display. Untitled windows off screen and on no Space, such as menu bar strips, are only counted in hidden_windows; all true lists them.`,
+            description: `List one app's windows by pid, with the target that window tools take. Read-only. Each row's availability gives state (available, limited or unavailable), a reason (minimized, app_hidden, other_space, off_screen, session_locked, display_asleep, accessibility_unavailable, attached_sheet…) and a hint naming the tool that recovers it; a sheet or alert is listed as a window of its own but is inspected, clicked and answered through the window it is attached to (sheet_of_window_id); check it before acting, since nothing recovers automatically. Rows also carry space_ids, and display_index off the main display. Untitled windows off screen and on no Space, such as menu bar strips, are only counted in hidden_windows; all true lists them.`,
             parameters: {
                 type: "object",
                 required: ["pid"],

@@ -396,7 +396,35 @@ extension Mac {
 
 	private static func press(_ element: AXUIElement, window: ClickWindow) throws -> Delivery {
 		try window.check()
-		return try finished(AXUIElementPerformAction(element, kAXPressAction as CFString), mechanism: "accessibility_action")
+		let sheets = sheetCount(window)
+		let delivery = try finished(AXUIElementPerformAction(element, kAXPressAction as CFString), mechanism: "accessibility_action")
+		guard delivery.state == .indeterminate, let sheets else { return delivery }
+		return sheetReadback(delivery, before: sheets, window: window)
+	}
+
+	/// The number of sheets attached to the exact window, or nil when it can't be read.
+	static func sheetCount(_ window: ClickWindow) -> Int? {
+		let app = AXUIElementCreateApplication(window.pid)
+		AXUIElementSetMessagingTimeout(app, 0.5)
+		guard let ax = (AX.value(app, kAXWindowsAttribute) as? [AXUIElement])?.first(where: { AX.windowID($0) == window.windowID }) else { return nil }
+		AXUIElementSetMessagingTimeout(ax, 0.5)
+		return AX.sheetElements(of: ax).count
+	}
+
+	/// An app that opens or closes a sheet in answer to a press often fails to reply to it (cannotComplete), though the
+	/// press took effect (#243). A sheet that appeared or went away within a second confirms the press.
+	static func sheetReadback(_ delivery: Delivery, before: Int, window: ClickWindow) -> Delivery {
+		let deadline = ContinuousClock.now + .seconds(1)
+		while ContinuousClock.now < deadline {
+			if let now = sheetCount(window), now != before {
+				var confirmed = Delivery(state: .confirmedChange, mechanism: delivery.mechanism, evidence: "verified_change", units: delivery.units)
+				confirmed.fields = delivery.fields.filter { $0.0 != "ax_error" }
+				confirmed.fields.append(("sheet", JSON(now > before ? "opened" : "closed")))
+				return confirmed
+			}
+			Thread.sleep(forTimeInterval: 0.05)
+		}
+		return delivery
 	}
 
 	private static func finished(_ error: AXError, mechanism: String) throws -> Delivery {
@@ -407,7 +435,9 @@ extension Mac {
 			throw Refusal("ELEMENT_NOT_FOUND", "The element is gone from the window. Inspect it again.")
 		default:
 			// The app may have acted and then failed to reply in time.
-			return Delivery(state: .indeterminate, mechanism: mechanism, evidence: "completion_unknown", units: 1)
+			var delivery = Delivery(state: .indeterminate, mechanism: mechanism, evidence: "completion_unknown", units: 1)
+			delivery.fields.append(("ax_error", JSON(Int(error.rawValue))))
+			return delivery
 		}
 	}
 

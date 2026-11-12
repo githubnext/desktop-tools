@@ -61,6 +61,15 @@ import Testing
 		#expect(result["state"] == "unavailable")
 	}
 
+	@Test func attachedSheetPointsToItsParent() {
+		// Sheets are often listed off screen while plainly showing; the parent is the route either way (#245).
+		let row: JSON = .object([("is_on_screen", false), ("observation_capability", "pixels_only"), ("observation_reason", "attached_sheet"), ("sheet_of_window_id", 41)])
+		let result = windowAvailability(row, sessionLocked: false, appHidden: false)
+		#expect(result["reason"] == "attached_sheet")
+		#expect(result["parent_window_id"] == 41)
+		#expect(result["hint"]?.string?.contains("Inspect window 41") == true)
+	}
+
 	@Test func lockedComesFirst() {
 		let row: JSON = .object([("is_minimized", true)])
 		#expect(windowAvailability(row, sessionLocked: true, appHidden: true)["reason"] == "session_locked")

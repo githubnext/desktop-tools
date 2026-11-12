@@ -12,6 +12,12 @@ public func windowAvailability(_ window: JSON, sessionLocked: Bool, appHidden: B
 		return .object([("state", "unavailable"), ("reason", "open_save_panel_service"),
 		                ("hint", "This window belongs to the service that draws another app's Open or Save panel, and to its sheets such as Go to Folder. Use the app that opened the panel: its desktop_windows lists the panel with the same title and bounds, which desktop_inspect and desktop_click reach in the background. To go to a folder or file, pass the app's target to desktop_dialog, then desktop_dialog_answer with path.")])
 	}
+	// A sheet's own window shows only pixels and takes no input; its parent's snapshot holds the sheet's elements and
+	// image, whether or not the window server calls the sheet on screen (#245).
+	if window["observation_reason"]?.string == "attached_sheet", let parent = window["sheet_of_window_id"]?.int {
+		return .object([("state", "unavailable"), ("reason", "attached_sheet"), ("parent_window_id", JSON(parent)),
+		                ("hint", JSON("This window is a sheet attached to window \(parent) of the same app. Inspect window \(parent) instead: its snapshot shows the sheet and lists it as an AXSheet with its text and buttons, which desktop_click presses in the background. desktop_dialog with window \(parent)'s target reads it, and desktop_dialog_answer answers it."))])
+	}
 	if window["is_minimized"]?.bool == true {
 		return .object([("state", "unavailable"), ("reason", "minimized"),
 		                ("hint", JSON("The window is minimized. Restore it with desktop_restore, using its target from desktop_windows, \(reinspect)"))])

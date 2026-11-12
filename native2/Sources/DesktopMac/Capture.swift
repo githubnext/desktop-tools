@@ -10,7 +10,7 @@ public let maxImage = 900_000
 
 extension Mac {
 	/// One window's pixels at one pixel per point, without its shadow, as Peekaboo captures them.
-	public static func captureWindow(_ windowID: Int, bounds: CGRect) async throws -> CGImage {
+	public static func captureWindow(_ windowID: Int, bounds: CGRect, opaque: Bool = true) async throws -> CGImage {
 		// Peekaboo's capture gate checks the lock first; Node adds the final period after Peekaboo's own.
 		if (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool == true {
 			throw ToolError("DESKTOP_ERROR: Capture failed: Screen capture is unavailable while the macOS GUI session is locked. `screen list` can still report connected displays; unlock the active user session and retry..")
@@ -29,7 +29,7 @@ extension Mac {
 		config.scalesToFit = true
 		config.includeChildWindows = false
 		config.showsCursor = false
-		config.shouldBeOpaque = true
+		config.shouldBeOpaque = opaque
 		config.backgroundColor = .clear
 		let image: CGImage = try await SCScreenshotManager.captureImage(
 			contentFilter: SCContentFilter(desktopIndependentWindow: window), configuration: config
@@ -38,6 +38,29 @@ extension Mac {
 			throw ToolError("internalError: Exact window capture returned \(image.width)x\(image.height) pixels; expected \(config.width)x\(config.height). Refusing a raster whose extent cannot be mapped to that window.")
 		}
 		return image
+	}
+
+	/// A window's pixels with the sheets attached to it drawn where they are, as the screen shows them. A sheet is a
+	/// window of its own, which a capture of its parent leaves out, though the parent's Accessibility tree holds its
+	/// elements (#245). A sheet that can't be captured leaves the parent's pixels as they are.
+	public static func captureWindow(_ windowID: Int, bounds: CGRect, pid: pid_t) async throws -> CGImage {
+		let image = try await captureWindow(windowID, bounds: bounds)
+		let sheets = attachedSheets(pid: pid, windowID: windowID).filter { bounds.intersects($0.bounds) }
+		guard !sheets.isEmpty else { return image }
+		var drawn: [(CGImage, CGRect)] = []
+		for sheet in sheets {
+			if let pixels = try? await captureWindow(sheet.id, bounds: sheet.bounds, opaque: false) { drawn.append((pixels, sheet.bounds)) }
+		}
+		guard !drawn.isEmpty, let context = CGContext(
+			data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+			space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+		) else { return image }
+		context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+		// The capture is one pixel per point, and a context's origin is its bottom left.
+		for (pixels, frame) in drawn {
+			context.draw(pixels, in: CGRect(x: frame.minX - bounds.minX, y: bounds.maxY - frame.maxY, width: frame.width, height: frame.height))
+		}
+		return context.makeImage() ?? image
 	}
 
 	/// ScreenCaptureKit's window by ID. Its private per-window lookup takes about half as long as listing
