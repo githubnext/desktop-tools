@@ -170,6 +170,37 @@ enum OwnUI {
 	}
 }
 
+/// System Settings and the system's permission and password prompts, where agent input could give an agent more than
+/// the user did: a switch in Privacy & Security, Allow on a "would like to control this Mac" prompt, an administrator
+/// password. Agents may open, read and quit them; input to them is the user's alone.
+///
+/// The whole of System Settings, not only its Privacy & Security pane: the pane can't be told apart reliably (its
+/// titles are localized, its subpanes share titles with other panes, such as Accessibility, and the sidebar builds
+/// the selected row's button only while it's scrolled into view), and any pane is one click from it.
+enum SystemUI {
+	static let code = "SYSTEM_UI_REFUSED"
+	static let bundles: Set = [
+		"com.apple.systempreferences", "com.apple.UserNotificationCenter",
+		"com.apple.SecurityAgent", "com.apple.LocalAuthentication.UIAgent", "com.apple.coreautha", "com.apple.loginwindow",
+	]
+	/// Tools that reach such an app without input to its windows.
+	static let allowed: Set = ["desktop_launch", "desktop_open", "desktop_activate", "desktop_hide", "desktop_unhide", "desktop_quit", "desktop_clipboard_write"]
+
+	static func isSystemUI(bundleIdentifier: String?) -> Bool { bundleIdentifier.map(bundles.contains) ?? false }
+
+	static func refusal(_ name: String, arguments: JSON, target: pid_t?) async -> String? {
+		guard Contract.actions.contains(name), !allowed.contains(name) else { return nil }
+		let bundle: String? = await MainActor.run {
+			if let target { return NSRunningApplication(processIdentifier: target)?.bundleIdentifier }
+			// Untargeted input, such as a system key, lands on the frontmost app.
+			return name == "desktop_system_key" ? NSWorkspace.shared.frontmostApplication?.bundleIdentifier : nil
+		}
+		guard isSystemUI(bundleIdentifier: bundle) else { return nil }
+		let what = bundle == "com.apple.systempreferences" ? "System Settings" : "a system permission or password prompt"
+		return "\(code): The input would reach \(what), where only the user may change what agents and apps can do, so nothing was sent. Ask the user to do this step; you may still open and read it."
+	}
+}
+
 extension Tools {
 	/// The refusal for one call from `client`, or nil when it may run: an unapproved caller first, then input that
 	/// could reach Desktop Tools' own UI, then the user's pause. Observing is never paused.
@@ -185,6 +216,7 @@ extension Tools {
 				return refusal
 			}
 		}
+		if let refusal = await SystemUI.refusal(name, arguments: arguments, target: await targetProcess(arguments)) { return refusal }
 		return Pause.shared.isPaused ? Pause.message : nil
 	}
 

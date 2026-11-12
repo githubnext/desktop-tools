@@ -27,3 +27,23 @@
 macOS grants Accessibility, Screen Recording, and event synthesis to the embedding app. Each embedding app needs its own grants on each machine. Clients must be signed by the host's team with the exact allowlisted identifier. In turn, a client signed with a team sends nothing, not even its hello, to a socket served by a process that isn't the same user's and signed by that team, and fails with `HOST_UNTRUSTED`; this covers `desktop-tools-client` and the app's `desktop-tools-mcp`. Both checks read the signature of the exact process at the other end of the socket, by its audit token. An unsigned build, such as `swift build` makes for development, skips them, as the host checks its client only when it is signed itself. The agent cursor and window outline draw click-through panels from the GUI process, so turn them on only from an app with a running AppKit main loop. The outline's label names the agent from `DESKTOP_TOOLS_AGENT` in the requesting client's environment, which `createDesktop` sets from its `agent` option; without it the label names the program that runs the client, as approvals do. Claude is orange, Codex blue, and any other agent gets a color fixed by its name; each agent has its own cursor and outline. For agents outside an embedding app, use the [Desktop Tools app](app.md).
 
 The caller is the client's nearest ancestor that isn't `node`, `npx`, `npm`, a shell, `login` or `env`, such as Claude Code or the terminal app an agent runs in. Its key is the team ID and signing identifier of its running code when that signature validates, so an update that moves it keeps its approval; otherwise it is its path, plus its identifier when it has one. Its name is its app's name, else the last part of a team-signed identifier (`claude-code`), else its file name. The process can't choose either one through its arguments or environment.
+
+## Run the host as an app's own helper
+
+An app that runs agents itself, such as [AIDE](https://github.com/githubnext/aide), can start `desktop-tools-host` as its own child process instead of loading the runtime. macOS charges a child's Accessibility and Screen Recording use to the app that spawned it (its *responsible process*), so the helper uses the app's grants: one row in System Settings, no second app to approve. Spawn it with `posix_spawn` or `Process`, never through LaunchServices (`open`), which makes it its own responsible process.
+
+```sh
+desktop-tools-host <socket> --client <team>:<identifier> --protect <app pid> --parent <app pid> --overlays --confirm-stdio
+desktop-tools-host --tools   # prints {"tools": [...], "instructions": "..."} and exits
+```
+
+- `--client` serves only that signed client, checked by the peer's audit token. The app connects to the socket itself.
+- `--protect` refuses agent input whose target is that process (`SELF_TARGET_REFUSED`). The app shows and guards its own prompts.
+- `--parent` exits when that process does.
+- `--overlays` draws the agent cursor and the outline on the window being used.
+- `--confirm-stdio` asks the app to confirm agent-supplied passwords: the host writes `{"confirm": id, "request": {...}}` and `{"withdraw": id}` lines to stdout, and reads `{"answer": id, "allowed": true|false}` lines on stdin. The request has `title`, `message`, `allow`, `deny`, `agent_name`, `app`, `web_host` when the field is in a web page, and `agent`, the key of the agent that asked.
+- With `--overlays` or `--confirm-stdio` the host serves through this runtime, so the client must be signed by the host's own team.
+
+A client that serves several agents over its one connection names each call's agent in the request, `{"id", "tool", "arguments", "agent": {"key", "name", "kind"}}`, so each gets its own cursor and outline, named and colored for it (`kind` `claude` is orange, `codex` blue).
+
+Every host refuses agent input to System Settings and to the system's permission and password prompts (`SYSTEM_UI_REFUSED`): a Privacy & Security switch, Allow on a "would like to control this Mac" prompt, or an administrator password would give the agent more than the user did. Opening, reading and quitting them still work.
