@@ -217,8 +217,11 @@ private struct ReceiverState {
 		func focusedValue() -> String? {
 			let app = AXUIElementCreateApplication(window.pid)
 			AXUIElementSetMessagingTimeout(app, 0.2)
+			// A WKWebView app names no focused element; its page field reports AXFocused itself (#5).
 			guard Mac.generation(window.pid) == window.generation,
-			      let focused = AX.element(AX.value(app, kAXFocusedUIElementAttribute)), CFEqual(focused, element),
+			      let focused = AX.element(AX.value(app, kAXFocusedUIElementAttribute))
+				?? AX.element(AX.value(app, kAXFocusedWindowAttribute)).flatMap(Mac.focusedWebElement),
+			      CFEqual(focused, element),
 			      let frame = AX.frame(element), window.bounds.contains(CGPoint(x: frame.midX, y: frame.midY))
 			else { return nil }
 			return AX.string(element, kAXValueAttribute)
@@ -307,6 +310,9 @@ extension Mac {
 			throw pasteRefusal("Literal insertion requires 1–8192 UTF-16 units and an exact focused receiver.")
 		}
 		return try ClipboardGate.exclusive { transaction in
+			// An inactive app's window must be key before its focus can be checked and the paste read back, as typing
+			// does (#226): a WKWebView window that isn't key reports no focused field (#5).
+			_ = try prepareKeys(target)
 			let focused = try requireKeyboardFocus(target)
 			if secureFocus(focused) { throw secureFocusRefusal }
 			guard let baseline = ReceiverState.read(focused, target: target),
