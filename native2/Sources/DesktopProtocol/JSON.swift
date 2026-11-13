@@ -53,13 +53,15 @@ public enum JSON: Sendable, Equatable {
 }
 
 extension JSON: ExpressibleByStringLiteral, ExpressibleByBooleanLiteral, ExpressibleByIntegerLiteral,
-	ExpressibleByFloatLiteral, ExpressibleByArrayLiteral
+	ExpressibleByFloatLiteral, ExpressibleByArrayLiteral, ExpressibleByDictionaryLiteral
 {
 	public init(stringLiteral value: String) { self = .string(value) }
 	public init(booleanLiteral value: Bool) { self = .bool(value) }
 	public init(integerLiteral value: Int) { self = .number(Double(value)) }
 	public init(floatLiteral value: Double) { self = .number(value) }
 	public init(arrayLiteral elements: JSON...) { self = .array(elements) }
+	/// Keeps the keys in the order written, as a JavaScript object literal does.
+	public init(dictionaryLiteral elements: (String, JSON)...) { self = .object(elements) }
 }
 
 extension JSON {
