@@ -131,12 +131,25 @@ public final class Pause: @unchecked Sendable {
 	public func set(_ value: Bool) { lock.withLock { paused = value } }
 }
 
+/// The embedding app's processes, for a host that serves one app and leaves approvals and pausing to it, as AIDE's
+/// helper does (`desktop-tools-host --protect <pid>`). Agent input that targets one is refused like input to Desktop
+/// Tools' own windows, whether or not a caller handler is set.
+public final class Protected: @unchecked Sendable {
+	public static let shared = Protected()
+	private let lock = NSLock()
+	private var pids: Set<pid_t> = []
+
+	public func set(_ value: Set<pid_t>) { lock.withLock { pids = value } }
+	var active: Bool { lock.withLock { !pids.isEmpty } }
+	func contains(_ process: pid_t) -> Bool { lock.withLock { pids.contains(process) } }
+}
+
 /// Desktop Tools' own processes, by the host's bundle ID, so a dev build and the installed app protect each other.
 enum OwnUI {
 	static let host = Bundle.main.bundleIdentifier ?? ""
 
 	static func isOwn(_ process: pid_t) -> Bool {
-		process == getpid()
+		process == getpid() || Protected.shared.contains(process)
 			|| OwnUIGuard.isOwn(bundleIdentifier: NSRunningApplication(processIdentifier: process)?.bundleIdentifier, host: host)
 	}
 
@@ -157,6 +170,37 @@ enum OwnUI {
 	}
 }
 
+/// System Settings and the system's permission and password prompts, where agent input could give an agent more than
+/// the user did: a switch in Privacy & Security, Allow on a "would like to control this Mac" prompt, an administrator
+/// password. Agents may open, read and quit them; input to them is the user's alone.
+///
+/// The whole of System Settings, not only its Privacy & Security pane: the pane can't be told apart reliably (its
+/// titles are localized, its subpanes share titles with other panes, such as Accessibility, and the sidebar builds
+/// the selected row's button only while it's scrolled into view), and any pane is one click from it.
+enum SystemUI {
+	static let code = "SYSTEM_UI_REFUSED"
+	static let bundles: Set = [
+		"com.apple.systempreferences", "com.apple.UserNotificationCenter",
+		"com.apple.SecurityAgent", "com.apple.LocalAuthentication.UIAgent", "com.apple.coreautha", "com.apple.loginwindow",
+	]
+	/// Tools that reach such an app without input to its windows.
+	static let allowed: Set = ["desktop_launch", "desktop_open", "desktop_activate", "desktop_hide", "desktop_unhide", "desktop_quit", "desktop_clipboard_write"]
+
+	static func isSystemUI(bundleIdentifier: String?) -> Bool { bundleIdentifier.map(bundles.contains) ?? false }
+
+	static func refusal(_ name: String, arguments: JSON, target: pid_t?) async -> String? {
+		guard Contract.actions.contains(name), !allowed.contains(name) else { return nil }
+		let bundle: String? = await MainActor.run {
+			if let target { return NSRunningApplication(processIdentifier: target)?.bundleIdentifier }
+			// Untargeted input, such as a system key, lands on the frontmost app.
+			return name == "desktop_system_key" ? NSWorkspace.shared.frontmostApplication?.bundleIdentifier : nil
+		}
+		guard isSystemUI(bundleIdentifier: bundle) else { return nil }
+		let what = bundle == "com.apple.systempreferences" ? "System Settings" : "a system permission or password prompt"
+		return "\(code): The input would reach \(what), where only the user may change what agents and apps can do, so nothing was sent. Ask the user to do this step; you may still open and read it."
+	}
+}
+
 extension Tools {
 	/// The refusal for one call from `client`, or nil when it may run: an unapproved caller first, then input that
 	/// could reach Desktop Tools' own UI, then the user's pause. Observing is never paused.
@@ -164,13 +208,15 @@ extension Tools {
 		if let refusal = Callers.shared.refusal(client: client) { return refusal }
 		guard Contract.actions.contains(name) else { return nil }
 		// Clipboard writes can't reach a prompt or menu, so only the pause holds them.
-		if name != "desktop_clipboard_write", Callers.shared.enforcing {
+		if name != "desktop_clipboard_write", Callers.shared.enforcing || Protected.shared.active {
 			let target = await targetProcess(arguments)
-			let ownUIOpen = Callers.shared.asking || OwnUI.promptOrMenuOpen()
+			// A protecting app shows its own prompts and refuses input while they're up; its windows are always open.
+			let ownUIOpen = Callers.shared.enforcing && (Callers.shared.asking || OwnUI.promptOrMenuOpen())
 			if let refusal = OwnUIGuard.refusal(input: true, targetIsOwn: target.map(OwnUI.isOwn) ?? false, ownUIOpen: ownUIOpen) {
 				return refusal
 			}
 		}
+		if let refusal = await SystemUI.refusal(name, arguments: arguments, target: await targetProcess(arguments)) { return refusal }
 		return Pause.shared.isPaused ? Pause.message : nil
 	}
 

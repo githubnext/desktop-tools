@@ -1,4 +1,7 @@
+import Darwin
 @testable import DesktopTools
+import DesktopHost
+import DesktopProtocol
 import Testing
 
 struct AgentIdentityTests {
@@ -25,5 +28,27 @@ struct AgentIdentityTests {
 		#expect(tints.count > 3)
 		#expect(AgentIdentity.make(key: "k", named: nil, words: [], caller: nil).name == "Agent")
 		#expect(AgentIdentity.fnv("a") == 0xaf63_dc4c_8601_ec8c)
+	}
+
+	@Test
+	func `an agent the request names wins over its client, and its kind picks the color`() throws {
+		let request = try JSON(parsing: #"{"key": "thread-1", "name": "  Claude notes  ", "kind": "codex"}"#)
+		let agent = try #require(Hooks.Agent(request))
+		#expect(agent.name == "Claude notes")
+		let identity = AgentIdentity.of(client: getpid(), agent: agent)
+		#expect(identity.name == "Claude notes")
+		#expect(identity.tint == AgentIdentity.codex)
+		#expect(identity.key == "agent:thread-1")
+		#expect(AgentIdentity.of(client: getpid(), agent: Hooks.Agent(key: "thread-2", name: "Lane", kind: "claude")).tint == AgentIdentity.claude)
+		// Each thread gets its own cursor and outline.
+		#expect(AgentIdentity.of(client: getpid(), agent: Hooks.Agent(key: "thread-3", name: "Lane", kind: nil)).key != identity.key)
+	}
+
+	@Test
+	func `a request's agent needs a key and a name`() throws {
+		#expect(Hooks.Agent(try JSON(parsing: #"{"name": "x"}"#)) == nil)
+		#expect(Hooks.Agent(try JSON(parsing: #"{"key": "k", "name": "   "}"#)) == nil)
+		#expect(Hooks.Agent(nil) == nil)
+		#expect(Hooks.Agent(try JSON(parsing: #"{"key": "k", "name": "\#(String(repeating: "a", count: 60))"}"#))?.name.count == 40)
 	}
 }

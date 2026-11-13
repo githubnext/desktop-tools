@@ -60,6 +60,34 @@ public enum Hooks {
 		public let client: pid_t
 		public let process: pid_t
 		public let window: CGWindowID
+		/// The agent the client named for this call, if it named one.
+		public let agent: Agent?
+	}
+
+	/// The agent behind one call, as a client that serves several agents over one connection names it in the
+	/// request (`agent`): an app that runs agents itself, such as AIDE, whose every call comes from its own process.
+	/// It names the cursor and outline, and the agent in a password confirmation, in place of the client process.
+	public struct Agent: Sendable, Equatable {
+		/// Tells agents apart: each key gets its own cursor and outline.
+		public let key: String
+		/// Shown on the cursor and outline, at most 40 characters.
+		public let name: String
+		/// The agent program, such as claude or codex, which picks its color.
+		public let kind: String?
+
+		public init(key: String, name: String, kind: String?) {
+			self.key = key
+			self.name = name
+			self.kind = kind
+		}
+
+		/// From a request's `agent` object: `key` and `name` are required.
+		public init?(_ value: JSON?) {
+			guard let key = value?["key"]?.string, !key.isEmpty, let name = value?["name"]?.string else { return nil }
+			let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+			guard !trimmed.isEmpty else { return nil }
+			self.init(key: String(key.prefix(128)), name: String(trimmed.prefix(40)), kind: value?["kind"]?.string.map { String($0.prefix(40)) })
+		}
 	}
 
 	/// Global Core Graphics points: top-left origin on the primary display. `window` is the exact window the input
@@ -132,6 +160,8 @@ public enum Hooks {
 		public let client: pid_t
 		public let process: pid_t?
 		public let window: Int?
+		/// The agent the client named for this call, if it named one.
+		public let agent: Agent?
 	}
 
 	@TaskLocal public static var call: Call?
@@ -140,16 +170,17 @@ public enum Hooks {
 	static func admitted() {
 		guard let targetWindow, let call, let process = call.process, let window = call.window.flatMap(CGWindowID.init(exactly:))
 		else { return }
-		targetWindow(TargetWindow(client: call.client, process: process, window: window))
+		targetWindow(TargetWindow(client: call.client, process: process, window: window, agent: call.agent))
 	}
 
 	/// Shows `feedback` from a delivery thread, which waits for it at most `pointerLimit`; a late one plays on alone.
 	public static func showPointer(_ feedback: PointerFeedback) {
 		guard let pointer else { return }
-		let client = call?.client
+		let current = call
 		let done = DispatchSemaphore(value: 0)
 		Task {
-			await pointer(feedback, client)
+			// The hook reads the call, such as its named agent, as if it ran in the call's own task.
+			await Hooks.$call.withValue(current) { await pointer(feedback, current?.client) }
 			done.signal()
 		}
 		_ = done.wait(timeout: .now() + pointerLimit)
@@ -181,11 +212,11 @@ public enum Hooks {
 
 extension Tools {
 	/// One call as the server runs it, reported to the hooks.
-	static func observed(_ name: String, arguments: JSON, client: pid_t, verbose: Bool = false) async -> ToolResult {
+	static func observed(_ name: String, arguments: JSON, client: pid_t, agent: Hooks.Agent? = nil, verbose: Bool = false) async -> ToolResult {
 		// Read before dispatch, and only when watched: an action spends its snapshot.
 		let watched = Hooks.operation != nil || Hooks.targetWindow != nil
 		let target = watched ? await Hooks.target(arguments) : (process: nil, window: nil)
-		let result = await Hooks.$call.withValue(Hooks.Call(client: client, process: target.process, window: target.window)) {
+		let result = await Hooks.$call.withValue(Hooks.Call(client: client, process: target.process, window: target.window, agent: agent)) {
 			await call(name, arguments: arguments, client: client, verbose: verbose)
 		}
 		guard watched else { return result }

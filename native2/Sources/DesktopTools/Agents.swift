@@ -32,7 +32,11 @@ struct AgentIdentity: Sendable, Equatable {
 	/// The agent behind `client`, the connected MCP binary: its `DESKTOP_TOOLS_AGENT` name when the server passed one,
 	/// else the program that runs it, as approvals name it. Resolved off the main thread while the client still waits
 	/// for its reply, and kept for a minute, since one client sends many calls.
-	static func of(client: pid_t?) -> AgentIdentity {
+	static func of(client: pid_t?, agent: Hooks.Agent? = nil) -> AgentIdentity {
+		// A client that serves several agents names each call's own, so the cursor and outline follow that agent.
+		if let agent {
+			return make(key: "agent:\(agent.key)", named: agent.name, words: [agent.kind], caller: nil, kind: agent.kind)
+		}
 		guard let client else { return unknown }
 		lock.lock()
 		if let (identity, at) = cache[client], Date().timeIntervalSince(at) < 60 {
@@ -51,8 +55,9 @@ struct AgentIdentity: Sendable, Equatable {
 	}
 
 	/// Claude's orange when its name or program says Claude, Codex's blue when it says Codex, else a color from `key`.
-	static func make(key: String, named: String?, words: [String?], caller: String?) -> AgentIdentity {
-		let text = ([named] + words).compactMap { $0?.lowercased() }.joined(separator: " ")
+	static func make(key: String, named: String?, words: [String?], caller: String?, kind: String? = nil) -> AgentIdentity {
+		// A named kind wins over words in the name, so a Codex thread titled "Claude notes" is still blue.
+		let text = kind.map { $0.lowercased() } ?? ([named] + words).compactMap { $0?.lowercased() }.joined(separator: " ")
 		if text.contains("claude") { return AgentIdentity(key: key, name: named ?? "Claude", tint: claude) }
 		if text.contains("codex") { return AgentIdentity(key: key, name: named ?? "Codex", tint: codex) }
 		return AgentIdentity(key: key, name: named ?? caller ?? "Agent", tint: others[Int(fnv(key) % UInt64(others.count))])

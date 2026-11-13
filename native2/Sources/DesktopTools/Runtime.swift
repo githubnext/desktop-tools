@@ -92,7 +92,7 @@ private final class Desktop {
 	private init() {
 		Hooks.targetWindow = { target in
 			// The requesting client is still waiting for its reply, so its environment is readable now.
-			let agent = AgentIdentity.of(client: target.client)
+			let agent = AgentIdentity.of(client: target.client, agent: target.agent)
 			DispatchQueue.main.async {
 				AgentCursor.shared.target(agent, window: target.window)
 				AgentWindow.shared.target(window: target.window, process: target.process, agent: agent)
@@ -101,7 +101,8 @@ private final class Desktop {
 		Hooks.operation = recordActivity
 		Hooks.secureTextFill = { await PasswordFill.shared.authorize($0) }
 		Hooks.pointer = { feedback, client in
-			let agent = AgentIdentity.of(client: client)
+			// Hooks.showPointer runs this in the call's task, so the call's named agent is still readable.
+			let agent = AgentIdentity.of(client: client, agent: Hooks.call?.agent)
 			await AgentCursor.shared.show(feedback, agent: agent)
 		}
 	}

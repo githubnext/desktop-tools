@@ -27,7 +27,7 @@ let package = Package(
 		// Who is at the other end of the socket, by signature: the host checks its client, and the client its host.
 		.target(name: "DesktopPeer", linkerSettings: [.linkedLibrary("bsm")]),
 		.target(name: "DesktopHost", dependencies: ["DesktopProtocol", "DesktopCore", "DesktopMac", "DesktopPeer"]),
-		.executableTarget(name: "desktop-tools-host", dependencies: ["DesktopHost"]),
+		.executableTarget(name: "desktop-tools-host", dependencies: ["DesktopHost", "DesktopPeer", "DesktopProtocol", "DesktopTools"]),
 		.target(name: "DesktopTools", dependencies: ["DesktopProtocol", "DesktopCore", "DesktopMac", "DesktopHost", "DesktopPeer"]),
 		// How the client and MCP server bundled in the app find its socket, and open the app when nothing serves it.
 		.target(name: "DesktopAppLink", dependencies: ["DesktopPeer"]),

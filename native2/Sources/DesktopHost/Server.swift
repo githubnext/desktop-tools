@@ -189,7 +189,7 @@ private final class Session: @unchecked Sendable {
 					defer { server.end() }
 					let result = await Tools.observed(
 						frame["tool"]?.string ?? "", arguments: frame["arguments"] ?? .object([]), client: client,
-						verbose: frame["verbose"] == .bool(true)
+						agent: Hooks.Agent(frame["agent"]), verbose: frame["verbose"] == .bool(true)
 					)
 					lock.withLock { _ = running.removeValue(forKey: id) }
 					try? connection.send(.object([("id", JSON(id)), ("result", result.mcp)]))
