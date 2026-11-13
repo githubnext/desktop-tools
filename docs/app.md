@@ -78,8 +78,8 @@ node dist/app.js --out build --identity "Developer ID Application: … (TEAM)" -
 
 ## Development
 
-Run development builds with `npm run dev-app`, described in [Install and build](build.md#development-app). It installs one `Desktop Tools Dev.app` (`dev.githubnext.desktop-tools.dev`) at a fixed path and serves `~/.local/state/desktop-tools-dev/desktop.sock`, so it never relinks the installed app's `~/.local/state/desktop-tools/desktop-client` or takes its socket. Point the MCP server at it:
+Run development builds with `npm run dev-app`, described in [Install and build](build.md#development-app). It installs one `Desktop Tools Dev.app` (`dev.githubnext.desktop-tools.dev`) at a fixed path and serves `~/.local/state/desktop-tools-dev/desktop.sock`, so it never relinks the installed app's `~/.local/state/desktop-tools/desktop-client` or takes its socket. Point an agent at its own MCP server, which needs no Node:
 
 ```sh
-DESKTOP_TOOLS_STATE=~/.local/state/desktop-tools-dev node dist/mcp.js
+claude mcp add desktop-dev -- "$HOME/Library/Application Support/desktop-tools/dev/Desktop Tools Dev.app/Contents/MacOS/desktop-tools-mcp"
 ```

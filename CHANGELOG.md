@@ -4,6 +4,10 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Added
+
+- The app's MCP server takes `--name <app>`, the app its instructions and rules name, and by default names the app it ships in, so the development app's server says **Desktop Tools Dev**. Pointed at `Desktop Tools Dev.app/Contents/MacOS/desktop-tools-mcp`, an agent uses the development app without Node; `npm run dev-app` prints that setup. Run outside an app with no host serving, the server now fails with `HOST_NOT_RUNNING` and the socket it tried. ([#237](https://github.com/githubnext/desktop-tools/issues/237))
+
 ### Changed
 
 - Tool descriptions, schemas and the rules they share are declared in Swift, in `native2/Sources/DesktopProtocol/ContractTools.swift`, which the app's MCP server serves. `@githubnext/desktop-tools/tools` and the key and wait-condition lists in `/protocol` are generated from those declarations (`npm run contract`) and export the same values as before. `desktopRequest` no longer checks the exclusive argument forms of `desktop_clipboard_write` and `desktop_dialog_answer` itself: the host refuses them with the same text. `DESKTOP_EXPECT_OPS` lists its ops in tool order. ([#237](https://github.com/githubnext/desktop-tools/issues/237))

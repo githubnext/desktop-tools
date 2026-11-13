@@ -13,7 +13,7 @@ The desktop tools' only native code: a Swift MCP server, host and embedding runt
 | `DesktopHost` | The tools, the snapshot store, the socket server, admission (`Admission.swift`: approved callers, pause, own-UI guard) and the runtime hooks |
 | `desktop-tools-host` | A standalone host, run from a terminal for development; it uses the terminal's macOS grants |
 | `desktop-tools-app` | The Desktop Tools menu bar app, which loads `libDesktopTools.dylib` |
-| `desktop-tools-mcp` | The stdio MCP server, which forwards each call to the host |
+| `desktop-tools-mcp` | The stdio MCP server, which forwards each call to the host: its app's socket, or `--socket`, naming its app, or `--name`, in the instructions. `--contract` prints the tool declarations instead |
 | `desktop-tools-client` | One tool call per run, or every call over one connection with `--serve`, for `createDesktop` and `dist/mcp.js` with options (docs/node.md) |
 | `DesktopTools` | `libDesktopTools.dylib`, the menu bar app's embedding runtime with the C ABI in docs/embed.md: it serves the host's `Server` and draws the agent cursor, window outline and activity list through `DesktopHost/Hooks.swift` |
 
