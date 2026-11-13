@@ -1,34 +1,27 @@
 # Use from an MCP client
 
-`desktop-tools-mcp` (`dist/mcp.js`) serves the desktop tools over stdio MCP, with Ace's native-first guidance as its instructions. By default it uses the [Desktop Tools app](app.md)'s signed client and socket in `~/.local/state/desktop-tools`. Run it from this repository with `npx`, pinned to a release tag, or from a checkout with `node`:
+The [Desktop Tools app](app.md) bundles the MCP server, `Desktop Tools.app/Contents/MacOS/desktop-tools-mcp`, written in Swift. It serves the desktop tools over stdio MCP, with Ace's native-first guidance as its instructions, and needs no Node. Set it up by its path:
 
 ```sh
-claude mcp add desktop -- npx -y --package=github:githubnext/desktop-tools#v0.20.0 desktop-tools-mcp
-claude mcp add desktop -- node <path>/dist/mcp.js
-```
-
-The [README](https://github.com/githubnext/desktop-tools#set-up-for-an-agent) has the setup for Codex and for clients configured with JSON.
-
-The app bundles its own MCP server (since 0.17.0), `Desktop Tools.app/Contents/MacOS/desktop-tools-mcp`, written in Swift. Run with no options, `dist/mcp.js` finds it beside the client the app links and hands stdio over to it, so an `npx` setup needs no change. Any option keeps the Node server, which forwards each call through the host's `desktop-tools-client` as [`createDesktop`](node.md) does; `--wire 2` is accepted for that, and `--wire 1`, the removed Peekaboo stack, is refused. An app from before 0.17.0 has no server of its own and its client speaks the Peekaboo stack's wire, which the Node server no longer does, so every call fails, ending with both versions when they differ: updating the `npx` tag doesn't update the app.
-
-The app's server needs no Node. It serves the socket in its app's state folder (`DESKTOP_TOOLS_STATE`, else the folder its bundle ID chooses), or `--socket <path>`, and names its app in the instructions and rules: the app it ships in, or `--name <app>`. So the [development app](build.md#development-app)'s server, `Desktop Tools Dev.app/Contents/MacOS/desktop-tools-mcp`, serves `~/.local/state/desktop-tools-dev` as **Desktop Tools Dev** with no options.
-
-To use another signed host's grants instead, pass its client, socket, and name. The host must embed the Swift runtime from `native2/`; one that still embeds the Peekaboo stack's can't be served. For Ace Canary:
-
-```sh
-claude mcp add desktop -- node <path>/dist/mcp.js \
-	--client ~/.local/state/ace-canary/desktop-client \
-	--socket ~/.local/state/ace-canary/desktop.sock \
-	--name "Ace Canary"
+claude mcp add desktop -- "/Applications/Desktop Tools.app/Contents/MacOS/desktop-tools-mcp"
 ```
 
 For Codex, in `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.desktop]
-command = "npx"
-args = ["-y", "--package=github:githubnext/desktop-tools#v0.20.0", "desktop-tools-mcp"]
+command = "/Applications/Desktop Tools.app/Contents/MacOS/desktop-tools-mcp"
 ```
+
+The [README](https://github.com/githubnext/desktop-tools#set-up-for-an-agent) has the setup for clients configured with JSON.
+
+The server serves the socket in its app's state folder (`DESKTOP_TOOLS_STATE`, else the folder its bundle ID chooses), or `--socket <path>`, and names its app in the instructions and rules: the app it ships in, or `--name <app>`. So the [development app](build.md#development-app)'s server, `Desktop Tools Dev.app/Contents/MacOS/desktop-tools-mcp`, serves `~/.local/state/desktop-tools-dev` as **Desktop Tools Dev** with no options. A signed host serves only its own app's programs, so another app's grants are used through that app's own `desktop-tools-mcp`, which an [embedding app](embed.md) can ship beside its client.
+
+## npx setups
+
+`npx -y --package=github:githubnext/desktop-tools#v0.20.0 desktop-tools-mcp` (Node 22 or later) also works. It runs only a launcher, `dist/mcp.js`, which finds the app's server beside the client the app links in its state folder and hands stdin and stdout over to it; no MCP traffic passes through Node. `--client <App>.app/Contents/MacOS/desktop-tools-client` runs that app's server instead, and `--socket` and `--name` are passed on to it. `--wire 2` is accepted and ignored, and `--wire 1`, the removed Peekaboo stack, is refused.
+
+When there is no server to hand over to, the launcher exits with a message instead: no app has linked its client, the app is from before 0.17.0 and has no server of its own (the message names its version and the release to install), or `--client` names an embedder's app that ships no `desktop-tools-mcp`. Updating the `npx` tag doesn't update the app, which holds the macOS permissions. A setup pinned before v0.17.0 is refused with `CLIENT_OUTDATED`, so update its tag, or better, point it at the app's server.
 
 The tool names, descriptions, and argument schemas are declared in Swift (`native2/Sources/DesktopProtocol/ContractTools.swift`), and `@githubnext/desktop-tools/tools` (`desktopTools`, `desktopRequest`) exports them, generated from that file, for Ace's `desktop_*` tools and other embedders. [Tools](tools.md) lists them. The descriptions don't repeat the rules every tool shares: exact targets, single-use snapshots, background and foreground input, what each outcome means, pausing, `desktop_wait` and `expect`, and the recipes. `desktopToolRules(app)` returns those rules, and the server adds them to its instructions; a host with its own agent guidance should include them too.
 

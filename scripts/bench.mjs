@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Times read-only tools through any MCP server, so two builds or releases run the same scenarios.
 import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { parseArgs } from "node:util";
 
@@ -18,7 +18,7 @@ const { values } = parseArgs({
 if (values.help || !values.server?.length) {
 	console.log(`Usage: node scripts/bench.mjs --server "<command>" [--server "<command>"] [--runs 20] [--only apps,windows] [--json <path>]
 
-Each server command is split on spaces and spoken to over stdio. Only read-only tools run.`);
+Each server command is split on spaces, unless it names an existing file, and spoken to over stdio. Only read-only tools run.`);
 	process.exit(values.help ? 0 : 1);
 }
 const runs = Number(values.runs);
@@ -26,7 +26,8 @@ const only = values.only ? new Set(values.only.split(",")) : undefined;
 
 class Mcp {
 	constructor(command) {
-		const [file, ...args] = command.split(" ").filter(Boolean);
+		// A command that names an existing file runs as is, so a path may contain spaces.
+		const [file, ...args] = existsSync(command) ? [command] : command.split(" ").filter(Boolean);
 		this.next = 1;
 		this.waiting = new Map();
 		this.child = spawn(file, args, { stdio: ["pipe", "pipe", "inherit"] });

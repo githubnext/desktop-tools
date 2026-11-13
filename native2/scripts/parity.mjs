@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Runs the same tool calls through two MCP servers and prints where their results differ: by default this checkout's
-// release build and `node dist/mcp.js`, which hands over to the installed app's bundled server, so a change is checked
-// against the last release.
+// release build and the installed app's own server, so a change is checked against the last release. A command that
+// names an existing file is run as is, so a path may contain spaces.
 //
 //   node native2/scripts/parity.mjs calls <file.json>   each [tool, args], sent as is
 //   node native2/scripts/parity.mjs steps <file.json>   each [tool, args] after a fresh inspect of the fixture window
@@ -16,14 +16,14 @@
 // start identities, the route (local, or bridge from servers before the cutover), timings and the observation's own fields are ignored, so an
 // action compares by its action object and the observation's field names.
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 const { values, positionals } = parseArgs({
 	allowPositionals: true,
 	options: {
 		server: { type: "string", default: "native2/.build/release/desktop-tools-mcp" },
-		baseline: { type: "string", default: "node dist/mcp.js" },
+		baseline: { type: "string", default: "/Applications/Desktop Tools.app/Contents/MacOS/desktop-tools-mcp" },
 		app: { type: "string", default: "fixture" },
 		window: { type: "string", default: "Click Fixture" },
 		window2: { type: "string" },
@@ -39,7 +39,7 @@ if (!["calls", "steps"].includes(mode) || !file) {
 const entries = JSON.parse(readFileSync(file, "utf8"));
 
 function server(command) {
-	const [executable, ...args] = command.split(" ").filter(Boolean);
+	const [executable, ...args] = existsSync(command) ? [command] : command.split(" ").filter(Boolean);
 	const child = spawn(executable, args, { stdio: ["pipe", "pipe", "inherit"] });
 	const waiting = new Map();
 	let buffer = "", next = 1;

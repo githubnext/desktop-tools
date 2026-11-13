@@ -3,9 +3,9 @@
 // It works only on fixtures it creates and windows it opens, and closes them at the end, even on failure.
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { deflateSync } from "node:zlib";
@@ -25,8 +25,8 @@ if (values.help) {
 	console.log(`Usage: npm run live-check -- [--only <pr>[,<pr>]] [--list] [--json <path>] [--keep-fixtures] [--server <path>]
 
 Drives the installed Desktop Tools, or the dev app whose state folder is DESKTOP_TOOLS_STATE
-(~/.local/state/desktop-tools-dev for npm run dev-app), through dist/mcp.js, or through the MCP server executable
---server names. Refuses to run while the screen is locked. See docs/live-checks.md.`);
+(~/.local/state/desktop-tools-dev for npm run dev-app), through that app's own MCP server, or through the MCP server
+executable --server names. Refuses to run while the screen is locked. See docs/live-checks.md.`);
 	process.exit(0);
 }
 const only = new Set((values.only ?? []).flatMap((v) => v.split(",")).map((v) => v.trim().replace(/^#/, "")).filter(Boolean));
@@ -41,12 +41,23 @@ const STATE = process.env.DESKTOP_TOOLS_STATE || join(homedir(), ".local", "stat
 
 // ---------- MCP client ----------
 
+/** The MCP server of the app whose client STATE links, as agents set it up: <App>.app/Contents/MacOS/desktop-tools-mcp. */
+function appServer() {
+	let client;
+	try {
+		client = realpathSync(join(STATE, "desktop-client"));
+	} catch {
+		throw new Error(`No app has linked its client at ${join(STATE, "desktop-client")}; open it, or pass --server.`);
+	}
+	return join(dirname(client), "desktop-tools-mcp");
+}
+
 class Mcp {
 	/** `launcher` runs the server under another program, which the host then sees as its caller. */
 	constructor(launcher = []) {
 		this.next = 1;
 		this.waiting = new Map();
-		const server = values.server ? [values.server] : [process.execPath, new URL("../dist/mcp.js", import.meta.url).pathname];
+		const server = [values.server ?? appServer()];
 		const command = [...launcher, ...server];
 		this.child = spawn(command[0], command.slice(1), {
 			stdio: ["pipe", "pipe", "inherit"],

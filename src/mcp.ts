@@ -1,207 +1,69 @@
 #!/usr/bin/env node
+// desktop-tools-mcp for npx setups and checkouts: it runs the Desktop Tools app's own MCP server, written in Swift, and
+// hands stdin and stdout over to it. No MCP traffic passes through Node. Point the MCP config at the app's
+// `desktop-tools-mcp` directly to need no Node at all (#237).
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { constants as osConstants, homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
-
-import { type DesktopConfig, createDesktop } from "./client.js";
-import { type DesktopRequest, isDesktopAction } from "./protocol.js";
-import { type DesktopTool, desktopRequest, desktopToolRules, desktopTools } from "./tools.js";
 
 const { values } = parseArgs({
 	options: { client: { type: "string" }, socket: { type: "string" }, name: { type: "string" }, wire: { type: "string" } },
 	strict: true,
 });
-// Desktop Tools.app links its client and serves its socket here; pass all three to use another host app.
-const state = process.env.DESKTOP_TOOLS_STATE || join(homedir(), ".local", "state", "desktop-tools");
-
-// The app bundles its own MCP server beside the client it links (0.17.0 and later), so existing npx configs hand over to
-// it. Any option keeps this server, which forwards each call through that client, as does an app without one.
-const bundled = (() => {
-	try {
-		return join(dirname(realpathSync(join(state, "desktop-client"))), "desktop-tools-mcp");
-	} catch {
-		return undefined;
-	}
-})();
-if (Object.keys(values).length === 0 && bundled && existsSync(bundled)) {
-	const server = spawn(bundled, [], { stdio: "inherit" });
-	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, () => server.kill(signal));
-	server.on("error", (error) => {
-		process.stderr.write(`Cannot run ${bundled}: ${error.message}\n`);
-		process.exit(1);
-	});
-	server.on("exit", (code, signal) => process.exit(code ?? (signal ? 128 + osConstants.signals[signal] : 1)));
-	// The bundled server owns stdin and stdout from here.
-	await new Promise<never>(() => {});
-}
-const {
-	client = join(state, "desktop-client"),
-	socket = join(state, "desktop.sock"),
-	name: host = "Desktop Tools",
-} = values;
-// --wire 2 chose the Swift host's wire while the Peekaboo stack's was the default. It is the only wire now, but the option
-// still keeps this server instead of handing over.
+// --wire 2 chose the Swift host's wire while the Peekaboo stack's was the default; it is the only wire now.
 if (values.wire !== undefined && values.wire !== "2") {
 	throw new Error("--wire 1 was the Peekaboo stack, which is gone; pass --wire 2 or leave it out.");
 }
-const config: DesktopConfig = { client, socket, name: host };
-const desktop = createDesktop(config);
-const { version } = JSON.parse(
-	readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-) as { version: string };
+const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 
-// An app from before 0.17.0 bundles no MCP server, so this one stays, and an npx tag updated without the app runs
-// against an older client and host (#179), whose Peekaboo wire this server no longer speaks. Every failed call names
-// both versions, since nothing else shows the skew.
-const app = (() => {
+// Desktop Tools.app links its client here. --client names another app's, as <App>.app/Contents/MacOS/desktop-tools-client;
+// that app's own server, beside it, is the one that serves it, since a signed host serves only its own app's programs.
+const state = process.env.DESKTOP_TOOLS_STATE || join(homedir(), ".local", "state", "desktop-tools");
+const client = values.client ?? join(state, "desktop-client");
+const linked = (() => {
 	try {
-		// <App>.app/Contents/MacOS/desktop-tools-client
-		const contents = dirname(dirname(realpathSync(client)));
-		if (!contents.endsWith(".app/Contents")) return undefined;
-		const plist = readFileSync(join(contents, "Info.plist"), "utf8");
-		const found = /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/.exec(plist);
-		return found ? { path: dirname(contents), version: found[1]! } : undefined;
+		return realpathSync(client);
 	} catch {
 		return undefined;
 	}
 })();
-const skew = app && app.version !== version
-	? `${app.path} is version ${app.version}, but this MCP server is ${version}. Updating the npx tag doesn't update the app, `
-		+ `which holds the macOS permissions: ask the user to install Desktop Tools ${version} from its GitHub release, or to pin `
-		+ `the MCP server to v${app.version}.`
-	: undefined;
-if (skew) process.stderr.write(`desktop-tools-mcp: ${skew}\n`);
+const server = linked && join(dirname(linked), "desktop-tools-mcp");
 
-// Newest first; an unsupported client version gets the newest, as the MCP lifecycle requires.
-const VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
-
-// Guidance mirrors Ace's desktop extension so agents behave alike; tools and their shared rules come from the shared definitions.
-const instructions = [
-	`Use desktop_* tools to observe and operate native apps on this Mac through ${host}, which holds the macOS permissions.`,
-	"Shell commands remain appropriate for builds, files, and preparing clipboard fixtures directly.",
-	"",
-	"Do not silently substitute AppleScript, osascript, System Events, or self-built Accessibility or CGEvent programs for desktop tools.",
-	"Apple Events can raise a separate macOS Automation prompt for each target app, attributed to the calling terminal or agent; Accessibility and Screen Recording grants do not cover them.",
-	"Custom input programs bypass the desktop tools' snapshot and exact-target checks, even when they raise no permission prompt.",
-	"Before using a fallback, tell the user which native tool or capability cannot do the step and why the fallback is needed, including any Automation prompts it can trigger.",
-	"Use the user's existing authorization; this guidance adds no separate approval requirement.",
-	"",
-	"Action results start with their outcome: completed, refused, or unknown.",
-	"For a refusal before dispatch, follow its concrete recovery hint once when applicable, then refresh the observation; a refusal alone does not prove the capability is missing.",
-	"After completed, interrupted, or uncertain input, inspect the current target before deciding whether another action is needed. Never replay input just because its follow-up observation failed.",
-	"",
-	...desktopToolRules(host),
-].join("\n");
-
-const tools = desktopTools({ place: "this Mac", app: host });
-const byName = new Map(tools.map((tool) => [tool.name, tool]));
-const listed = tools.map(({ name, op, description, parameters }) => ({
-	name,
-	description,
-	inputSchema: parameters,
-	annotations: { readOnlyHint: !isDesktopAction({ op } as DesktopRequest) },
-}));
-
-// The host labels the window in use with the agent's name; unknown clients show as "Agent".
-const AGENTS: [RegExp, string][] = [
-	[/claude/i, "Claude"],
-	[/codex/i, "Codex"],
-	[/cursor/i, "Cursor"],
-	[/gemini/i, "Gemini"],
-	[/copilot/i, "Copilot"],
-];
-function agentName(info: unknown): string | undefined {
-	const { name, title } = (info ?? {}) as { name?: unknown; title?: unknown };
-	const known = AGENTS.find(([pattern]) => typeof name === "string" && pattern.test(name));
-	if (known) return known[1];
-	return typeof title === "string" && title.trim() ? title.trim().slice(0, 40) : undefined;
-}
-
-type Id = string | number;
-type Message = { jsonrpc: "2.0"; id?: Id; method?: string; params?: Record<string, unknown> };
-type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
-
-const send = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
-const fail = (id: Id | null, code: number, message: string) =>
-	send({ jsonrpc: "2.0", id, error: { code, message } });
-
-const running = new Map<Id, AbortController>();
-// Actions run one at a time, as in Ace; each input depends on the state the previous one left.
-let actions: Promise<unknown> = Promise.resolve();
-
-async function call(tool: DesktopTool, args: Record<string, unknown>, signal: AbortSignal) {
-	try {
-		const result = await desktop(desktopRequest(tool, args), signal);
-		const content: Content[] = [{ type: "text", text: result.text }];
-		if (result.outcome) content.unshift({ type: "text", text: `Outcome: ${result.outcome}.` });
-		if (result.image) content.push({ type: "image", ...result.image });
-		if (result.isError && skew) content.push({ type: "text", text: skew });
-		return { content, isError: result.isError || false };
-	} catch (error) {
-		const text = error instanceof Error ? error.message : String(error);
-		return { content: [{ type: "text", text }, ...(skew ? [{ type: "text", text: skew } as const] : [])], isError: true };
-	}
-}
-
-async function handle(message: Message) {
-	const { id, method, params = {} } = message;
-	// This server sends no requests, so a message without a method is a stray response.
-	if (!method) return;
-	if (id === undefined) {
-		if (method === "notifications/cancelled") {
-			running.get(params.requestId as Id)?.abort(new Error(String(params.reason || "Cancelled.")));
+if (!server || !existsSync(server)) {
+	const releases = `https://github.com/githubnext/desktop-tools/releases/tag/v${version}`;
+	// <App>.app/Contents/MacOS/desktop-tools-client
+	const contents = linked && dirname(dirname(linked));
+	const plist = (() => {
+		try {
+			return contents?.endsWith(".app/Contents") ? readFileSync(join(contents, "Info.plist"), "utf8") : undefined;
+		} catch {
+			return undefined;
 		}
-		return;
-	}
-	if (method === "initialize") {
-		const requested = String(params.protocolVersion);
-		config.agent = agentName(params.clientInfo);
-		return send({
-			jsonrpc: "2.0",
-			id,
-			result: {
-				protocolVersion: VERSIONS.includes(requested) ? requested : VERSIONS[0],
-				capabilities: { tools: {} },
-				serverInfo: { name: "desktop-tools", version },
-				instructions,
-			},
-		});
-	}
-	if (method === "ping") return send({ jsonrpc: "2.0", id, result: {} });
-	if (method === "tools/list") return send({ jsonrpc: "2.0", id, result: { tools: listed } });
-	if (method !== "tools/call") return fail(id, -32601, `Method not found: ${method}`);
-	const tool = byName.get(String(params.name));
-	if (!tool) return fail(id, -32602, `Unknown tool: ${params.name}`);
-	const args = (params.arguments || {}) as Record<string, unknown>;
-	const controller = new AbortController();
-	running.set(id, controller);
-	const { signal } = controller;
-	let pending: Promise<unknown>;
-	if (isDesktopAction({ op: tool.op } as DesktopRequest)) {
-		pending = actions.then(() => call(tool, args, signal));
-		actions = pending;
-	} else {
-		pending = call(tool, args, signal);
-	}
-	const result = await pending;
-	running.delete(id);
-	// A cancelled request gets no response.
-	if (!signal.aborted) send({ jsonrpc: "2.0", id, result });
+	})();
+	const appVersion = plist && /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
+	const appName = plist && /<key>CFBundleName<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
+	const found = !linked
+		? `No Desktop Tools app has linked its client at ${client}: install and open Desktop Tools ${version} (${releases}).`
+		: appName && !appName.startsWith("Desktop Tools")
+		// An embedder's app serves MCP only if it bundles desktop-tools-mcp beside its client (docs/embed.md).
+		? `${appName} bundles no desktop-tools-mcp beside ${linked}, so it can't serve the desktop tools over MCP. `
+			+ "An embedding app can ship desktop-tools-mcp from a native build beside its client (docs/embed.md)."
+		: `${dirname(contents!)} is version ${appVersion ?? "unknown"}, which has no MCP server of its own (0.17.0 and later `
+			+ `bundle one): install Desktop Tools ${version} (${releases}).`;
+	process.stderr.write(
+		`desktop-tools-mcp: ${found} Then set the MCP server up as "/Applications/Desktop Tools.app/Contents/MacOS/desktop-tools-mcp", `
+			+ "which needs no Node.\n",
+	);
+	process.exit(1);
 }
 
-createInterface({ input: process.stdin }).on("line", (line) => {
-	if (!line.trim()) return;
-	let message: Message;
-	try {
-		message = JSON.parse(line) as Message;
-	} catch {
-		return fail(null, -32700, "Parse error");
-	}
-	if (!message || typeof message !== "object" || Array.isArray(message)) {
-		return fail(null, -32600, "Invalid request");
-	}
-	void handle(message);
+const args = [...(values.socket ? ["--socket", values.socket] : []), ...(values.name ? ["--name", values.name] : [])];
+const child = spawn(server, args, { stdio: "inherit" });
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, () => child.kill(signal));
+child.on("error", (error) => {
+	process.stderr.write(`desktop-tools-mcp: Cannot run ${server}: ${error.message}\n`);
+	process.exit(1);
 });
+child.on("exit", (code, signal) => process.exit(code ?? (signal ? 128 + osConstants.signals[signal] : 1)));
