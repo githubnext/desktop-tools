@@ -11,6 +11,8 @@ The [README](https://github.com/githubnext/desktop-tools#set-up-for-an-agent) ha
 
 The app bundles its own MCP server (since 0.17.0), `Desktop Tools.app/Contents/MacOS/desktop-tools-mcp`, written in Swift. Run with no options, `dist/mcp.js` finds it beside the client the app links and hands stdio over to it, so an `npx` setup needs no change. Any option keeps the Node server, which forwards each call through the host's `desktop-tools-client` as [`createDesktop`](node.md) does; `--wire 2` is accepted for that, and `--wire 1`, the removed Peekaboo stack, is refused. An app from before 0.17.0 has no server of its own and its client speaks the Peekaboo stack's wire, which the Node server no longer does, so every call fails, ending with both versions when they differ: updating the `npx` tag doesn't update the app.
 
+The app's server needs no Node. It serves the socket in its app's state folder (`DESKTOP_TOOLS_STATE`, else the folder its bundle ID chooses), or `--socket <path>`, and names its app in the instructions and rules: the app it ships in, or `--name <app>`. So the [development app](build.md#development-app)'s server, `Desktop Tools Dev.app/Contents/MacOS/desktop-tools-mcp`, serves `~/.local/state/desktop-tools-dev` as **Desktop Tools Dev** with no options.
+
 To use another signed host's grants instead, pass its client, socket, and name. The host must embed the Swift runtime from `native2/`; one that still embeds the Peekaboo stack's can't be served. For Ace Canary:
 
 ```sh

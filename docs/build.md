@@ -42,7 +42,7 @@ npm run dev-app            # build, sign, install and open
 npm run dev-app -- --stop  # quit it
 ```
 
-The app bundles the Swift MCP server, `Desktop Tools Dev.app/Contents/MacOS/desktop-tools-mcp`, which finds the app's socket and opens the app in the background when nothing serves it. `DESKTOP_TOOLS_STATE=~/.local/state/desktop-tools-dev node dist/mcp.js` hands over to it.
+The app bundles the Swift MCP server, `Desktop Tools Dev.app/Contents/MacOS/desktop-tools-mcp`, which finds the app's socket and opens the app in the background when nothing serves it. It names itself **Desktop Tools Dev** in its instructions, and needs no Node: `npm run dev-app` prints the `claude mcp add` line for it.
 
 Every checkout and worktree installs the same `~/Library/Application Support/desktop-tools/dev/Desktop Tools Dev.app`. It has its own bundle identity, `dev.githubnext.desktop-tools.dev`, nested under the release app's, and the name **Desktop Tools Dev**. Building quits the running copy, replaces the bundle in place and opens it again through LaunchServices with `open`. Launching its executable directly can attribute permission checks to the launching terminal or agent instead of the app.
 

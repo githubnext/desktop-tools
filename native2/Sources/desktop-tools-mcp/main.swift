@@ -13,8 +13,14 @@ if arguments.contains("--contract") {
 }
 /// The app this server ships in, whose host it serves through, and opens in the background when nothing serves.
 let app = HostApp.containing()
-let socketPath = arguments.firstIndex(of: "--socket").flatMap { arguments.dropFirst($0 - arguments.startIndex + 1).first }
+/// The value after `option`, as in `--socket <path>`.
+func option(_ name: String) -> String? {
+	arguments.firstIndex(of: name).flatMap { arguments.dropFirst($0 - arguments.startIndex + 1).first }
+}
+let socketPath = option("--socket")
 	?? ((app?.stateFolder ?? defaultStateFolder()) as NSString).appendingPathComponent("desktop.sock")
+/// The app named in the instructions and rules, whose menu pauses input: --name, else the app this server ships in.
+let appName = option("--name") ?? app?.name ?? "Desktop Tools"
 // The package version the app was built from; a server outside an app has none.
 let serverVersion = app.flatMap { Bundle(url: $0.url)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String } ?? "0.0.0"
 
@@ -31,14 +37,8 @@ func agentName(_ info: JSON?) -> String? {
 	return String(title.prefix(40))
 }
 
-let tools: JSON = .array((Contract.tools.array ?? []).map { tool in
-	.object([
-		("name", tool["name"] ?? .null),
-		("description", tool["description"] ?? .null),
-		("inputSchema", tool["inputSchema"] ?? .null),
-		("annotations", tool["annotations"] ?? .null),
-	])
-})
+let tools = Contract.listed(place: "this Mac", app: appName)
+let instructions = Contract.instructions(app: appName)
 
 let output = NSLock()
 func send(_ value: JSON) {
@@ -206,7 +206,7 @@ func call(_ key: String, tool: String, arguments: JSON) async -> JSON {
 		)
 	} catch let error as WireError {
 		if case .system("connect", _) = error {
-			return errorResult("The Desktop Tools 2 host isn't serving at \(socketPath). Start it with: native2/.build/debug/desktop-tools-host")
+			return errorResult("HOST_NOT_RUNNING: Nothing is serving \(socketPath), so nothing ran. This server runs outside an app: start a host with native2/.build/debug/desktop-tools-host, or pass --socket.")
 		}
 		// The request may have reached the host, which can stop or restart mid-call. An action may then have taken
 		// effect, as a desktop_open whose host stopped after Xcode opened the file did (#244), so it is unknown, never
@@ -247,7 +247,7 @@ func handle(_ message: JSON) async {
 			("protocolVersion", JSON(versions.contains(requested) ? requested : versions[0])),
 			("capabilities", .object([("tools", .object([]))])),
 			("serverInfo", .object([("name", "desktop-tools"), ("version", JSON(serverVersion))])),
-			("instructions", JSON(Contract.instructions)),
+			("instructions", JSON(instructions)),
 		]))]))
 	case "ping":
 		send(.object([("jsonrpc", "2.0"), ("id", id), ("result", .object([]))]))

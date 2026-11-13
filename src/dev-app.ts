@@ -100,7 +100,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 		console.log(devApp);
 		if (!values["no-open"]) {
 			const state = launch();
-			console.log(`Serving ${join(state, "desktop.sock")}. Use it with: DESKTOP_TOOLS_STATE=${state} node dist/mcp.js`);
+			const server = join(devApp, "Contents", "MacOS", "desktop-tools-mcp");
+			// The app's own server finds its state folder from its bundle ID; only a custom one has to be passed on.
+			const env = process.env.DESKTOP_TOOLS_STATE ? `-e DESKTOP_TOOLS_STATE=${state} ` : "";
+			console.log(`Serving ${join(state, "desktop.sock")}. Add its MCP server with: claude mcp add desktop-dev ${env}-- "${server}"`);
 		}
 	}
 }
