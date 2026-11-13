@@ -3,6 +3,10 @@ id: 01M7975EN9Y94PY508R9YP15Y3
 anchor: '@file'
 created: 2026-11-13T01:08:16Z
 norm: '1'
+sig: 78473a106add9cfc
+body_hash: a87250ce9513086f
+raw_hash: 2c4435891c3ad43e
+lines: 1-982
 supersedes: 01M6EGHDDEY51YSVQ7T6TS53SX
 ---
 
