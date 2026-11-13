@@ -4,6 +4,10 @@ Notable changes to Desktop Tools, newest first. Each release's GitHub release no
 
 ## [Unreleased]
 
+### Changed
+
+- Tool descriptions, schemas and the rules they share are declared in Swift, in `native2/Sources/DesktopProtocol/ContractTools.swift`, which the app's MCP server serves. `@githubnext/desktop-tools/tools` and the key and wait-condition lists in `/protocol` are generated from those declarations (`npm run contract`) and export the same values as before. `desktopRequest` no longer checks the exclusive argument forms of `desktop_clipboard_write` and `desktop_dialog_answer` itself: the host refuses them with the same text. `DESKTOP_EXPECT_OPS` lists its ops in tool order. ([#237](https://github.com/githubnext/desktop-tools/issues/237))
+
 ## [0.20.0] - 2026-11-02
 
 ### Added

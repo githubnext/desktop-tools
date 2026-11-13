@@ -5,6 +5,9 @@ import Foundation
 
 /// Runs one MCP tool call in the host, which is the process macOS's grants attach to.
 public enum Tools {
+	/// The actions whose bad argument comes back as a refused action, as Node's action runner reported it. Not the same as
+	/// Contract.actions, which also counts desktop_system_key, desktop_switch_space, desktop_input_source, desktop_set_cell,
+	/// desktop_dock and desktop_notification_action (#237).
 	static let actionTools: Set = [
 		"desktop_click", "desktop_key", "desktop_type", "desktop_scroll", "desktop_drag", "desktop_hover", "desktop_press", "desktop_set_value",
 		"desktop_element_action", "desktop_select", "desktop_insert", "desktop_fill_password", "desktop_clipboard_write",
@@ -12,7 +15,8 @@ public enum Tools {
 		"desktop_launch", "desktop_open", "desktop_activate", "desktop_hide", "desktop_unhide", "desktop_quit", "desktop_close",
 		"desktop_focus", "desktop_minimize", "desktop_restore", "desktop_maximize", "desktop_fullscreen", "desktop_move", "desktop_resize",
 	]
-	static let expectTools: Set = ["desktop_click", "desktop_key", "desktop_system_key", "desktop_drag", "desktop_insert"]
+	/// The tools whose schema takes expect, from their declarations.
+	static var expectTools: Set<String> { Contract.expecting }
 
 	/// Returns native results whole, with detection metadata, timings, receipts and every window, instead of the
 	/// compact shape written for models, as Node's `DESKTOP_TOOLS_VERBOSE=1` does.

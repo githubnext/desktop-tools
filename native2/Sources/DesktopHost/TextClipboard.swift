@@ -3,7 +3,7 @@ import DesktopMac
 import DesktopProtocol
 import Foundation
 
-// desktop_clipboard_read and desktop_clipboard_write, with Node's argument checks from src/tools.ts and
+// desktop_clipboard_read and desktop_clipboard_write, with Node's argument checks from the old src/tools.ts and
 // src/client.ts, and the save step from src/capture-file.ts's saveClipboardImage.
 
 /// File extensions a clipboard image may be saved with, by its type.

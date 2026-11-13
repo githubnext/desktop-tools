@@ -1,6 +1,6 @@
 # Tools
 
-The [MCP server](mcp.md) and `desktopTools()` expose 48 tools, one per protocol operation. Each tool's description in `src/tools.ts` says, in a few sentences, what it does, whether it is foreground or background input, when its result is `completed` rather than `unknown`, and its main refusal and recovery. Rules shared by every tool, such as single-use snapshots and never replaying input, are in the MCP server's instructions. This page holds the details. The client validates every argument, so the schemas name fields and keep only the limits that help choose values.
+The [MCP server](mcp.md) and `desktopTools()` expose 48 tools, one per protocol operation. Each tool's description, declared in `native2/Sources/DesktopProtocol/ContractTools.swift`, says, in a few sentences, what it does, whether it is foreground or background input, when its result is `completed` rather than `unknown`, and its main refusal and recovery. Rules shared by every tool, such as single-use snapshots and never replaying input, are in the MCP server's instructions. This page holds the details. The client validates every argument, so the schemas name fields and keep only the limits that help choose values.
 
 [Recipes](recipes.md) give tool sequences, derived from the code, for tasks that take several calls, such as printing to PDF, installing from a DMG or filling a web form.
 
@@ -53,7 +53,7 @@ The wait polls with backoff, from 200 ms up to 2 seconds between polls, for `tim
   - If it doesn't hold in time, the outcome stays `unknown`, with `expectation.last_observation`.
 - **Completed or refused outcome.** The result comes back as it is, with no polling.
 
-The input is sent once and never repeated. Another action opts in by adding its tool to `expectTools` in `native2/Sources/DesktopHost/Tools.swift` and `expect` to its schema in `src/tools.ts`.
+The input is sent once and never repeated. Another action opts in by adding `expect` to its schema in `native2/Sources/DesktopProtocol/ContractTools.swift`; the host reads which tools take it from there.
 
 ## Result shape
 

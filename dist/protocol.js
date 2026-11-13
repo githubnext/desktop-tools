@@ -1,94 +1,19 @@
-// Runtime-neutral request and result contract: no imports, so channels and Workers can share it.
+// Runtime-neutral request and result contract: it imports only the generated tool contract, plain data, so channels and
+// Workers can share it.
+import { contract } from "./contract.js";
 /** The conditions desktop_wait can wait for, one per call. */
-export const DESKTOP_WAIT_CONDITIONS = [
-    "window_appears",
-    "window_gone",
-    "dialog_appears",
-    "dialog_gone",
-    "element_appears",
-    "element_gone",
-    "text_changes",
-    "text_equals",
-    "text_contains",
-    "app_running",
-    "app_frontmost",
-    "app_quit",
-];
-/** The actions that take expect; others opt in by joining this list and their tool's schema. */
-export const DESKTOP_EXPECT_OPS = ["click", "key", "system-key", "drag", "insert"];
+export const DESKTOP_WAIT_CONDITIONS = contract.waitConditions;
+/** The actions that take expect: those whose tool declares it in ContractTools.swift. */
+export const DESKTOP_EXPECT_OPS = contract.tools
+    .filter((tool) => "expect" in tool.parameters.properties)
+    .map((tool) => tool.op);
 export const DESKTOP_CLICKS = ["single", "double", "right", "middle", "triple"];
 export const DESKTOP_DIRECTIONS = ["up", "down", "left", "right"];
 export const DESKTOP_BUTTONS = ["left", "right"];
-/** Keys that type no character, named; every other key is given as the character it types. */
 /** Media, volume and brightness keys, which the system rather than a window acts on. */
-export const DESKTOP_SYSTEM_KEYS = [
-    "play_pause",
-    "next_track",
-    "previous_track",
-    "volume_up",
-    "volume_down",
-    "mute",
-    "brightness_up",
-    "brightness_down",
-    "keyboard_brightness_up",
-    "keyboard_brightness_down",
-];
-export const DESKTOP_KEYS = [
-    "enter",
-    "return",
-    "tab",
-    "escape",
-    "backspace",
-    "delete",
-    "up",
-    "down",
-    "left",
-    "right",
-    "space",
-    "home",
-    "end",
-    "pageup",
-    "pagedown",
-    "help",
-    "f1",
-    "f2",
-    "f3",
-    "f4",
-    "f5",
-    "f6",
-    "f7",
-    "f8",
-    "f9",
-    "f10",
-    "f11",
-    "f12",
-    "f13",
-    "f14",
-    "f15",
-    "f16",
-    "f17",
-    "f18",
-    "f19",
-    "f20",
-    "keypad0",
-    "keypad1",
-    "keypad2",
-    "keypad3",
-    "keypad4",
-    "keypad5",
-    "keypad6",
-    "keypad7",
-    "keypad8",
-    "keypad9",
-    "keypaddecimal",
-    "keypadmultiply",
-    "keypadplus",
-    "keypadminus",
-    "keypaddivide",
-    "keypadequals",
-    "keypadenter",
-    "keypadclear",
-];
+export const DESKTOP_SYSTEM_KEYS = contract.systemKeys;
+/** Keys that type no character, named; every other key is given as the character it types. */
+export const DESKTOP_KEYS = contract.keys;
 export const DESKTOP_MODIFIERS = ["command", "control", "option", "shift"];
 export const DESKTOP_SELECTIONS = ["text", "cursor_before", "cursor_after"];
 /** Named Accessibility actions; AXPress is desktop_click's route and is not listed separately. */
@@ -102,16 +27,10 @@ export const DESKTOP_ELEMENT_ACTIONS = [
     "AXRaise",
     "AXScrollToVisible",
 ];
+const ACTION_OPS = new Set(contract.tools.filter((tool) => tool.action).map((tool) => tool.op));
+/** Whether the request changes state, as its tool declares in ContractTools.swift. */
 export function isDesktopAction(request) {
-    return request.op === "click" || request.op === "type" || request.op === "fill-password" || request.op === "key"
-        || request.op === "system-key" || request.op === "switch-space" || request.op === "input-source"
-        || request.op === "insert" || request.op === "select" || request.op === "scroll"
-        || request.op === "drag" || request.op === "hover" || request.op === "press"
-        || request.op === "clipboard-write" || request.op === "launch"
-        || request.op === "element-action" || request.op === "set-value" || request.op === "set-cell"
-        || request.op === "open" || request.op === "menu" || request.op === "dialog-answer"
-        || request.op === "menubar-click" || request.op === "dock"
-        || request.op === "notification-action" || isDesktopManagement(request);
+    return ACTION_OPS.has(request.op);
 }
 export function isDesktopManagement(request) {
     return request.op === "activate" || request.op === "quit" || request.op === "hide"

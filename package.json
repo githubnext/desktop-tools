@@ -21,6 +21,7 @@
 		"build:native": "node dist/build.js --out build",
 		"build:app": "node dist/app.js --out build",
 		"dev-app": "node dist/dev-app.js",
+		"contract": "node scripts/contract.mjs",
 		"live-check": "node scripts/live-check.mjs"
 	},
 	"devDependencies": {
