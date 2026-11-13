@@ -6,7 +6,7 @@ The desktop tools' only native code: a Swift MCP server, host and embedding runt
 
 | Module | What it holds |
 |---|---|
-| `DesktopProtocol` | JSON, wire framing, `ToolError`, the tool declarations (`ContractTools.swift`, #237), and the contract (`ContractText.swift`), which `node scripts/contract.mjs` compiles from the Node server's instructions and tools/list (`src/tools.ts`, which embedders import as `/tools`); `--check` fails when they differ. It is compiled in because `Bundle.module` crashes in an embedded dylib |
+| `DesktopProtocol` | JSON, wire framing, `ToolError`, and the contract: every tool's description, schema and action flag, the shared rules and the MCP server's instructions, declared in `ContractTools.swift` and read through `Contract`. `desktop-tools-mcp --contract` exports them, and `npm run contract` writes that into `src/contract.ts`, which embedders import as `/tools`; CI fails when it is stale. It is code, not a resource, because `Bundle.module` crashes in an embedded dylib |
 | `DesktopCore` | Result bounding, window availability and the approved-callers store, with no macOS calls |
 | `DesktopMac` | Everything that touches macOS: Accessibility reads (`Elements`, `AX`), capture, apps, windows, and input (`Pointer`, `Keyboard`, `Gestures`) |
 | `DesktopPeer` | Who is at the other end of the socket, by the signature of its audit token's process (`Peer.swift`), and this process's own signing |
@@ -27,7 +27,7 @@ A `ToolError` from an action tool's argument checks becomes a refused action; fo
 
 ## Changing a tool
 
-1. Change its description or schema in `src/tools.ts`, then `npm run build:js && node scripts/contract.mjs` to regenerate `ContractText.swift`. Make the same change in `ContractTools.swift`: until the server serves those declarations (#237), `swift test` fails when they differ from `ContractText.swift`.
+1. Change its description or schema in `Sources/DesktopProtocol/ContractTools.swift` (a tool that takes `expect` declares it in its schema; the host reads that), then `npm run contract` to regenerate `src/contract.ts` for embedders.
 2. Change the macOS part in `DesktopMac` and the tool in `DesktopHost`, routed in `Tools.call`, with a test in `Tests` where it can run without the desktop.
 3. Build, restart the host, and compare with the installed release:
 

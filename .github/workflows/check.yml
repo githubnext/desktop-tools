@@ -17,8 +17,6 @@ jobs:
       # dist/ is checked in for Git installs; it must match a fresh compile exactly.
       - run: npm run check
       - run: npm test
-      # The Swift MCP server serves the Node server's instructions and tools/list, compiled in; they must not drift.
-      - run: node scripts/contract.mjs --check
       # Hosted consumers import the protocol and client modules off macOS.
       - run: >-
           node --input-type=module -e "const p = await import('@githubnext/desktop-tools/protocol');
@@ -46,4 +44,6 @@ jobs:
           mkdir -p build/Licenses/embedder && echo kept > build/Licenses/embedder/NOTICE
           node dist/build.js --out build --scratch .build/native2
           test "$(cat build/Licenses/embedder/NOTICE)" = kept
+      # /tools exports the tool declarations in native2 (src/contract.ts); they must not drift (#237).
+      - run: node scripts/contract.mjs --check --scratch .build/native2
       - run: swift test --package-path native2 --scratch-path .build/native2

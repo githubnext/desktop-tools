@@ -6,6 +6,11 @@ import Foundation
 // because the host is what holds the macOS permissions.
 
 let arguments = CommandLine.arguments.dropFirst()
+// --contract prints the tool declarations for the npm package's /tools (scripts/contract.mjs), and serves nothing.
+if arguments.contains("--contract") {
+	FileHandle.standardOutput.write(Data((Contract.export().text + "\n").utf8))
+	exit(0)
+}
 /// The app this server ships in, whose host it serves through, and opens in the background when nothing serves.
 let app = HostApp.containing()
 let socketPath = arguments.firstIndex(of: "--socket").flatMap { arguments.dropFirst($0 - arguments.startIndex + 1).first }

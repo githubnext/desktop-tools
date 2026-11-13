@@ -43,7 +43,7 @@ const {
 	name: host = "Desktop Tools",
 } = values;
 // --wire 2 chose the Swift host's wire while the Peekaboo stack's was the default. It is the only wire now, but the option
-// still keeps this server instead of handing over, as scripts/contract.mjs needs.
+// still keeps this server instead of handing over.
 if (values.wire !== undefined && values.wire !== "2") {
 	throw new Error("--wire 1 was the Peekaboo stack, which is gone; pass --wire 2 or leave it out.");
 }

@@ -1,3 +1,5 @@
+import { contract } from "./contract.js";
+type ContractTool = (typeof contract.tools)[number];
 export type DesktopAppTarget = {
     pid: number;
     process_start_identity_decimal: string;
@@ -115,8 +117,14 @@ export type DesktopWait = {
 export type DesktopExpect = Omit<DesktopWait, "op">;
 /** restore keeps the prior clipboard until the paste is observed; replace leaves the paste on the clipboard. */
 export type DesktopPasteClipboard = "restore" | "replace";
-/** The actions that take expect; others opt in by joining this list and their tool's schema. */
-export declare const DESKTOP_EXPECT_OPS: readonly ["click", "key", "system-key", "drag", "insert"];
+/** The actions that take expect: those whose tool declares it in ContractTools.swift. */
+export declare const DESKTOP_EXPECT_OPS: readonly Extract<ContractTool, {
+    parameters: {
+        properties: {
+            expect: unknown;
+        };
+    };
+}>["op"][];
 /** Writes the full-resolution capture, or the part under region in global desktop points, as a PNG. */
 export type DesktopCaptureSave = {
     save_path?: string;
@@ -341,9 +349,9 @@ export declare const DESKTOP_BUTTONS: readonly ["left", "right"];
 export type DesktopClick = (typeof DESKTOP_CLICKS)[number];
 export type DesktopDirection = (typeof DESKTOP_DIRECTIONS)[number];
 export type DesktopButton = (typeof DESKTOP_BUTTONS)[number];
-/** Keys that type no character, named; every other key is given as the character it types. */
 /** Media, volume and brightness keys, which the system rather than a window acts on. */
 export declare const DESKTOP_SYSTEM_KEYS: readonly ["play_pause", "next_track", "previous_track", "volume_up", "volume_down", "mute", "brightness_up", "brightness_down", "keyboard_brightness_up", "keyboard_brightness_down"];
+/** Keys that type no character, named; every other key is given as the character it types. */
 export declare const DESKTOP_KEYS: readonly ["enter", "return", "tab", "escape", "backspace", "delete", "up", "down", "left", "right", "space", "home", "end", "pageup", "pagedown", "help", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "keypad0", "keypad1", "keypad2", "keypad3", "keypad4", "keypad5", "keypad6", "keypad7", "keypad8", "keypad9", "keypaddecimal", "keypadmultiply", "keypadplus", "keypadminus", "keypaddivide", "keypadequals", "keypadenter", "keypadclear"];
 export declare const DESKTOP_MODIFIERS: readonly ["command", "control", "option", "shift"];
 export declare const DESKTOP_SELECTIONS: readonly ["text", "cursor_before", "cursor_after"];
@@ -371,7 +379,9 @@ export type DesktopResult = {
     outcome?: DesktopOutcome;
     isError?: boolean;
 };
+/** Whether the request changes state, as its tool declares in ContractTools.swift. */
 export declare function isDesktopAction(request: DesktopRequest): request is DesktopAction;
 export declare function isDesktopManagement(request: DesktopRequest): request is DesktopManagement;
 /** Whether a key is named or is one printable, non-space character; native checks the current layout has it. */
 export declare function isDesktopKey(key: unknown): key is DesktopKey;
+export {};

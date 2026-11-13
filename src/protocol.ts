@@ -1,4 +1,8 @@
-// Runtime-neutral request and result contract: no imports, so channels and Workers can share it.
+// Runtime-neutral request and result contract: it imports only the generated tool contract, plain data, so channels and
+// Workers can share it.
+import { contract } from "./contract.js";
+
+type ContractTool = (typeof contract.tools)[number];
 
 export type DesktopAppTarget = {
 	pid: number;
@@ -41,20 +45,7 @@ export type DesktopOpen = {
 export type DesktopScope = { snapshot: string; element: string };
 
 /** The conditions desktop_wait can wait for, one per call. */
-export const DESKTOP_WAIT_CONDITIONS = [
-	"window_appears",
-	"window_gone",
-	"dialog_appears",
-	"dialog_gone",
-	"element_appears",
-	"element_gone",
-	"text_changes",
-	"text_equals",
-	"text_contains",
-	"app_running",
-	"app_frontmost",
-	"app_quit",
-] as const;
+export const DESKTOP_WAIT_CONDITIONS = contract.waitConditions;
 export type DesktopWaitCondition = (typeof DESKTOP_WAIT_CONDITIONS)[number];
 /** An element matched by its role and exact title (label), value or identifier. */
 export type DesktopElementMatch = { role: string; title?: string; value?: string; identifier?: string };
@@ -79,8 +70,10 @@ export type DesktopWait = {
 export type DesktopExpect = Omit<DesktopWait, "op">;
 /** restore keeps the prior clipboard until the paste is observed; replace leaves the paste on the clipboard. */
 export type DesktopPasteClipboard = "restore" | "replace";
-/** The actions that take expect; others opt in by joining this list and their tool's schema. */
-export const DESKTOP_EXPECT_OPS = ["click", "key", "system-key", "drag", "insert"] as const;
+/** The actions that take expect: those whose tool declares it in ContractTools.swift. */
+export const DESKTOP_EXPECT_OPS = contract.tools
+	.filter((tool) => "expect" in tool.parameters.properties)
+	.map((tool) => tool.op) as readonly Extract<ContractTool, { parameters: { properties: { expect: unknown } } }>["op"][];
 
 /** Writes the full-resolution capture, or the part under region in global desktop points, as a PNG. */
 export type DesktopCaptureSave = {
@@ -245,76 +238,10 @@ export type DesktopClick = (typeof DESKTOP_CLICKS)[number];
 export type DesktopDirection = (typeof DESKTOP_DIRECTIONS)[number];
 export type DesktopButton = (typeof DESKTOP_BUTTONS)[number];
 
-/** Keys that type no character, named; every other key is given as the character it types. */
 /** Media, volume and brightness keys, which the system rather than a window acts on. */
-export const DESKTOP_SYSTEM_KEYS = [
-	"play_pause",
-	"next_track",
-	"previous_track",
-	"volume_up",
-	"volume_down",
-	"mute",
-	"brightness_up",
-	"brightness_down",
-	"keyboard_brightness_up",
-	"keyboard_brightness_down",
-] as const;
-export const DESKTOP_KEYS = [
-	"enter",
-	"return",
-	"tab",
-	"escape",
-	"backspace",
-	"delete",
-	"up",
-	"down",
-	"left",
-	"right",
-	"space",
-	"home",
-	"end",
-	"pageup",
-	"pagedown",
-	"help",
-	"f1",
-	"f2",
-	"f3",
-	"f4",
-	"f5",
-	"f6",
-	"f7",
-	"f8",
-	"f9",
-	"f10",
-	"f11",
-	"f12",
-	"f13",
-	"f14",
-	"f15",
-	"f16",
-	"f17",
-	"f18",
-	"f19",
-	"f20",
-	"keypad0",
-	"keypad1",
-	"keypad2",
-	"keypad3",
-	"keypad4",
-	"keypad5",
-	"keypad6",
-	"keypad7",
-	"keypad8",
-	"keypad9",
-	"keypaddecimal",
-	"keypadmultiply",
-	"keypadplus",
-	"keypadminus",
-	"keypaddivide",
-	"keypadequals",
-	"keypadenter",
-	"keypadclear",
-] as const;
+export const DESKTOP_SYSTEM_KEYS = contract.systemKeys;
+/** Keys that type no character, named; every other key is given as the character it types. */
+export const DESKTOP_KEYS = contract.keys;
 export const DESKTOP_MODIFIERS = ["command", "control", "option", "shift"] as const;
 export const DESKTOP_SELECTIONS = ["text", "cursor_before", "cursor_after"] as const;
 /** Named Accessibility actions; AXPress is desktop_click's route and is not listed separately. */
@@ -387,17 +314,18 @@ export type DesktopResult = {
 	isError?: boolean;
 };
 
+const ACTION_OPS: ReadonlySet<string> = new Set(contract.tools.filter((tool) => tool.action).map((tool) => tool.op));
+
+/** Whether the request changes state, as its tool declares in ContractTools.swift. */
 export function isDesktopAction(request: DesktopRequest): request is DesktopAction {
-	return request.op === "click" || request.op === "type" || request.op === "fill-password" || request.op === "key"
-		|| request.op === "system-key" || request.op === "switch-space" || request.op === "input-source"
-		|| request.op === "insert" || request.op === "select" || request.op === "scroll"
-		|| request.op === "drag" || request.op === "hover" || request.op === "press"
-		|| request.op === "clipboard-write" || request.op === "launch"
-		|| request.op === "element-action" || request.op === "set-value" || request.op === "set-cell"
-		|| request.op === "open" || request.op === "menu" || request.op === "dialog-answer"
-		|| request.op === "menubar-click" || request.op === "dock"
-		|| request.op === "notification-action" || isDesktopManagement(request);
+	return ACTION_OPS.has(request.op);
 }
+
+// The hand-written request types must name the same ops, and the same actions, as the declared tools.
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+type Assert<T extends true> = T;
+type OpsMatchTheContract = Assert<Same<DesktopRequest["op"], ContractTool["op"]>>;
+type ActionsMatchTheContract = Assert<Same<DesktopAction["op"], Extract<ContractTool, { action: true }>["op"]>>;
 
 export function isDesktopManagement(request: DesktopRequest): request is DesktopManagement {
 	return request.op === "activate" || request.op === "quit" || request.op === "hide"
