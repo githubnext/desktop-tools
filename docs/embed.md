@@ -1,7 +1,7 @@
 # Embed
 
 1. Copy `libDesktopTools.dylib` and `desktop-tools-client`, and optionally `desktop-tools-mcp`, from a [native build](build.md) into the app bundle, and ship `Licenses/`.
-2. Sign the library, the client, and the app with the same Apple Development or Developer ID team. Sign the client with an exact identifier, for example `codesign --identifier <app-id>.desktop-client`, and the MCP server with the same one, since the host admits exactly one client identifier.
+2. Sign the library, the client, and the app with the same Apple Development or Developer ID team. Sign the client with an exact identifier, for example `codesign --identifier <app-id>.desktop-client`, and the MCP server with the same one, since the host admits exactly one client identifier. Run the MCP server with `--socket <the socket passed to desktop_tools_start>`; it names the app it ships in, or `--name`, in its instructions.
 3. From the app's GUI process, load the library and call its C ABI:
 
 | Symbol | Meaning |
