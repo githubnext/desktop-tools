@@ -44,18 +44,20 @@ if (!server || !existsSync(server)) {
 	})();
 	const appVersion = plist && /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
 	const appName = plist && /<key>CFBundleName<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
-	const found = !linked
-		? `No Desktop Tools app has linked its client at ${client}: install and open Desktop Tools ${version} (${releases}).`
+	const appPath = "/Applications/Desktop Tools.app/Contents/MacOS/desktop-tools-mcp";
+	const message = !linked
+		? `No Desktop Tools app has linked its client at ${client}: install and open Desktop Tools ${version} (${releases}). `
+			+ `Then set the MCP server up as "${appPath}", which needs no Node.`
 		: appName && !appName.startsWith("Desktop Tools")
-		// An embedder's app serves MCP only if it bundles desktop-tools-mcp beside its client (docs/embed.md).
-		? `${appName} bundles no desktop-tools-mcp beside ${linked}, so it can't serve the desktop tools over MCP. `
-			+ "An embedding app can ship desktop-tools-mcp from a native build beside its client (docs/embed.md)."
+		// A signed host serves only its own app's programs, so an embedder's app serves MCP only through its own server.
+		? `${appName} bundles no desktop-tools-mcp beside its client, ${linked}, so it can't serve the desktop tools over MCP. `
+			+ `To serve them, ${appName} must bundle desktop-tools-mcp from the same native build beside that client, signed with `
+			+ `the client's identifier: see https://github.com/githubnext/desktop-tools/blob/main/docs/embed.md. `
+			+ "Then set the MCP server up as that desktop-tools-mcp, with --socket for the socket the app serves."
 		: `${dirname(contents!)} is version ${appVersion ?? "unknown"}, which has no MCP server of its own (0.17.0 and later `
-			+ `bundle one): install Desktop Tools ${version} (${releases}).`;
-	process.stderr.write(
-		`desktop-tools-mcp: ${found} Then set the MCP server up as "/Applications/Desktop Tools.app/Contents/MacOS/desktop-tools-mcp", `
-			+ "which needs no Node.\n",
-	);
+			+ `bundle one): install Desktop Tools ${version} (${releases}). Then set the MCP server up as "${appPath}", `
+			+ "which needs no Node.";
+	process.stderr.write(`desktop-tools-mcp: ${message}\n`);
 	process.exit(1);
 }
 

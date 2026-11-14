@@ -15,13 +15,23 @@ command = "/Applications/Desktop Tools.app/Contents/MacOS/desktop-tools-mcp"
 
 The [README](https://github.com/githubnext/desktop-tools#set-up-for-an-agent) has the setup for clients configured with JSON.
 
-The server serves the socket in its app's state folder (`DESKTOP_TOOLS_STATE`, else the folder its bundle ID chooses), or `--socket <path>`, and names its app in the instructions and rules: the app it ships in, or `--name <app>`. So the [development app](build.md#development-app)'s server, `Desktop Tools Dev.app/Contents/MacOS/desktop-tools-mcp`, serves `~/.local/state/desktop-tools-dev` as **Desktop Tools Dev** with no options. A signed host serves only its own app's programs, so another app's grants are used through that app's own `desktop-tools-mcp`, which an [embedding app](embed.md) can ship beside its client.
+The server serves the socket in its app's state folder (`DESKTOP_TOOLS_STATE`, else the folder its bundle ID chooses), or `--socket <path>`, and names its app in the instructions and rules: the app it ships in, or `--name <app>`. So the [development app](build.md#development-app)'s server, `Desktop Tools Dev.app/Contents/MacOS/desktop-tools-mcp`, serves `~/.local/state/desktop-tools-dev` as **Desktop Tools Dev** with no options.
+
+## Another app's grants
+
+A signed host serves only its own app's programs, so an app that embeds Desktop Tools, such as Ace, serves MCP only through its own `desktop-tools-mcp`. To offer that, **bundle `desktop-tools-mcp` from the same native build beside the app's `desktop-tools-client`, signed with the client's identifier**, as [Embed](embed.md) describes. Then set the MCP server up as that file, with `--socket` for the socket the app serves:
+
+```sh
+claude mcp add desktop -- "/Applications/Example.app/Contents/MacOS/desktop-tools-mcp" --socket ~/.local/state/example/desktop.sock
+```
+
+It names its app (its `CFBundleName`) in the instructions and rules; `--name` overrides that. Without a bundled server, an `npx` setup that passes `--client` for that app exits with a message saying to bundle one.
 
 ## npx setups
 
 `npx -y --package=github:githubnext/desktop-tools#v0.20.0 desktop-tools-mcp` (Node 22 or later) also works. It runs only a launcher, `dist/mcp.js`, which finds the app's server beside the client the app links in its state folder and hands stdin and stdout over to it; no MCP traffic passes through Node. `--client <App>.app/Contents/MacOS/desktop-tools-client` runs that app's server instead, and `--socket` and `--name` are passed on to it. `--wire 2` is accepted and ignored, and `--wire 1`, the removed Peekaboo stack, is refused.
 
-When there is no server to hand over to, the launcher exits with a message instead: no app has linked its client, the app is from before 0.17.0 and has no server of its own (the message names its version and the release to install), or `--client` names an embedder's app that ships no `desktop-tools-mcp`. Updating the `npx` tag doesn't update the app, which holds the macOS permissions. A setup pinned before v0.17.0 is refused with `CLIENT_OUTDATED`, so update its tag, or better, point it at the app's server.
+When there is no server to hand over to, the launcher exits with a message instead: no app has linked its client, the app is from before 0.17.0 and has no server of its own (the message names its version and the release to install), or `--client` names an embedder's app that ships no `desktop-tools-mcp` (bundle one, as [above](#another-apps-grants)). Updating the `npx` tag doesn't update the app, which holds the macOS permissions. A setup pinned before v0.17.0 is refused with `CLIENT_OUTDATED`, so update its tag, or better, point it at the app's server.
 
 The tool names, descriptions, and argument schemas are declared in Swift (`native2/Sources/DesktopProtocol/ContractTools.swift`), and `@githubnext/desktop-tools/tools` (`desktopTools`, `desktopRequest`) exports them, generated from that file, for Ace's `desktop_*` tools and other embedders. [Tools](tools.md) lists them. The descriptions don't repeat the rules every tool shares: exact targets, single-use snapshots, background and foreground input, what each outcome means, pausing, `desktop_wait` and `expect`, and the recipes. `desktopToolRules(app)` returns those rules, and the server adds them to its instructions; a host with its own agent guidance should include them too.
 

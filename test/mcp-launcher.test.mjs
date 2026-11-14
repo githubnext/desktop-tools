@@ -78,7 +78,10 @@ test("an embedder's app without a server says it can't serve MCP", () => {
 	try {
 		const result = run(["--client", client], "/nonexistent");
 		assert.equal(result.status, 1);
-		assert.match(result.stderr, /Ace Canary bundles no desktop-tools-mcp beside .*, so it can't serve the desktop tools over MCP/);
+		assert.match(result.stderr, /Ace Canary bundles no desktop-tools-mcp beside its client, .*, so it can't serve the desktop tools over MCP/);
+		assert.match(result.stderr, /Ace Canary must bundle desktop-tools-mcp from the same native build beside that client/);
+		assert.match(result.stderr, /https:\/\/github\.com\/githubnext\/desktop-tools\/blob\/main\/docs\/embed\.md/);
+		assert.doesNotMatch(result.stderr, /Desktop Tools\.app/);
 	} finally {
 		done();
 	}
