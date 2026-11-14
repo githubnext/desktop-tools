@@ -208,23 +208,53 @@ extension Tools {
 		if let refusal = Callers.shared.refusal(client: client) { return refusal }
 		guard Contract.actions.contains(name) else { return nil }
 		// Clipboard writes can't reach a prompt or menu, so only the pause holds them.
+		let targets: [pid_t?]
+		switch await targetProcesses(name, arguments) {
+		case let .success(found): targets = found
+		case let .failure(refusal): return refusal.message
+		}
 		if name != "desktop_clipboard_write", Callers.shared.enforcing || Protected.shared.active {
-			let target = await targetProcess(arguments)
 			// A protecting app shows its own prompts and refuses input while they're up; its windows are always open.
 			let ownUIOpen = Callers.shared.enforcing && (Callers.shared.asking || OwnUI.promptOrMenuOpen())
-			if let refusal = OwnUIGuard.refusal(input: true, targetIsOwn: target.map(OwnUI.isOwn) ?? false, ownUIOpen: ownUIOpen) {
-				return refusal
+			for target in targets {
+				if let refusal = OwnUIGuard.refusal(input: true, targetIsOwn: target.map(OwnUI.isOwn) ?? false, ownUIOpen: ownUIOpen) {
+					return refusal
+				}
 			}
 		}
-		if let refusal = await SystemUI.refusal(name, arguments: arguments, target: await targetProcess(arguments)) { return refusal }
+		for target in targets {
+			if let refusal = await SystemUI.refusal(name, arguments: arguments, target: target) { return refusal }
+		}
 		return Pause.shared.isPaused ? Pause.message : nil
 	}
 
-	/// The process a call names, directly or through its snapshot.
-	private static func targetProcess(_ arguments: JSON) async -> pid_t? {
-		if let pid = arguments["pid"]?.int ?? arguments["target"]?["pid"]?.int { return pid_t(pid) }
-		if let id = arguments["snapshot"]?.string { return await Snapshots.shared.get(id)?.pid }
-		return nil
+	struct TargetMismatch: Error { let message: String }
+
+	/// Every process a call's input can reach, one entry per place that names one: the snapshot, the snapshot in a
+	/// notification id, a drag's to_snapshot, and an explicit pid or target.pid. [nil] when nothing names one.
+	///
+	/// Dispatch acts on the snapshots, so they are what admission must check; an explicit pid that names a different
+	/// process than the snapshot's is refused rather than trusted, since it could only steer the check elsewhere.
+	static func targetProcesses(_ name: String, _ arguments: JSON) async -> Result<[pid_t?], TargetMismatch> {
+		var snapshots: [String] = []
+		if let id = arguments["snapshot"]?.string { snapshots.append(id) }
+		if let id = arguments["to_snapshot"]?.string { snapshots.append(id) }
+		if name == "desktop_notification_action", let id = arguments["id"]?.string, let slash = id.lastIndex(of: "/") {
+			snapshots.append(String(id[..<slash]))
+		}
+		var targets: [pid_t?] = []
+		for id in snapshots {
+			if let pid = await Snapshots.shared.get(id)?.pid { targets.append(pid) }
+		}
+		if let named = arguments["pid"]?.int ?? arguments["target"]?["pid"]?.int {
+			let pid = pid_t(truncatingIfNeeded: named)
+			if let id = arguments["snapshot"]?.string, let observed = await Snapshots.shared.get(id)?.pid, observed != pid {
+				return .failure(TargetMismatch(message:
+					"invalidRequest: The pid names a different process than the snapshot, so nothing was sent. Pass the snapshot_id alone, from a fresh desktop_inspect of the window to act on."))
+			}
+			targets.append(pid)
+		}
+		return .success(targets.isEmpty ? [nil] : targets)
 	}
 
 	/// What an agent gets for a refusal: actions report a refused action, everything else an error.
