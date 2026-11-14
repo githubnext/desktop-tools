@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-function server(cmd){const [f,...a]=cmd.split(" ");const c=spawn(f,a,{stdio:["pipe","pipe","inherit"]});let buf="",n=1;const w=new Map();
+import { existsSync } from "node:fs";
+function server(cmd){const [f,...a]=existsSync(cmd)?[cmd]:cmd.split(" ");const c=spawn(f,a,{stdio:["pipe","pipe","inherit"]});let buf="",n=1;const w=new Map();
 c.stdout.on("data",d=>{buf+=d;let i;while((i=buf.indexOf("\n"))>=0){const l=buf.slice(0,i);buf=buf.slice(i+1);const m=JSON.parse(l);w.get(m.id)?.(m.result??m.error);}});
 const req=(method,params={})=>new Promise(r=>{const id=n++;w.set(id,r);c.stdin.write(JSON.stringify({jsonrpc:"2.0",id,method,params})+"\n")});
 return {req,call:(name,args)=>req("tools/call",{name,arguments:args}),stop:()=>c.kill()}}
 const j=r=>{const t=r.content.find(c=>c.text?.startsWith("{"));return t?JSON.parse(t.text):{}};
-// Times the core tools on the fixture window through this checkout's release build and the installed app's server, which
-// node dist/mcp.js hands over to: node native2/scripts/bench.mjs [runs]
+// Times the core tools on the fixture window through this checkout's release build and the installed app's own server:
+// node native2/scripts/bench.mjs [runs]
 const runs=Number(process.argv[2]??10);
-const S={build:"native2/.build/release/desktop-tools-mcp",installed:"node dist/mcp.js"};
+const S={build:"native2/.build/release/desktop-tools-mcp",installed:"/Applications/Desktop Tools.app/Contents/MacOS/desktop-tools-mcp"};
 const p=(xs,q)=>{const s=[...xs].sort((a,b)=>a-b);return Math.round(s[Math.min(s.length-1,Math.floor(q*s.length))])};
 const res={};
 for(const [name,cmd] of Object.entries(S)){

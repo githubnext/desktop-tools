@@ -1,6 +1,6 @@
 # Live checks
 
-The live checks in [#42](https://github.com/githubnext/desktop-tools/issues/42) need an unlocked Mac. `npm run live-check` runs the ones that can be automated, through the same MCP server (`dist/mcp.js`) and host that agents use:
+The live checks in [#42](https://github.com/githubnext/desktop-tools/issues/42) need an unlocked Mac. `npm run live-check` runs the ones that can be automated, through the app's own MCP server (`<App>.app/Contents/MacOS/desktop-tools-mcp`, found through the client the app links in its state folder) and host that agents use:
 
 ```sh
 npm run live-check                    # the installed app
